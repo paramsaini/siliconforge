@@ -1,0 +1,125 @@
+{
+  "flow_state": {
+    "has_netlist": true,
+    "is_synthesized": false,
+    "is_simulated": false,
+    "is_formal_done": false,
+    "is_dft_done": false,
+    "has_floorplan": false,
+    "is_placed": false,
+    "is_routed": false,
+    "is_drc_done": false,
+    "is_lvs_done": false,
+    "is_sta_done": false,
+    "is_power_done": false
+  },
+  "netlist": {
+    "num_nets": 13,
+    "num_gates": 9,
+    "num_ffs": 1,
+    "num_pis": 0,
+    "num_pos": 0,
+    "primary_inputs": [],
+    "primary_outputs": [],
+    "gates": [
+      {"id":0,"name":"assign_sum","type":"BUF","inputs":[2],"output":0},
+      {"id":1,"name":"assign_xor_ab","type":"XOR","inputs":[2,3],"output":1},
+      {"id":2,"name":"synth_eq_xor","type":"XOR","inputs":[0,5],"output":6},
+      {"id":3,"name":"synth_eq_not","type":"NOT","inputs":[6],"output":7},
+      {"id":4,"name":"mux_inv","type":"NOT","inputs":[7],"output":8},
+      {"id":5,"name":"mux_and1","type":"AND","inputs":[7,1],"output":9},
+      {"id":6,"name":"mux_and0","type":"AND","inputs":[8,0],"output":10},
+      {"id":7,"name":"mux_or","type":"OR","inputs":[9,10],"output":11},
+      {"id":8,"name":"reg_q","type":"DFF","inputs":[11],"output":12}
+    ],
+    "nets": [
+      {"id":0,"name":"sum","driver":0,"fanout":[2,6]},
+      {"id":1,"name":"xor_ab","driver":1,"fanout":[5]},
+      {"id":2,"name":"a","driver":-1,"fanout":[0,1]},
+      {"id":3,"name":"b","driver":-1,"fanout":[1]},
+      {"id":4,"name":"clk","driver":-1,"fanout":[8]},
+      {"id":5,"name":"1","driver":-1,"fanout":[2]},
+      {"id":6,"name":"eq_xor_6","driver":2,"fanout":[3]},
+      {"id":7,"name":"eq_not_7","driver":3,"fanout":[4,5]},
+      {"id":8,"name":"not_sel_7","driver":4,"fanout":[6]},
+      {"id":9,"name":"mux_and1","driver":5,"fanout":[7]},
+      {"id":10,"name":"mux_and0","driver":6,"fanout":[7]},
+      {"id":11,"name":"mux_out","driver":7,"fanout":[8]},
+      {"id":12,"name":"q","driver":8,"fanout":[]}
+    ]
+  },
+  "synthesis": {
+    "nodes_before": 0,
+    "nodes_after": 0,
+    "depth_before": 0,
+    "depth_after": 0,
+    "reduction_pct": 0
+  },
+  "simulation": {
+    "num_timepoints": 0,
+    "num_signals": 0,
+    "times": [],
+    "signals": [
+    ]
+  },
+  "formal": {
+    "bmc_depth": 0,
+    "num_properties": 0,
+    "properties": [
+    ]
+  },
+  "dft": {
+    "total_faults": 0,
+    "detected": 0,
+    "coverage_pct": 0,
+    "patterns": 0
+  },
+  "physical": {
+    "die": {"w":0,"h":0},
+    "num_cells": 0,
+    "num_wires": 0,
+    "num_vias": 0,
+    "wirelength": 0,
+    "utilization": 0,
+    "cells": [
+    ],
+    "wires": [
+    ],
+    "vias": [
+    ]
+  },
+  "timing": {
+    "wns": 0,
+    "tns": 0,
+    "num_violations": 0,
+    "num_endpoints": 0,
+    "clock_period_ns": 1,
+    "critical_path": [
+    ]
+  },
+  "power": {
+    "dynamic_mw": 0,
+    "leakage_mw": 0,
+    "switching_mw": 0,
+    "internal_mw": 0,
+    "total_mw": 0,
+    "clock_freq_mhz": 0
+  },
+  "drc": {
+    "total_rules": 0,
+    "violations": 0,
+    "errors": 0,
+    "warnings": 0,
+    "details": [
+    ]
+  },
+  "lvs": {
+    "match": false,
+    "schematic_cells": 0,
+    "layout_cells": 0,
+    "matched_cells": 0,
+    "unmatched_schematic": 0,
+    "unmatched_layout": 0,
+    "net_mismatches": 0
+  }
+}

@@ -1,0 +1,1952 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SiliconForge — Visualization Concept</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg-primary: #0a0a0f;
+    --bg-secondary: #12121a;
+    --bg-card: #1a1a2e;
+    --bg-card-hover: #22223a;
+    --accent: #00d4ff;
+    --accent2: #7c3aed;
+    --accent3: #f59e0b;
+    --accent4: #10b981;
+    --accent5: #ef4444;
+    --text-primary: #e8e8f0;
+    --text-secondary: #8888a0;
+    --border: #2a2a3e;
+    --glow: rgba(0, 212, 255, 0.15);
+  }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    overflow-x: hidden;
+  }
+
+  /* ─── HERO ─── */
+  .hero {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(ellipse at 30% 50%, rgba(0,212,255,0.06) 0%, transparent 50%),
+                radial-gradient(ellipse at 70% 50%, rgba(124,58,237,0.06) 0%, transparent 50%);
+    animation: heroGlow 8s ease-in-out infinite alternate;
+  }
+  @keyframes heroGlow {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(3deg); }
+  }
+  .hero h1 {
+    font-size: 4.5rem;
+    font-weight: 900;
+    letter-spacing: -0.03em;
+    background: linear-gradient(135deg, #00d4ff, #7c3aed, #f59e0b);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    position: relative;
+    z-index: 1;
+  }
+  .hero .subtitle {
+    font-size: 1.3rem;
+    color: var(--text-secondary);
+    margin-top: 1rem;
+    font-weight: 300;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    position: relative;
+    z-index: 1;
+  }
+  .hero .scroll-hint {
+    position: absolute;
+    bottom: 2rem;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    animation: bounce 2s infinite;
+    z-index: 1;
+  }
+  @keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(8px); }
+  }
+
+  /* ─── STAGE SECTIONS ─── */
+  .stage {
+    min-height: 100vh;
+    padding: 4rem 2rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    border-top: 1px solid var(--border);
+  }
+  .stage-header {
+    text-align: center;
+    margin-bottom: 2rem;
+    position: relative;
+    z-index: 2;
+  }
+  .stage-number {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    color: var(--accent);
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+  }
+  .stage-title {
+    font-size: 2.5rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+  .stage-desc {
+    color: var(--text-secondary);
+    margin-top: 0.5rem;
+    max-width: 600px;
+    line-height: 1.6;
+  }
+
+  /* ─── CANVAS CONTAINERS ─── */
+  .viz-container {
+    width: min(1200px, 95vw);
+    height: 600px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 0 60px rgba(0,0,0,0.5), 0 0 120px var(--glow);
+  }
+  .viz-container canvas {
+    width: 100%;
+    height: 100%;
+  }
+  .viz-toolbar {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    display: flex;
+    gap: 6px;
+    z-index: 10;
+  }
+  .viz-toolbar button {
+    background: rgba(20,20,35,0.85);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    backdrop-filter: blur(10px);
+  }
+  .viz-toolbar button:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .viz-toolbar button.active {
+    background: rgba(0,212,255,0.15);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .viz-info {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    background: rgba(10,10,15,0.9);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    backdrop-filter: blur(10px);
+    z-index: 10;
+    line-height: 1.6;
+  }
+  .viz-info .metric { color: var(--accent); font-weight: 600; }
+  .viz-info .warn { color: var(--accent3); }
+  .viz-info .good { color: var(--accent4); }
+  .viz-info .bad { color: var(--accent5); }
+
+  .viz-label {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: rgba(10,10,15,0.9);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--accent);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    backdrop-filter: blur(10px);
+    z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══ HERO ═══ -->
+<section class="hero">
+  <h1>SiliconForge</h1>
+  <div class="subtitle">RTL-to-GDSII Visualization Concept</div>
+  <div class="scroll-hint">scroll to explore each stage ↓</div>
+</section>
+
+<!-- ═══ STAGE 1: RTL CIRCUIT GRAPH ═══ -->
+<section class="stage" id="s1">
+  <div class="stage-header">
+    <div class="stage-number">Stage 01 — RTL Design</div>
+    <div class="stage-title">Circuit Graph</div>
+    <div class="stage-desc">Interactive force-directed graph of logic gates. Click any node to inspect. Signals animate through paths.</div>
+  </div>
+  <div class="viz-container">
+    <canvas id="c1"></canvas>
+    <div class="viz-label">RTL Netlist — 8-bit Multiplexer</div>
+    <div class="viz-toolbar">
+      <button class="active">Logic</button>
+      <button>Hierarchy</button>
+      <button>Clock Domains</button>
+    </div>
+    <div class="viz-info">
+      Nodes: <span class="metric">47</span> &nbsp;|&nbsp;
+      Nets: <span class="metric">62</span> &nbsp;|&nbsp;
+      Depth: <span class="metric">4</span> &nbsp;|&nbsp;
+      FFs: <span class="metric">8</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ STAGE 2: SIMULATION WAVEFORMS ═══ -->
+<section class="stage" id="s2">
+  <div class="stage-header">
+    <div class="stage-number">Stage 02 — Simulation</div>
+    <div class="stage-title">Waveform Viewer</div>
+    <div class="stage-desc">4-state signal waveforms with zoom, pan, and cursor. Click signals to highlight driver gates.</div>
+  </div>
+  <div class="viz-container">
+    <canvas id="c2"></canvas>
+    <div class="viz-label">Event-Driven Simulation — 200ns</div>
+    <div class="viz-toolbar">
+      <button class="active">Signals</button>
+      <button>Bus View</button>
+      <button>Analog</button>
+    </div>
+    <div class="viz-info">
+      Time: <span class="metric">0–200ns</span> &nbsp;|&nbsp;
+      Signals: <span class="metric">12</span> &nbsp;|&nbsp;
+      Events: <span class="metric">1,847</span> &nbsp;|&nbsp;
+      Status: <span class="good">PASS</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ STAGE 3: FORMAL VERIFICATION ═══ -->
+<section class="stage" id="s3">
+  <div class="stage-header">
+    <div class="stage-number">Stage 03 — Formal Verification</div>
+    <div class="stage-title">Property Dashboard</div>
+    <div class="stage-desc">BMC depth progress, k-induction status, counter-example state trace animation.</div>
+  </div>
+  <div class="viz-container">
+    <canvas id="c3"></canvas>
+    <div class="viz-label">BMC + k-Induction — 3 Properties</div>
+    <div class="viz-toolbar">
+      <button class="active">Properties</button>
+      <button>Trace</button>
+      <button>Coverage</button>
+    </div>
+    <div class="viz-info">
+      Properties: <span class="good">2 Proved</span> &nbsp;|&nbsp;
+      <span class="bad">1 Failed @ cycle 7</span> &nbsp;|&nbsp;
+      BMC Depth: <span class="metric">20</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ STAGE 4: SYNTHESIS AIG ═══ -->
+<section class="stage" id="s4">
+  <div class="stage-header">
+    <div class="stage-number">Stage 04 — Logic Synthesis</div>
+    <div class="stage-title">AIG Optimization</div>
+    <div class="stage-desc">Before/after node graph. Watch rewrite passes eliminate redundant logic in real-time.</div>
+  </div>
+  <div class="viz-container">
+    <canvas id="c4"></canvas>
+    <div class="viz-label">AIG — Rewrite + Balance + Refactor</div>
+    <div class="viz-toolbar">
+      <button class="active">AIG</button>
+      <button>Tech Map</button>
+      <button>Stats</button>
+    </div>
+    <div class="viz-info">
+      Before: <span class="warn">156 nodes</span> → After: <span class="good">94 nodes</span> &nbsp;|&nbsp;
+      Reduction: <span class="metric">39.7%</span> &nbsp;|&nbsp;
+      Depth: <span class="metric">12 → 8</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ STAGE 5: DFT / ATPG ═══ -->
+<section class="stage" id="s5">
+  <div class="stage-header">
+    <div class="stage-number">Stage 05 — Design for Test</div>
+    <div class="stage-title">Fault Coverage Map</div>
+    <div class="stage-desc">PODEM ATPG coverage heatmap. Scan chains animated. Click faults to see test vectors.</div>
+  </div>
+  <div class="viz-container">
+    <canvas id="c5"></canvas>
+    <div class="viz-label">PODEM ATPG — Stuck-at Faults</div>
+    <div class="viz-toolbar">
+      <button class="active">Coverage</button>
+      <button>Scan Chain</button>
+      <button>Patterns</button>
+    </div>
+    <div class="viz-info">
+      Total Faults: <span class="metric">2,048</span> &nbsp;|&nbsp;
+      Detected: <span class="good">1,987</span> &nbsp;|&nbsp;
+      Coverage: <span class="good">97.02%</span> &nbsp;|&nbsp;
+      Patterns: <span class="metric">156</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ STAGE 6: PLACEMENT ═══ -->
+<section class="stage" id="s6">
+  <div class="stage-header">
+    <div class="stage-number">Stage 06 — Placement</div>
+    <div class="stage-title">Cell Placement + Density</div>
+    <div class="stage-desc">Analytical placement with density heatmap overlay. Watch cells spread and legalize.</div>
+  </div>
+  <div class="viz-container">
+    <canvas id="c6"></canvas>
+    <div class="viz-label">Quadratic Placement — sky130_fd_sc_hd</div>
+    <div class="viz-toolbar">
+      <button class="active">Cells</button>
+      <button>Density</button>
+      <button>Nets</button>
+      <button>Congestion</button>
+    </div>
+    <div class="viz-info">
+      Cells: <span class="metric">1,247</span> &nbsp;|&nbsp;
+      HPWL: <span class="metric">48,320 um</span> &nbsp;|&nbsp;
+      Util: <span class="good">72.3%</span> &nbsp;|&nbsp;
+      Overlaps: <span class="good">0</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ STAGE 7: 3D ROUTING ═══ -->
+<section class="stage" id="s7">
+  <div class="stage-header">
+    <div class="stage-number">Stage 07 — Routing</div>
+    <div class="stage-title">3D Multi-Layer Routing</div>
+    <div class="stage-desc">Full 3D view of all metal layers. Transparency per layer. Click any wire for timing data.</div>
+  </div>
+  <div class="viz-container">
+    <canvas id="c7"></canvas>
+    <div class="viz-label">Global + Detailed Route — 5 Metal Layers</div>
+    <div class="viz-toolbar">
+      <button class="active">3D</button>
+      <button>M1</button>
+      <button>M2</button>
+      <button>M3</button>
+      <button>M4</button>
+      <button>M5</button>
+    </div>
+    <div class="viz-info">
+      Nets: <span class="metric">893</span> &nbsp;|&nbsp;
+      Vias: <span class="metric">2,156</span> &nbsp;|&nbsp;
+      DRC: <span class="good">Clean</span> &nbsp;|&nbsp;
+      Congestion: <span class="warn">12% peak</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ STAGE 8: TIMING / POWER HEATMAP ═══ -->
+<section class="stage" id="s8">
+  <div class="stage-header">
+    <div class="stage-number">Stage 08 — Signoff</div>
+    <div class="stage-title">Timing + Power + IR Drop</div>
+    <div class="stage-desc">Critical paths in 3D. Power density heatmap. IR drop voltage visualization with hot spots.</div>
+  </div>
+  <div class="viz-container">
+    <canvas id="c8"></canvas>
+    <div class="viz-label">STA + Power + IR Drop — Multi-Corner</div>
+    <div class="viz-toolbar">
+      <button class="active">Timing</button>
+      <button>Power</button>
+      <button>IR Drop</button>
+      <button>DRC</button>
+    </div>
+    <div class="viz-info">
+      WNS: <span class="good">+0.12ns</span> &nbsp;|&nbsp;
+      TNS: <span class="good">0.0ns</span> &nbsp;|&nbsp;
+      Power: <span class="metric">4.2mW</span> &nbsp;|&nbsp;
+      IR Drop: <span class="warn">8.3% peak</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ STAGE 9: CROSS SECTION ═══ -->
+<section class="stage" id="s9">
+  <div class="stage-header">
+    <div class="stage-number">Stage 09 — Cross Section</div>
+    <div class="stage-title">Process Stack View</div>
+    <div class="stage-desc">Slice through the chip. sky130 process layers with accurate heights. Drag the slice plane.</div>
+  </div>
+  <div class="viz-container">
+    <canvas id="c9"></canvas>
+    <div class="viz-label">sky130 Process Stack — Cross Section @ Y=125um</div>
+    <div class="viz-toolbar">
+      <button class="active">Stack</button>
+      <button>X-Ray</button>
+      <button>Annotate</button>
+    </div>
+    <div class="viz-info">
+      Layers: <span class="metric">li1, m1, m2, m3, m4, m5</span> &nbsp;|&nbsp;
+      Height: <span class="metric">12.4 um total</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ STAGE 10: FINAL GDSII ═══ -->
+<section class="stage" id="s10">
+  <div class="stage-header">
+    <div class="stage-number">Stage 10 — Final Output</div>
+    <div class="stage-title">GDSII 3D Chip View</div>
+    <div class="stage-desc">Complete fabrication-ready layout. All layers. Hierarchical drill-down. Export to GLB/GLTF.</div>
+  </div>
+  <div class="viz-container">
+    <canvas id="c10"></canvas>
+    <div class="viz-label">GDSII Export — Production Ready</div>
+    <div class="viz-toolbar">
+      <button class="active">All Layers</button>
+      <button>Hierarchy</button>
+      <button>DRC Clean</button>
+      <button>Export</button>
+    </div>
+    <div class="viz-info">
+      Polygons: <span class="metric">847,293</span> &nbsp;|&nbsp;
+      Cells: <span class="metric">1,247</span> &nbsp;|&nbsp;
+      Die: <span class="metric">500 x 500 um</span> &nbsp;|&nbsp;
+      Status: <span class="good">FAB READY</span>
+    </div>
+  </div>
+</section>
+
+<script>
+// ══════════════════════════════════════════════════════════
+//  SiliconForge Visualization Demos — Pure Canvas
+// ══════════════════════════════════════════════════════════
+
+const DPR = window.devicePixelRatio || 1;
+
+function setupCanvas(id) {
+  const c = document.getElementById(id);
+  const r = c.parentElement.getBoundingClientRect();
+  c.width = r.width * DPR;
+  c.height = r.height * DPR;
+  c.style.width = r.width + 'px';
+  c.style.height = r.height + 'px';
+  const ctx = c.getContext('2d');
+  ctx.scale(DPR, DPR);
+  return { ctx, w: r.width, h: r.height, c };
+}
+
+// ─── COLORS ───
+const COLORS = {
+  bg: '#0f0f1a',
+  grid: 'rgba(40,40,65,0.4)',
+  accent: '#00d4ff',
+  accent2: '#7c3aed',
+  accent3: '#f59e0b',
+  green: '#10b981',
+  red: '#ef4444',
+  pink: '#ec4899',
+  text: '#8888a0',
+  wire: 'rgba(0,212,255,0.5)',
+  node: '#1e293b',
+};
+
+// ─── UTILITY ───
+function rand(min, max) { return Math.random() * (max - min) + min; }
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+// ══════════════════════════════════════════════
+// STAGE 1: RTL CIRCUIT GRAPH (Force-directed)
+// ══════════════════════════════════════════════
+function drawStage1() {
+  const { ctx, w, h } = setupCanvas('c1');
+
+  // Generate circuit nodes
+  const types = ['AND', 'OR', 'NOT', 'MUX', 'DFF', 'XOR', 'BUF', 'NAND'];
+  const typeColors = {
+    'AND': '#00d4ff', 'OR': '#7c3aed', 'NOT': '#f59e0b',
+    'MUX': '#ec4899', 'DFF': '#10b981', 'XOR': '#ef4444',
+    'BUF': '#6366f1', 'NAND': '#14b8a6'
+  };
+
+  let nodes = [];
+  // Inputs on left
+  for (let i = 0; i < 9; i++) {
+    nodes.push({ x: 80, y: 50 + i * 58, vx: 0, vy: 0, type: 'IN', label: i < 8 ? `d[${i}]` : 'sel', r: 14 });
+  }
+  // Logic gates in middle columns
+  for (let col = 0; col < 3; col++) {
+    for (let row = 0; row < 8 - col * 2; row++) {
+      let t = types[Math.floor(rand(0, types.length))];
+      nodes.push({
+        x: 250 + col * 200 + rand(-30, 30),
+        y: 80 + row * 70 + col * 40 + rand(-15, 15),
+        vx: 0, vy: 0, type: t, label: t, r: 18
+      });
+    }
+  }
+  // Outputs on right
+  for (let i = 0; i < 8; i++) {
+    nodes.push({ x: w - 80, y: 80 + i * 60, vx: 0, vy: 0, type: 'OUT', label: `o[${i}]`, r: 14 });
+  }
+
+  // Generate edges
+  let edges = [];
+  const inputs = nodes.filter(n => n.type === 'IN');
+  const gates = nodes.filter(n => !['IN','OUT'].includes(n.type));
+  const outputs = nodes.filter(n => n.type === 'OUT');
+
+  // Input → gates
+  for (let g of gates.slice(0, 8)) {
+    let src = inputs[Math.floor(rand(0, inputs.length))];
+    edges.push({ from: nodes.indexOf(src), to: nodes.indexOf(g) });
+    if (Math.random() > 0.3) {
+      let src2 = inputs[Math.floor(rand(0, inputs.length))];
+      edges.push({ from: nodes.indexOf(src2), to: nodes.indexOf(g) });
+    }
+  }
+  // Gates → gates
+  for (let i = 8; i < gates.length; i++) {
+    let src = gates[Math.floor(rand(0, Math.min(i, 8)))];
+    edges.push({ from: nodes.indexOf(src), to: nodes.indexOf(gates[i]) });
+    if (Math.random() > 0.4) {
+      let src2 = gates[Math.floor(rand(0, i))];
+      edges.push({ from: nodes.indexOf(src2), to: nodes.indexOf(gates[i]) });
+    }
+  }
+  // Gates → outputs
+  for (let i = 0; i < outputs.length; i++) {
+    let src = gates[gates.length - 1 - (i % gates.length)];
+    edges.push({ from: nodes.indexOf(src), to: nodes.indexOf(outputs[i]) });
+  }
+
+  let time = 0;
+  let signalPhase = 0;
+
+  function animate() {
+    time++;
+    signalPhase += 0.02;
+    ctx.fillStyle = COLORS.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    // Grid
+    ctx.strokeStyle = COLORS.grid;
+    ctx.lineWidth = 0.5;
+    for (let x = 0; x < w; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+    for (let y = 0; y < h; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+
+    // Draw edges with signal animation
+    for (let e of edges) {
+      let from = nodes[e.from], to = nodes[e.to];
+      ctx.beginPath();
+      ctx.strokeStyle = 'rgba(0,212,255,0.15)';
+      ctx.lineWidth = 1.5;
+      // Curved bezier
+      let cx = (from.x + to.x) / 2 + rand(-5, 5);
+      let cy = (from.y + to.y) / 2;
+      ctx.moveTo(from.x, from.y);
+      ctx.quadraticCurveTo(cx, cy, to.x, to.y);
+      ctx.stroke();
+
+      // Animated signal dot
+      let t = ((signalPhase + e.from * 0.1) % 1);
+      let sx = lerp(from.x, to.x, t);
+      let sy = lerp(from.y, to.y, t);
+      ctx.beginPath();
+      ctx.fillStyle = COLORS.accent;
+      ctx.shadowColor = COLORS.accent;
+      ctx.shadowBlur = 8;
+      ctx.arc(sx, sy, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    // Draw nodes
+    for (let n of nodes) {
+      let color = n.type === 'IN' ? '#10b981' : n.type === 'OUT' ? '#ef4444' : typeColors[n.type] || '#00d4ff';
+
+      // Glow
+      ctx.beginPath();
+      ctx.fillStyle = color + '20';
+      ctx.arc(n.x, n.y, n.r + 6, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Node body
+      ctx.beginPath();
+      ctx.fillStyle = '#1a1a2e';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Label
+      ctx.fillStyle = color;
+      ctx.font = '600 9px JetBrains Mono';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(n.label, n.x, n.y);
+    }
+
+    requestAnimationFrame(animate);
+  }
+  animate();
+}
+
+// ══════════════════════════════════════════════
+// STAGE 2: WAVEFORM VIEWER
+// ══════════════════════════════════════════════
+function drawStage2() {
+  const { ctx, w, h } = setupCanvas('c2');
+
+  const signals = [
+    { name: 'clk', type: 'clock', color: '#10b981' },
+    { name: 'rst_n', type: 'bit', color: '#f59e0b' },
+    { name: 'sel', type: 'bit', color: '#7c3aed' },
+    { name: 'd_in[7:0]', type: 'bus', color: '#00d4ff' },
+    { name: 'valid', type: 'bit', color: '#ec4899' },
+    { name: 'ready', type: 'bit', color: '#14b8a6' },
+    { name: 'd_out[7:0]', type: 'bus', color: '#6366f1' },
+    { name: 'ack', type: 'bit', color: '#f97316' },
+    { name: 'err', type: 'bit', color: '#ef4444' },
+    { name: 'state[1:0]', type: 'bus', color: '#a78bfa' },
+  ];
+
+  // Pre-generate waveform data
+  const waveData = signals.map((sig, si) => {
+    let data = [];
+    if (sig.type === 'clock') {
+      for (let i = 0; i < 200; i++) data.push(i % 10 < 5 ? 1 : 0);
+    } else if (sig.type === 'bus') {
+      let val = Math.floor(rand(0, 255));
+      for (let i = 0; i < 200; i++) {
+        if (Math.random() < 0.05) val = Math.floor(rand(0, 255));
+        data.push(val);
+      }
+    } else {
+      let val = 0;
+      for (let i = 0; i < 200; i++) {
+        if (Math.random() < 0.03) val = 1 - val;
+        data.push(val);
+      }
+    }
+    return data;
+  });
+
+  let cursor = 0;
+
+  function animate() {
+    cursor = (cursor + 0.3) % 200;
+    ctx.fillStyle = COLORS.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    const leftMargin = 110;
+    const sigHeight = 42;
+    const sigGap = 6;
+    const totalW = w - leftMargin - 20;
+
+    // Time ruler
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(leftMargin, 0, totalW, 28);
+    ctx.strokeStyle = COLORS.grid;
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 20; i++) {
+      let x = leftMargin + (i / 20) * totalW;
+      ctx.beginPath();
+      ctx.moveTo(x, 20);
+      ctx.lineTo(x, 28);
+      ctx.stroke();
+      ctx.fillStyle = COLORS.text;
+      ctx.font = '500 9px JetBrains Mono';
+      ctx.textAlign = 'center';
+      ctx.fillText(i * 10 + 'ns', x, 15);
+    }
+
+    // Signals
+    signals.forEach((sig, si) => {
+      let y = 35 + si * (sigHeight + sigGap);
+
+      // Name
+      ctx.fillStyle = sig.color;
+      ctx.font = '600 10px JetBrains Mono';
+      ctx.textAlign = 'right';
+      ctx.fillText(sig.name, leftMargin - 10, y + sigHeight / 2 + 3);
+
+      // Separator
+      ctx.strokeStyle = 'rgba(40,40,65,0.3)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(leftMargin, y + sigHeight + sigGap/2);
+      ctx.lineTo(w - 20, y + sigHeight + sigGap/2);
+      ctx.stroke();
+
+      // Waveform
+      let data = waveData[si];
+      ctx.strokeStyle = sig.color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+
+      if (sig.type === 'bus') {
+        // Bus: filled polygon with hex values
+        for (let i = 0; i < data.length - 1; i++) {
+          let x1 = leftMargin + (i / 200) * totalW;
+          let x2 = leftMargin + ((i + 1) / 200) * totalW;
+          if (data[i] !== data[i + 1]) {
+            // Transition: X shape
+            ctx.moveTo(x2, y + 4);
+            ctx.lineTo(x2, y + sigHeight - 4);
+          }
+        }
+        ctx.stroke();
+
+        // Fill regions
+        let segStart = 0;
+        for (let i = 1; i <= data.length; i++) {
+          if (i === data.length || data[i] !== data[segStart]) {
+            let x1 = leftMargin + (segStart / 200) * totalW;
+            let x2 = leftMargin + (i / 200) * totalW;
+            ctx.fillStyle = sig.color + '15';
+            ctx.fillRect(x1, y + 2, x2 - x1, sigHeight - 4);
+            ctx.strokeStyle = sig.color + '60';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x1, y + 2, x2 - x1, sigHeight - 4);
+            // Hex value
+            if (x2 - x1 > 30) {
+              ctx.fillStyle = sig.color;
+              ctx.font = '500 9px JetBrains Mono';
+              ctx.textAlign = 'center';
+              ctx.fillText('0x' + data[segStart].toString(16).toUpperCase().padStart(2, '0'),
+                           (x1 + x2) / 2, y + sigHeight / 2 + 3);
+            }
+            segStart = i;
+          }
+        }
+      } else {
+        // Bit signal
+        for (let i = 0; i < data.length; i++) {
+          let x = leftMargin + (i / 200) * totalW;
+          let yVal = data[i] ? y + 5 : y + sigHeight - 5;
+          if (i === 0) ctx.moveTo(x, yVal);
+          else {
+            let prevY = data[i-1] ? y + 5 : y + sigHeight - 5;
+            if (prevY !== yVal) {
+              ctx.lineTo(x, prevY);
+              ctx.lineTo(x, yVal);
+            }
+            ctx.lineTo(x, yVal);
+          }
+        }
+        ctx.stroke();
+
+        // Fill under
+        ctx.globalAlpha = 0.05;
+        ctx.fillStyle = sig.color;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+    });
+
+    // Cursor
+    let cx = leftMargin + (cursor / 200) * totalW;
+    ctx.strokeStyle = '#ffffff80';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(cx, 0);
+    ctx.lineTo(cx, h);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Cursor time label
+    ctx.fillStyle = '#fff';
+    ctx.font = '600 10px JetBrains Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText(Math.floor(cursor) + 'ns', cx, h - 10);
+
+    requestAnimationFrame(animate);
+  }
+  animate();
+}
+
+// ══════════════════════════════════════════════
+// STAGE 3: FORMAL VERIFICATION DASHBOARD
+// ══════════════════════════════════════════════
+function drawStage3() {
+  const { ctx, w, h } = setupCanvas('c3');
+  let frame = 0;
+
+  const properties = [
+    { name: 'P1: output ≠ X', status: 'proved', depth: 20, color: '#10b981' },
+    { name: 'P2: no overflow', status: 'proved', depth: 15, color: '#10b981' },
+    { name: 'P3: counter < MAX', status: 'failed', depth: 7, color: '#ef4444' },
+  ];
+
+  function animate() {
+    frame++;
+    ctx.fillStyle = COLORS.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    // Grid
+    ctx.strokeStyle = COLORS.grid;
+    ctx.lineWidth = 0.5;
+    for (let x = 0; x < w; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+    for (let y = 0; y < h; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+
+    // Properties panel (left side)
+    let px = 40, py = 50;
+    ctx.fillStyle = '#fff';
+    ctx.font = '700 14px Inter';
+    ctx.textAlign = 'left';
+    ctx.fillText('Properties', px, py);
+
+    properties.forEach((p, i) => {
+      let y = py + 40 + i * 80;
+      // Card
+      ctx.fillStyle = p.color + '10';
+      ctx.strokeStyle = p.color + '40';
+      ctx.lineWidth = 1;
+      let rw = 320;
+      ctx.beginPath();
+      ctx.roundRect(px, y, rw, 60, 8);
+      ctx.fill();
+      ctx.stroke();
+
+      // Status icon
+      ctx.fillStyle = p.color;
+      ctx.font = '700 18px Inter';
+      ctx.fillText(p.status === 'proved' ? '✓' : '✗', px + 15, y + 35);
+
+      // Name
+      ctx.fillStyle = '#e8e8f0';
+      ctx.font = '600 12px JetBrains Mono';
+      ctx.fillText(p.name, px + 45, y + 25);
+
+      // Status
+      ctx.fillStyle = p.color;
+      ctx.font = '500 10px JetBrains Mono';
+      ctx.fillText(p.status === 'proved' ? `PROVED (depth ${p.depth})` : `FAILED @ cycle ${p.depth}`, px + 45, y + 45);
+
+      // Progress bar
+      let progress = Math.min(1, (frame * 0.01) * (i === 2 ? 2 : 1));
+      let barW = rw - 30;
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(px + 15, y + 52, barW, 3);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(px + 15, y + 52, barW * progress, 3);
+    });
+
+    // BMC depth visualization (right side)
+    let bx = 420, by = 50;
+    ctx.fillStyle = '#fff';
+    ctx.font = '700 14px Inter';
+    ctx.fillText('BMC Unrolling Depth', bx, by);
+
+    let maxDepth = 20;
+    let currentDepth = Math.min(maxDepth, Math.floor(frame * 0.15));
+
+    for (let d = 0; d < maxDepth; d++) {
+      let x = bx + (d % 10) * 70;
+      let y = by + 30 + Math.floor(d / 10) * 120;
+      let checked = d <= currentDepth;
+
+      // State box
+      ctx.fillStyle = checked ? (d === 7 ? '#ef444420' : '#10b98120') : '#1a1a2e';
+      ctx.strokeStyle = checked ? (d === 7 ? '#ef4444' : '#10b981') : '#2a2a3e';
+      ctx.lineWidth = checked ? 2 : 1;
+      ctx.beginPath();
+      ctx.roundRect(x, y, 55, 55, 6);
+      ctx.fill();
+      ctx.stroke();
+
+      // Depth number
+      ctx.fillStyle = checked ? (d === 7 ? '#ef4444' : '#10b981') : '#555';
+      ctx.font = '700 16px JetBrains Mono';
+      ctx.textAlign = 'center';
+      ctx.fillText('k=' + d, x + 27, y + 28);
+
+      // Status
+      ctx.font = '500 8px JetBrains Mono';
+      ctx.fillText(d === 7 ? 'CEX!' : checked ? 'SAT' : '...', x + 27, y + 44);
+      ctx.textAlign = 'left';
+
+      // Connection arrow
+      if (d < maxDepth - 1 && d % 10 !== 9) {
+        ctx.strokeStyle = checked ? '#10b98140' : '#2a2a3e';
+        ctx.beginPath();
+        ctx.moveTo(x + 57, y + 27);
+        ctx.lineTo(x + 68, y + 27);
+        ctx.stroke();
+      }
+    }
+
+    // Counter-example trace animation (bottom right)
+    if (currentDepth >= 7) {
+      let tx = bx, ty = by + 300;
+      ctx.fillStyle = '#ef444420';
+      ctx.strokeStyle = '#ef444460';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(tx, ty, 700, 200, 8);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#ef4444';
+      ctx.font = '700 12px JetBrains Mono';
+      ctx.fillText('COUNTER-EXAMPLE TRACE', tx + 15, ty + 25);
+
+      // State trace
+      for (let c = 0; c <= 7; c++) {
+        let cx = tx + 20 + c * 85;
+        let cy = ty + 50;
+        let highlight = Math.floor((frame * 0.05) % 8) === c;
+
+        ctx.fillStyle = highlight ? '#ef444440' : '#1a1a2e';
+        ctx.strokeStyle = highlight ? '#ef4444' : '#2a2a3e';
+        ctx.lineWidth = highlight ? 2 : 1;
+        ctx.beginPath();
+        ctx.roundRect(cx, cy, 70, 100, 4);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = highlight ? '#ef4444' : '#888';
+        ctx.font = '600 9px JetBrains Mono';
+        ctx.textAlign = 'center';
+        ctx.fillText('Cycle ' + c, cx + 35, cy + 18);
+        ctx.font = '500 8px JetBrains Mono';
+        ctx.fillText('cnt=' + c, cx + 35, cy + 40);
+        ctx.fillText('ovf=' + (c >= 7 ? '1' : '0'), cx + 35, cy + 55);
+        ctx.fillText('out=' + (c & 0x7), cx + 35, cy + 70);
+        ctx.textAlign = 'left';
+
+        // Arrow
+        if (c < 7) {
+          ctx.strokeStyle = '#ef444440';
+          ctx.beginPath();
+          ctx.moveTo(cx + 72, cy + 50);
+          ctx.lineTo(cx + 83, cy + 50);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(cx + 80, cy + 47);
+          ctx.lineTo(cx + 83, cy + 50);
+          ctx.lineTo(cx + 80, cy + 53);
+          ctx.stroke();
+        }
+      }
+    }
+
+    requestAnimationFrame(animate);
+  }
+  animate();
+}
+
+// ══════════════════════════════════════════════
+// STAGE 4: AIG OPTIMIZATION
+// ══════════════════════════════════════════════
+function drawStage4() {
+  const { ctx, w, h } = setupCanvas('c4');
+  let frame = 0;
+
+  function animate() {
+    frame++;
+    ctx.fillStyle = COLORS.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    // Before/After labels
+    ctx.fillStyle = '#fff';
+    ctx.font = '700 13px Inter';
+    ctx.textAlign = 'center';
+    ctx.fillText('BEFORE — 156 nodes', w * 0.25, 35);
+    ctx.fillText('AFTER — 94 nodes', w * 0.75, 35);
+
+    // Divider
+    ctx.strokeStyle = '#2a2a3e';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(w / 2, 0);
+    ctx.lineTo(w / 2, h);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Draw AIG nodes (before - dense)
+    function drawAIG(ox, oy, count, maxW, label) {
+      let cols = Math.ceil(Math.sqrt(count * 1.5));
+      let rows = Math.ceil(count / cols);
+      let spacing = Math.min(maxW / (cols + 1), 45);
+
+      for (let i = 0; i < count; i++) {
+        let col = i % cols;
+        let row = Math.floor(i / cols);
+        let x = ox + col * spacing + spacing / 2;
+        let y = oy + row * spacing + spacing / 2;
+
+        // Pulse animation for removed nodes
+        let alpha = 1;
+        if (label === 'before' && i >= 94) {
+          alpha = 0.3 + 0.2 * Math.sin(frame * 0.05 + i * 0.3);
+        }
+
+        // Node
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = (label === 'before' && i >= 94) ? '#ef4444' : '#00d4ff';
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Edges to children
+        if (i > 0) {
+          let parent = Math.floor((i - 1) / 2);
+          let px = ox + (parent % cols) * spacing + spacing / 2;
+          let py = oy + Math.floor(parent / cols) * spacing + spacing / 2;
+          ctx.strokeStyle = (label === 'before' && i >= 94) ? '#ef444430' : '#00d4ff20';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(px, py);
+          ctx.lineTo(x, y);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    drawAIG(20, 55, 156, w / 2 - 40, 'before');
+    drawAIG(w / 2 + 20, 55, 94, w / 2 - 40, 'after');
+
+    // Optimization stats graph (bottom)
+    let gy = h - 160;
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(40, gy, w - 80, 130);
+    ctx.strokeStyle = '#2a2a3e';
+    ctx.strokeRect(40, gy, w - 80, 130);
+
+    ctx.fillStyle = '#fff';
+    ctx.font = '600 10px JetBrains Mono';
+    ctx.textAlign = 'left';
+    ctx.fillText('Optimization Progress', 55, gy + 18);
+
+    // Line chart
+    let passes = ['init', 'rw', 'rf', 'bal', 'rw', 'rwz', 'bal', 'rf', 'rfz', 'bal'];
+    let nodeCount = [156, 138, 125, 122, 112, 105, 103, 98, 96, 94];
+    let chartW = w - 120;
+    let chartH = 80;
+    let chartX = 60;
+    let chartY = gy + 35;
+
+    let animIdx = Math.min(passes.length - 1, Math.floor(frame * 0.04));
+
+    ctx.strokeStyle = '#00d4ff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i <= animIdx; i++) {
+      let x = chartX + (i / (passes.length - 1)) * chartW;
+      let y = chartY + chartH - ((nodeCount[i] - 80) / 80) * chartH;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // Points
+    for (let i = 0; i <= animIdx; i++) {
+      let x = chartX + (i / (passes.length - 1)) * chartW;
+      let y = chartY + chartH - ((nodeCount[i] - 80) / 80) * chartH;
+      ctx.fillStyle = '#00d4ff';
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = COLORS.text;
+      ctx.font = '500 8px JetBrains Mono';
+      ctx.textAlign = 'center';
+      ctx.fillText(passes[i], x, chartY + chartH + 15);
+      ctx.fillText(nodeCount[i].toString(), x, y - 10);
+    }
+    ctx.textAlign = 'left';
+
+    requestAnimationFrame(animate);
+  }
+  animate();
+}
+
+// ══════════════════════════════════════════════
+// STAGE 5: FAULT COVERAGE HEATMAP
+// ══════════════════════════════════════════════
+function drawStage5() {
+  const { ctx, w, h } = setupCanvas('c5');
+  let frame = 0;
+
+  // Generate grid cells with coverage data
+  let gridW = 24, gridH = 16;
+  let coverage = [];
+  for (let y = 0; y < gridH; y++) {
+    coverage[y] = [];
+    for (let x = 0; x < gridW; x++) {
+      coverage[y][x] = 0.85 + Math.random() * 0.15;
+      if (Math.random() < 0.05) coverage[y][x] = 0.4 + Math.random() * 0.3; // Cold spots
+    }
+  }
+
+  function viridis(t) {
+    // Simplified viridis colormap
+    let r = Math.floor(lerp(68, 253, t));
+    let g = Math.floor(t < 0.5 ? lerp(1, 200, t * 2) : lerp(200, 231, (t - 0.5) * 2));
+    let b = Math.floor(t < 0.3 ? lerp(84, 140, t / 0.3) : lerp(140, 37, (t - 0.3) / 0.7));
+    return `rgb(${r},${g},${b})`;
+  }
+
+  function animate() {
+    frame++;
+    ctx.fillStyle = COLORS.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    let cellW = (w - 200) / gridW;
+    let cellH = (h - 100) / gridH;
+    let ox = 150, oy = 50;
+
+    // Heatmap
+    for (let y = 0; y < gridH; y++) {
+      for (let x = 0; x < gridW; x++) {
+        let animCov = Math.min(coverage[y][x], coverage[y][x] * Math.min(1, frame * 0.008));
+        ctx.fillStyle = viridis(animCov);
+        ctx.fillRect(ox + x * cellW, oy + y * cellH, cellW - 1, cellH - 1);
+
+        // Pulse low-coverage cells
+        if (coverage[y][x] < 0.7) {
+          ctx.fillStyle = `rgba(239,68,68,${0.2 + 0.15 * Math.sin(frame * 0.08)})`;
+          ctx.fillRect(ox + x * cellW, oy + y * cellH, cellW - 1, cellH - 1);
+        }
+      }
+    }
+
+    // Legend
+    let lx = 20, ly = 80;
+    ctx.fillStyle = '#fff';
+    ctx.font = '600 11px Inter';
+    ctx.textAlign = 'left';
+    ctx.fillText('Coverage', lx, ly);
+
+    for (let i = 0; i < 10; i++) {
+      let t = i / 9;
+      ctx.fillStyle = viridis(t);
+      ctx.fillRect(lx, ly + 15 + i * 20, 20, 18);
+      ctx.fillStyle = COLORS.text;
+      ctx.font = '500 9px JetBrains Mono';
+      ctx.fillText(Math.floor(t * 100) + '%', lx + 25, ly + 28 + i * 20);
+    }
+
+    // Scan chain animation (bottom)
+    let sy = h - 45;
+    ctx.fillStyle = COLORS.text;
+    ctx.font = '600 10px JetBrains Mono';
+    ctx.fillText('Scan Chain →', ox, sy);
+
+    let chainLen = 20;
+    for (let i = 0; i < chainLen; i++) {
+      let x = ox + 100 + i * 35;
+      let active = Math.floor((frame * 0.1) % chainLen) === i;
+      ctx.fillStyle = active ? '#10b981' : '#1a1a2e';
+      ctx.strokeStyle = active ? '#10b981' : '#2a2a3e';
+      ctx.lineWidth = active ? 2 : 1;
+      ctx.beginPath();
+      ctx.roundRect(x, sy - 12, 28, 22, 4);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = active ? '#fff' : '#555';
+      ctx.font = '500 8px JetBrains Mono';
+      ctx.textAlign = 'center';
+      ctx.fillText('FF' + i, x + 14, sy + 2);
+      ctx.textAlign = 'left';
+
+      if (i < chainLen - 1) {
+        ctx.strokeStyle = '#2a2a3e';
+        ctx.beginPath();
+        ctx.moveTo(x + 30, sy);
+        ctx.lineTo(x + 33, sy);
+        ctx.stroke();
+      }
+    }
+
+    requestAnimationFrame(animate);
+  }
+  animate();
+}
+
+// ══════════════════════════════════════════════
+// STAGE 6: CELL PLACEMENT
+// ══════════════════════════════════════════════
+function drawStage6() {
+  const { ctx, w, h } = setupCanvas('c6');
+  let frame = 0;
+
+  // Generate cells
+  let cells = [];
+  let numCells = 300;
+  for (let i = 0; i < numCells; i++) {
+    let row = Math.floor(i / 20);
+    let col = i % 20;
+    cells.push({
+      x: 80 + col * (w - 160) / 20 + rand(-5, 5),
+      y: 50 + row * 30 + rand(-3, 3),
+      tx: 80 + col * (w - 160) / 20,
+      ty: 50 + row * 30,
+      w: rand(10, 25),
+      h: 24,
+      type: Math.random() < 0.3 ? 'ff' : Math.random() < 0.5 ? 'comb' : 'buf',
+    });
+  }
+
+  // Generate nets between random cells
+  let nets = [];
+  for (let i = 0; i < 80; i++) {
+    let from = Math.floor(rand(0, numCells));
+    let to = Math.floor(rand(0, numCells));
+    if (from !== to) nets.push({ from, to });
+  }
+
+  function animate() {
+    frame++;
+    ctx.fillStyle = COLORS.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    // Die boundary
+    ctx.strokeStyle = '#00d4ff30';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(60, 35, w - 120, h - 70);
+    ctx.setLineDash([]);
+
+    // Row guides
+    for (let r = 0; r < 15; r++) {
+      let y = 50 + r * 30;
+      ctx.strokeStyle = 'rgba(40,40,65,0.2)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(60, y);
+      ctx.lineTo(w - 60, y);
+      ctx.stroke();
+    }
+
+    // Animate cells moving to target (placement animation)
+    let t = Math.min(1, frame * 0.005);
+
+    // Nets (rubber band)
+    for (let n of nets) {
+      let f = cells[n.from], to = cells[n.to];
+      let fx = lerp(f.x, f.tx, t), fy = lerp(f.y, f.ty, t);
+      let tx = lerp(to.x, to.tx, t), ty = lerp(to.y, to.ty, t);
+      ctx.strokeStyle = 'rgba(0,212,255,0.08)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(fx + f.w / 2, fy + f.h / 2);
+      ctx.lineTo(tx + to.w / 2, ty + to.h / 2);
+      ctx.stroke();
+    }
+
+    // Cells
+    let typeColors = { ff: '#10b981', comb: '#00d4ff', buf: '#7c3aed' };
+    for (let c of cells) {
+      let cx = lerp(c.x, c.tx, t);
+      let cy = lerp(c.y, c.ty, t);
+      let color = typeColors[c.type];
+
+      ctx.fillStyle = color + '30';
+      ctx.strokeStyle = color + '80';
+      ctx.lineWidth = 1;
+      ctx.fillRect(cx, cy, c.w, c.h);
+      ctx.strokeRect(cx, cy, c.w, c.h);
+    }
+
+    // Density overlay (subtle)
+    if (t > 0.5) {
+      let gridSize = 60;
+      for (let gx = 60; gx < w - 60; gx += gridSize) {
+        for (let gy = 35; gy < h - 35; gy += gridSize) {
+          let count = cells.filter(c => {
+            let cx = lerp(c.x, c.tx, t);
+            let cy = lerp(c.y, c.ty, t);
+            return cx >= gx && cx < gx + gridSize && cy >= gy && cy < gy + gridSize;
+          }).length;
+          let density = count / 15; // normalized
+          if (density > 0.7) {
+            ctx.fillStyle = `rgba(239,68,68,${(density - 0.7) * 0.3})`;
+            ctx.fillRect(gx, gy, gridSize, gridSize);
+          }
+        }
+      }
+    }
+
+    // Legend
+    let lx = w - 170, ly = h - 55;
+    ['ff:DFF', 'comb:Combinational', 'buf:Buffer'].forEach((item, i) => {
+      let [key, label] = item.split(':');
+      ctx.fillStyle = typeColors[key];
+      ctx.fillRect(lx, ly + i * 16, 10, 10);
+      ctx.fillStyle = COLORS.text;
+      ctx.font = '500 9px JetBrains Mono';
+      ctx.textAlign = 'left';
+      ctx.fillText(label, lx + 15, ly + 9 + i * 16);
+    });
+
+    requestAnimationFrame(animate);
+  }
+  animate();
+}
+
+// ══════════════════════════════════════════════
+// STAGE 7: 3D MULTI-LAYER ROUTING (Isometric)
+// ══════════════════════════════════════════════
+function drawStage7() {
+  const { ctx, w, h } = setupCanvas('c7');
+  let frame = 0;
+
+  // Isometric transform
+  function iso(x, y, z) {
+    return {
+      x: w/2 + (x - y) * 0.7,
+      y: h/2 + (x + y) * 0.35 - z * 1.2
+    };
+  }
+
+  // Generate wires per layer
+  const layerColors = ['#10b981', '#00d4ff', '#7c3aed', '#f59e0b', '#ef4444'];
+  const layerNames = ['M1', 'M2', 'M3', 'M4', 'M5'];
+  let wires = [];
+
+  for (let layer = 0; layer < 5; layer++) {
+    let z = layer * 45;
+    let numWires = 15 - layer * 2;
+    for (let i = 0; i < numWires; i++) {
+      if (layer % 2 === 0) { // Horizontal
+        let y = rand(-200, 200);
+        let x1 = rand(-250, 0);
+        let x2 = rand(0, 250);
+        wires.push({ x1, y1: y, x2, y2: y, z, layer });
+      } else { // Vertical
+        let x = rand(-200, 200);
+        let y1 = rand(-250, 0);
+        let y2 = rand(0, 250);
+        wires.push({ x1: x, y1, x2: x, y2, z, layer });
+      }
+    }
+  }
+
+  // Vias (connect layers)
+  let vias = [];
+  for (let i = 0; i < 30; i++) {
+    let x = rand(-200, 200);
+    let y = rand(-200, 200);
+    let fromLayer = Math.floor(rand(0, 4));
+    vias.push({ x, y, z1: fromLayer * 45, z2: (fromLayer + 1) * 45, layer: fromLayer });
+  }
+
+  function animate() {
+    frame++;
+    ctx.fillStyle = COLORS.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    let rotSpeed = 0.003;
+    let angle = frame * rotSpeed;
+
+    function rot(x, y) {
+      let cos = Math.cos(angle), sin = Math.sin(angle);
+      return { x: x * cos - y * sin, y: x * sin + y * cos };
+    }
+
+    // Sort by depth for painter's algorithm
+    let allElements = [];
+
+    // Die outline
+    let corners = [[-250,-250], [250,-250], [250,250], [-250,250]];
+    let baseZ = -20;
+
+    // Layer planes (semi-transparent)
+    for (let layer = 0; layer < 5; layer++) {
+      let z = layer * 45;
+      allElements.push({ type: 'plane', z, layer, depth: z });
+    }
+
+    // Wires
+    for (let w of wires) {
+      let midZ = w.z;
+      let r1 = rot(w.x1, w.y1);
+      let r2 = rot(w.x2, w.y2);
+      allElements.push({ type: 'wire', r1, r2, z: midZ, layer: w.layer, depth: midZ + (r1.y + r2.y) / 4 });
+    }
+
+    // Vias
+    for (let v of vias) {
+      let r = rot(v.x, v.y);
+      allElements.push({ type: 'via', r, z1: v.z1, z2: v.z2, layer: v.layer, depth: (v.z1 + v.z2) / 2 + r.y / 4 });
+    }
+
+    // Sort back-to-front
+    allElements.sort((a, b) => a.depth - b.depth);
+
+    for (let el of allElements) {
+      if (el.type === 'plane') {
+        let c = layerColors[el.layer];
+        let pts = corners.map(([cx, cy]) => {
+          let r = rot(cx, cy);
+          return iso(r.x, r.y, el.z);
+        });
+        ctx.fillStyle = c + '08';
+        ctx.strokeStyle = c + '25';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < 4; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Layer label
+        let labelPt = iso(rot(270, -250).x, rot(270, -250).y, el.z);
+        ctx.fillStyle = c;
+        ctx.font = '700 11px JetBrains Mono';
+        ctx.textAlign = 'left';
+        ctx.fillText(layerNames[el.layer], labelPt.x, labelPt.y);
+      }
+
+      if (el.type === 'wire') {
+        let p1 = iso(el.r1.x, el.r1.y, el.z);
+        let p2 = iso(el.r2.x, el.r2.y, el.z);
+        let c = layerColors[el.layer];
+
+        ctx.strokeStyle = c + 'cc';
+        ctx.lineWidth = 3;
+        ctx.shadowColor = c;
+        ctx.shadowBlur = 4;
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        // Signal pulse
+        let t = ((frame * 0.015 + el.r1.x * 0.01) % 1);
+        let px = lerp(p1.x, p2.x, t);
+        let py = lerp(p1.y, p2.y, t);
+        ctx.fillStyle = '#fff';
+        ctx.shadowColor = '#fff';
+        ctx.shadowBlur = 6;
+        ctx.beginPath();
+        ctx.arc(px, py, 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+
+      if (el.type === 'via') {
+        let p1 = iso(el.r.x, el.r.y, el.z1);
+        let p2 = iso(el.r.x, el.r.y, el.z2);
+        ctx.strokeStyle = '#ffffff60';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(p1.x, p1.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(p2.x, p2.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    requestAnimationFrame(animate);
+  }
+  animate();
+}
+
+// ══════════════════════════════════════════════
+// STAGE 8: TIMING / IR DROP HEATMAP
+// ══════════════════════════════════════════════
+function drawStage8() {
+  const { ctx, w, h } = setupCanvas('c8');
+  let frame = 0;
+
+  // Generate heatmap grid
+  let gridW = 40, gridH = 30;
+  let irData = [];
+  for (let y = 0; y < gridH; y++) {
+    irData[y] = [];
+    for (let x = 0; x < gridW; x++) {
+      let cx = x / gridW - 0.5, cy = y / gridH - 0.5;
+      let d = Math.sqrt(cx*cx + cy*cy);
+      irData[y][x] = 0.02 + d * 0.15 + rand(0, 0.03);
+      if (Math.abs(cx) < 0.15 && Math.abs(cy) < 0.15) irData[y][x] += 0.05;
+    }
+  }
+
+  function inferno(t) {
+    t = Math.max(0, Math.min(1, t));
+    let r = Math.floor(lerp(0, 252, Math.min(1, t * 2)));
+    let g = Math.floor(t < 0.5 ? lerp(0, 50, t * 2) : lerp(50, 255, (t - 0.5) * 2));
+    let b = Math.floor(t < 0.3 ? lerp(20, 150, t / 0.3) : lerp(150, 10, (t - 0.3) / 0.7));
+    return `rgb(${r},${g},${b})`;
+  }
+
+  // Critical paths
+  let critPaths = [
+    [{ x: 100, y: 200 }, { x: 250, y: 200 }, { x: 250, y: 350 }, { x: 500, y: 350 }, { x: 500, y: 250 }, { x: 700, y: 250 }],
+    [{ x: 150, y: 400 }, { x: 300, y: 400 }, { x: 300, y: 300 }, { x: 600, y: 300 }, { x: 600, y: 150 }, { x: 900, y: 150 }],
+  ];
+
+  function animate() {
+    frame++;
+    ctx.fillStyle = COLORS.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    let cellW = (w - 80) / gridW;
+    let cellH = (h - 80) / gridH;
+    let ox = 40, oy = 40;
+
+    // IR drop heatmap
+    let anim = Math.min(1, frame * 0.005);
+    for (let y = 0; y < gridH; y++) {
+      for (let x = 0; x < gridW; x++) {
+        let val = irData[y][x] * anim;
+        ctx.fillStyle = inferno(val * 5);
+        ctx.fillRect(ox + x * cellW, oy + y * cellH, cellW, cellH);
+      }
+    }
+
+    // Critical paths overlay
+    for (let pi = 0; pi < critPaths.length; pi++) {
+      let path = critPaths[pi];
+      ctx.strokeStyle = pi === 0 ? '#ef4444' : '#f59e0b';
+      ctx.lineWidth = 3;
+      ctx.shadowColor = pi === 0 ? '#ef4444' : '#f59e0b';
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.moveTo(path[0].x, path[0].y);
+      for (let i = 1; i < path.length; i++) {
+        ctx.lineTo(path[i].x, path[i].y);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // Animated signal
+      let totalLen = 0;
+      let lens = [];
+      for (let i = 1; i < path.length; i++) {
+        let dx = path[i].x - path[i-1].x;
+        let dy = path[i].y - path[i-1].y;
+        let l = Math.sqrt(dx*dx + dy*dy);
+        lens.push(l);
+        totalLen += l;
+      }
+
+      let t = ((frame * 0.008 + pi * 0.3) % 1) * totalLen;
+      let acc = 0;
+      for (let i = 0; i < lens.length; i++) {
+        if (acc + lens[i] >= t) {
+          let lt = (t - acc) / lens[i];
+          let px = lerp(path[i].x, path[i+1].x, lt);
+          let py = lerp(path[i].y, path[i+1].y, lt);
+          ctx.fillStyle = '#fff';
+          ctx.shadowColor = '#fff';
+          ctx.shadowBlur = 10;
+          ctx.beginPath();
+          ctx.arc(px, py, 5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+          break;
+        }
+        acc += lens[i];
+      }
+
+      // Path labels
+      ctx.fillStyle = pi === 0 ? '#ef4444' : '#f59e0b';
+      ctx.font = '600 9px JetBrains Mono';
+      ctx.textAlign = 'left';
+      ctx.fillText(pi === 0 ? 'Critical Path — slack: -0.02ns' : 'Near-critical — slack: +0.12ns',
+                   path[0].x, path[0].y - 10);
+    }
+
+    // Hotspot markers
+    if (anim > 0.5) {
+      let pulse = 0.5 + 0.5 * Math.sin(frame * 0.1);
+      ctx.strokeStyle = `rgba(239,68,68,${pulse})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(w * 0.5, h * 0.45, 30 + pulse * 10, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#ef4444';
+      ctx.font = '600 8px JetBrains Mono';
+      ctx.textAlign = 'center';
+      ctx.fillText('HOT SPOT', w * 0.5, h * 0.45 + 50);
+      ctx.textAlign = 'left';
+    }
+
+    requestAnimationFrame(animate);
+  }
+  animate();
+}
+
+// ══════════════════════════════════════════════
+// STAGE 9: CROSS SECTION VIEW
+// ══════════════════════════════════════════════
+function drawStage9() {
+  const { ctx, w, h } = setupCanvas('c9');
+  let frame = 0;
+
+  const layers = [
+    { name: 'Substrate', color: '#4a3728', height: 80, y: 0 },
+    { name: 'p-well / n-well', color: '#5c4033', height: 30, y: 0 },
+    { name: 'Diffusion', color: '#8b6914', height: 15, y: 0 },
+    { name: 'Poly', color: '#c41e3a', height: 12, y: 0 },
+    { name: 'Contact', color: '#777', height: 15, y: 0, via: true },
+    { name: 'li1 (Local Interconnect)', color: '#10b981', height: 20, y: 0 },
+    { name: 'Via (mcon)', color: '#888', height: 12, y: 0, via: true },
+    { name: 'Metal 1', color: '#00d4ff', height: 25, y: 0 },
+    { name: 'Via (via1)', color: '#999', height: 12, y: 0, via: true },
+    { name: 'Metal 2', color: '#7c3aed', height: 25, y: 0 },
+    { name: 'Via (via2)', color: '#aaa', height: 12, y: 0, via: true },
+    { name: 'Metal 3', color: '#f59e0b', height: 30, y: 0 },
+    { name: 'Via (via3)', color: '#bbb', height: 12, y: 0, via: true },
+    { name: 'Metal 4', color: '#ec4899', height: 35, y: 0 },
+    { name: 'Via (via4)', color: '#ccc', height: 12, y: 0, via: true },
+    { name: 'Metal 5', color: '#ef4444', height: 40, y: 0 },
+    { name: 'Passivation', color: '#334155', height: 20, y: 0 },
+  ];
+
+  // Compute Y positions
+  let totalH = layers.reduce((s, l) => s + l.height, 0);
+  let scale = (h - 100) / totalH;
+  let cumY = h - 40;
+  for (let l of layers) {
+    l.height *= scale;
+    l.y = cumY - l.height;
+    cumY = l.y;
+  }
+
+  function animate() {
+    frame++;
+    ctx.fillStyle = COLORS.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    let ox = 180;
+    let layerW = w - 220;
+    let anim = Math.min(1, frame * 0.006);
+
+    // Draw layers bottom-up
+    for (let i = 0; i < layers.length; i++) {
+      let l = layers[i];
+      let animW = layerW * Math.min(1, anim * (layers.length / (i + 1)));
+
+      if (l.via) {
+        // Vias: draw as columns
+        let numVias = 6;
+        for (let v = 0; v < numVias; v++) {
+          let vx = ox + 60 + v * (animW - 100) / numVias;
+          ctx.fillStyle = l.color + 'cc';
+          ctx.fillRect(vx, l.y, 12, l.height);
+          ctx.strokeStyle = l.color;
+          ctx.lineWidth = 1;
+          ctx.strokeRect(vx, l.y, 12, l.height);
+        }
+      } else {
+        // Full layer
+        ctx.fillStyle = l.color + '90';
+        ctx.strokeStyle = l.color;
+        ctx.lineWidth = 1.5;
+
+        // For metal layers, draw as separate wire segments
+        if (l.name.startsWith('Metal') || l.name.startsWith('li1')) {
+          let numWires = 4 + Math.floor(rand(0, 3));
+          for (let sw = 0; sw < numWires; sw++) {
+            let wx = ox + 30 + sw * (animW - 60) / numWires;
+            let ww = 20 + rand(0, 40);
+            ctx.fillStyle = l.color + 'bb';
+            ctx.fillRect(wx, l.y, ww, l.height);
+            ctx.strokeRect(wx, l.y, ww, l.height);
+          }
+        } else {
+          ctx.fillRect(ox, l.y, animW, l.height);
+          ctx.strokeRect(ox, l.y, animW, l.height);
+        }
+      }
+
+      // Layer label (left side)
+      ctx.fillStyle = l.color;
+      ctx.font = '500 9px JetBrains Mono';
+      ctx.textAlign = 'right';
+      ctx.fillText(l.name, ox - 10, l.y + l.height / 2 + 3);
+      ctx.textAlign = 'left';
+
+      // Height annotation (right side)
+      if (!l.via) {
+        let realH = l.name.startsWith('Metal 5') ? '0.80um' :
+                    l.name.startsWith('Metal 4') ? '0.60um' :
+                    l.name.startsWith('Metal 3') ? '0.50um' :
+                    l.name.startsWith('Metal') ? '0.36um' :
+                    l.name.startsWith('li1') ? '0.10um' :
+                    l.name.startsWith('Poly') ? '0.18um' : '';
+        if (realH) {
+          ctx.fillStyle = COLORS.text;
+          ctx.font = '500 8px JetBrains Mono';
+          ctx.fillText(realH, ox + layerW + 10, l.y + l.height / 2 + 3);
+        }
+      }
+    }
+
+    // Slice plane indicator
+    let sliceX = ox + (Math.sin(frame * 0.01) * 0.3 + 0.5) * layerW;
+    ctx.strokeStyle = '#ffffff40';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(sliceX, 20);
+    ctx.lineTo(sliceX, h - 20);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = '#fff';
+    ctx.font = '600 9px JetBrains Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText('Slice Plane', sliceX, 15);
+    ctx.textAlign = 'left';
+
+    requestAnimationFrame(animate);
+  }
+  animate();
+}
+
+// ══════════════════════════════════════════════
+// STAGE 10: FINAL GDSII 3D VIEW (Isometric)
+// ══════════════════════════════════════════════
+function drawStage10() {
+  const { ctx, w, h } = setupCanvas('c10');
+  let frame = 0;
+
+  function animate() {
+    frame++;
+    ctx.fillStyle = '#050510';
+    ctx.fillRect(0, 0, w, h);
+
+    let angle = frame * 0.004;
+    let cos = Math.cos(angle), sin = Math.sin(angle);
+
+    function iso(x, y, z) {
+      let rx = x * cos - y * sin;
+      let ry = x * sin + y * cos;
+      return {
+        x: w / 2 + rx * 0.6 - ry * 0.0,
+        y: h / 2 + rx * 0.3 + ry * 0.3 - z * 1.0
+      };
+    }
+
+    let chipSize = 250;
+
+    // Die substrate
+    let sub = [
+      iso(-chipSize, -chipSize, 0),
+      iso(chipSize, -chipSize, 0),
+      iso(chipSize, chipSize, 0),
+      iso(-chipSize, chipSize, 0)
+    ];
+    ctx.fillStyle = '#1a1520';
+    ctx.beginPath();
+    ctx.moveTo(sub[0].x, sub[0].y);
+    for (let i = 1; i < 4; i++) ctx.lineTo(sub[i].x, sub[i].y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#00d4ff20';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Cell blocks (bottom layer)
+    let cellColors = ['#10b98140', '#00d4ff40', '#7c3aed40', '#f59e0b40'];
+    for (let i = 0; i < 100; i++) {
+      let cx = -220 + (i % 10) * 45;
+      let cy = -220 + Math.floor(i / 10) * 45;
+      let cz = 5;
+      let cw = 35, cd = 35, ch = 8 + (i % 3) * 4;
+      let color = cellColors[i % cellColors.length];
+
+      // Top face
+      let top = [iso(cx, cy, cz + ch), iso(cx + cw, cy, cz + ch), iso(cx + cw, cy + cd, cz + ch), iso(cx, cy + cd, cz + ch)];
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(top[0].x, top[0].y);
+      for (let j = 1; j < 4; j++) ctx.lineTo(top[j].x, top[j].y);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Metal layer wires
+    const metalLayers = [
+      { z: 30, color: '#00d4ff', dir: 'h', count: 12 },
+      { z: 55, color: '#7c3aed', dir: 'v', count: 10 },
+      { z: 80, color: '#f59e0b', dir: 'h', count: 8 },
+      { z: 110, color: '#ec4899', dir: 'v', count: 6 },
+      { z: 145, color: '#ef4444', dir: 'h', count: 4 },
+    ];
+
+    for (let ml of metalLayers) {
+      for (let i = 0; i < ml.count; i++) {
+        let spread = (i / (ml.count - 1)) * 400 - 200;
+        let p1, p2;
+        if (ml.dir === 'h') {
+          p1 = iso(-230, spread, ml.z);
+          p2 = iso(230, spread, ml.z);
+        } else {
+          p1 = iso(spread, -230, ml.z);
+          p2 = iso(spread, 230, ml.z);
+        }
+
+        ctx.strokeStyle = ml.color + 'aa';
+        ctx.lineWidth = 2.5;
+        ctx.shadowColor = ml.color;
+        ctx.shadowBlur = 3;
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        // Signal pulse
+        let t = ((frame * 0.01 + i * 0.15) % 1);
+        let px = lerp(p1.x, p2.x, t);
+        let py = lerp(p1.y, p2.y, t);
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowColor = '#fff';
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        ctx.arc(px, py, 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    }
+
+    // Pad ring
+    for (let side = 0; side < 4; side++) {
+      for (let i = 0; i < 8; i++) {
+        let pos = -200 + i * 55;
+        let pad;
+        if (side === 0) pad = iso(pos, -250, 160);
+        else if (side === 1) pad = iso(250, pos, 160);
+        else if (side === 2) pad = iso(pos, 250, 160);
+        else pad = iso(-250, pos, 160);
+
+        ctx.fillStyle = '#c0c0c040';
+        ctx.strokeStyle = '#c0c0c080';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(pad.x, pad.y, 8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+
+    // Title
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 16px Inter';
+    ctx.textAlign = 'center';
+    ctx.fillText('SiliconForge — 3D Chip View', w / 2, h - 20);
+    ctx.textAlign = 'left';
+
+    requestAnimationFrame(animate);
+  }
+  animate();
+}
+
+// ══════════════════════════════════════════════
+// INITIALIZE ALL STAGES
+// ══════════════════════════════════════════════
+// Use Intersection Observer for lazy initialization
+const observers = new Map();
+const initialized = new Set();
+
+function initStage(id, drawFn) {
+  if (initialized.has(id)) return;
+  const section = document.getElementById(id);
+  if (!section) return;
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting && !initialized.has(id)) {
+        initialized.add(id);
+        drawFn();
+        observer.disconnect();
+      }
+    });
+  }, { threshold: 0.2 });
+
+  observer.observe(section);
+}
+
+// Register all stages
+initStage('s1', drawStage1);
+initStage('s2', drawStage2);
+initStage('s3', drawStage3);
+initStage('s4', drawStage4);
+initStage('s5', drawStage5);
+initStage('s6', drawStage6);
+initStage('s7', drawStage7);
+initStage('s8', drawStage8);
+initStage('s9', drawStage9);
+initStage('s10', drawStage10);
+
+// Handle resize
+window.addEventListener('resize', () => {
+  initialized.clear();
+  initStage('s1', drawStage1);
+  initStage('s2', drawStage2);
+  initStage('s3', drawStage3);
+  initStage('s4', drawStage4);
+  initStage('s5', drawStage5);
+  initStage('s6', drawStage6);
+  initStage('s7', drawStage7);
+  initStage('s8', drawStage8);
+  initStage('s9', drawStage9);
+  initStage('s10', drawStage10);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,188 @@
+{
+  "flow_state": {
+    "has_netlist": true,
+    "is_synthesized": false,
+    "is_simulated": false,
+    "is_formal_done": false,
+    "is_dft_done": false,
+    "has_floorplan": false,
+    "is_placed": false,
+    "is_routed": false,
+    "is_drc_done": false,
+    "is_lvs_done": false,
+    "is_sta_done": false,
+    "is_power_done": false
+  },
+  "netlist": {
+    "num_nets": 52,
+    "num_gates": 33,
+    "num_ffs": 0,
+    "num_pis": 19,
+    "num_pos": 8,
+    "primary_inputs": [{"id":0,"name":"a0"},{"id":1,"name":"a1"},{"id":2,"name":"a2"},{"id":3,"name":"a3"},{"id":4,"name":"a4"},{"id":5,"name":"a5"},{"id":6,"name":"a6"},{"id":7,"name":"a7"},{"id":8,"name":"b0"},{"id":9,"name":"b1"},{"id":10,"name":"b2"},{"id":11,"name":"b3"},{"id":12,"name":"b4"},{"id":13,"name":"b5"},{"id":14,"name":"b6"},{"id":15,"name":"b7"},{"id":16,"name":"sel"},{"id":17,"name":"clk"},{"id":18,"name":"rst"}],
+    "primary_outputs": [{"id":19,"name":"y0"},{"id":20,"name":"y1"},{"id":21,"name":"y2"},{"id":22,"name":"y3"},{"id":23,"name":"y4"},{"id":24,"name":"y5"},{"id":25,"name":"y6"},{"id":26,"name":"y7"}],
+    "gates": [
+      {"id":0,"name":"U_inv","type":"NOT","inputs":[16],"output":27},
+      {"id":1,"name":"U_a0","type":"AND","inputs":[0,27],"output":28},
+      {"id":2,"name":"U_a1","type":"AND","inputs":[1,27],"output":29},
+      {"id":3,"name":"U_a2","type":"AND","inputs":[2,27],"output":30},
+      {"id":4,"name":"U_a3","type":"AND","inputs":[3,27],"output":31},
+      {"id":5,"name":"U_a4","type":"AND","inputs":[4,27],"output":32},
+      {"id":6,"name":"U_a5","type":"AND","inputs":[5,27],"output":33},
+      {"id":7,"name":"U_a6","type":"AND","inputs":[6,27],"output":34},
+      {"id":8,"name":"U_a7","type":"AND","inputs":[7,27],"output":35},
+      {"id":9,"name":"U_b0","type":"AND","inputs":[8,16],"output":36},
+      {"id":10,"name":"U_b1","type":"AND","inputs":[9,16],"output":37},
+      {"id":11,"name":"U_b2","type":"AND","inputs":[10,16],"output":38},
+      {"id":12,"name":"U_b3","type":"AND","inputs":[11,16],"output":39},
+      {"id":13,"name":"U_b4","type":"AND","inputs":[12,16],"output":40},
+      {"id":14,"name":"U_b5","type":"AND","inputs":[13,16],"output":41},
+      {"id":15,"name":"U_b6","type":"AND","inputs":[14,16],"output":42},
+      {"id":16,"name":"U_b7","type":"AND","inputs":[15,16],"output":43},
+      {"id":17,"name":"U_m0","type":"OR","inputs":[28,36],"output":44},
+      {"id":18,"name":"U_m1","type":"OR","inputs":[29,37],"output":45},
+      {"id":19,"name":"U_m2","type":"OR","inputs":[30,38],"output":46},
+      {"id":20,"name":"U_m3","type":"OR","inputs":[31,39],"output":47},
+      {"id":21,"name":"U_m4","type":"OR","inputs":[32,40],"output":48},
+      {"id":22,"name":"U_m5","type":"OR","inputs":[33,41],"output":49},
+      {"id":23,"name":"U_m6","type":"OR","inputs":[34,42],"output":50},
+      {"id":24,"name":"U_m7","type":"OR","inputs":[35,43],"output":51},
+      {"id":25,"name":"assign_y0","type":"BUF","inputs":[44],"output":19},
+      {"id":26,"name":"assign_y1","type":"BUF","inputs":[45],"output":20},
+      {"id":27,"name":"assign_y2","type":"BUF","inputs":[46],"output":21},
+      {"id":28,"name":"assign_y3","type":"BUF","inputs":[47],"output":22},
+      {"id":29,"name":"assign_y4","type":"BUF","inputs":[48],"output":23},
+      {"id":30,"name":"assign_y5","type":"BUF","inputs":[49],"output":24},
+      {"id":31,"name":"assign_y6","type":"BUF","inputs":[50],"output":25},
+      {"id":32,"name":"assign_y7","type":"BUF","inputs":[51],"output":26}
+    ],
+    "nets": [
+      {"id":0,"name":"a0","driver":-1,"fanout":[1]},
+      {"id":1,"name":"a1","driver":-1,"fanout":[2]},
+      {"id":2,"name":"a2","driver":-1,"fanout":[3]},
+      {"id":3,"name":"a3","driver":-1,"fanout":[4]},
+      {"id":4,"name":"a4","driver":-1,"fanout":[5]},
+      {"id":5,"name":"a5","driver":-1,"fanout":[6]},
+      {"id":6,"name":"a6","driver":-1,"fanout":[7]},
+      {"id":7,"name":"a7","driver":-1,"fanout":[8]},
+      {"id":8,"name":"b0","driver":-1,"fanout":[9]},
+      {"id":9,"name":"b1","driver":-1,"fanout":[10]},
+      {"id":10,"name":"b2","driver":-1,"fanout":[11]},
+      {"id":11,"name":"b3","driver":-1,"fanout":[12]},
+      {"id":12,"name":"b4","driver":-1,"fanout":[13]},
+      {"id":13,"name":"b5","driver":-1,"fanout":[14]},
+      {"id":14,"name":"b6","driver":-1,"fanout":[15]},
+      {"id":15,"name":"b7","driver":-1,"fanout":[16]},
+      {"id":16,"name":"sel","driver":-1,"fanout":[0,9,10,11,12,13,14,15,16]},
+      {"id":17,"name":"clk","driver":-1,"fanout":[]},
+      {"id":18,"name":"rst","driver":-1,"fanout":[]},
+      {"id":19,"name":"y0","driver":25,"fanout":[]},
+      {"id":20,"name":"y1","driver":26,"fanout":[]},
+      {"id":21,"name":"y2","driver":27,"fanout":[]},
+      {"id":22,"name":"y3","driver":28,"fanout":[]},
+      {"id":23,"name":"y4","driver":29,"fanout":[]},
+      {"id":24,"name":"y5","driver":30,"fanout":[]},
+      {"id":25,"name":"y6","driver":31,"fanout":[]},
+      {"id":26,"name":"y7","driver":32,"fanout":[]},
+      {"id":27,"name":"sel_n","driver":0,"fanout":[1,2,3,4,5,6,7,8]},
+      {"id":28,"name":"sa0","driver":1,"fanout":[17]},
+      {"id":29,"name":"sa1","driver":2,"fanout":[18]},
+      {"id":30,"name":"sa2","driver":3,"fanout":[19]},
+      {"id":31,"name":"sa3","driver":4,"fanout":[20]},
+      {"id":32,"name":"sa4","driver":5,"fanout":[21]},
+      {"id":33,"name":"sa5","driver":6,"fanout":[22]},
+      {"id":34,"name":"sa6","driver":7,"fanout":[23]},
+      {"id":35,"name":"sa7","driver":8,"fanout":[24]},
+      {"id":36,"name":"sb0","driver":9,"fanout":[17]},
+      {"id":37,"name":"sb1","driver":10,"fanout":[18]},
+      {"id":38,"name":"sb2","driver":11,"fanout":[19]},
+      {"id":39,"name":"sb3","driver":12,"fanout":[20]},
+      {"id":40,"name":"sb4","driver":13,"fanout":[21]},
+      {"id":41,"name":"sb5","driver":14,"fanout":[22]},
+      {"id":42,"name":"sb6","driver":15,"fanout":[23]},
+      {"id":43,"name":"sb7","driver":16,"fanout":[24]},
+      {"id":44,"name":"m0","driver":17,"fanout":[25]},
+      {"id":45,"name":"m1","driver":18,"fanout":[26]},
+      {"id":46,"name":"m2","driver":19,"fanout":[27]},
+      {"id":47,"name":"m3","driver":20,"fanout":[28]},
+      {"id":48,"name":"m4","driver":21,"fanout":[29]},
+      {"id":49,"name":"m5","driver":22,"fanout":[30]},
+      {"id":50,"name":"m6","driver":23,"fanout":[31]},
+      {"id":51,"name":"m7","driver":24,"fanout":[32]}
+    ]
+  },
+  "synthesis": {
+    "nodes_before": 0,
+    "nodes_after": 0,
+    "depth_before": 0,
+    "depth_after": 0,
+    "reduction_pct": 0
+  },
+  "simulation": {
+    "num_timepoints": 0,
+    "num_signals": 0,
+    "times": [],
+    "signals": [
+    ]
+  },
+  "formal": {
+    "bmc_depth": 0,
+    "num_properties": 0,
+    "properties": [
+    ]
+  },
+  "dft": {
+    "total_faults": 0,
+    "detected": 0,
+    "coverage_pct": 0,
+    "patterns": 0
+  },
+  "physical": {
+    "die": {"w":0,"h":0},
+    "num_cells": 0,
+    "num_wires": 0,
+    "num_vias": 0,
+    "wirelength": 0,
+    "utilization": 0,
+    "cells": [
+    ],
+    "wires": [
+    ],
+    "vias": [
+    ]
+  },
+  "timing": {
+    "wns": 0,
+    "tns": 0,
+    "num_violations": 0,
+    "num_endpoints": 0,
+    "clock_period_ns": 1,
+    "critical_path": [
+    ]
+  },
+  "power": {
+    "dynamic_mw": 0,
+    "leakage_mw": 0,
+    "switching_mw": 0,
+    "internal_mw": 0,
+    "total_mw": 0,
+    "clock_freq_mhz": 0
+  },
+  "drc": {
+    "total_rules": 0,
+    "violations": 0,
+    "errors": 0,
+    "warnings": 0,
+    "details": [
+    ]
+  },
+  "lvs": {
+    "match": false,
+    "schematic_cells": 0,
+    "layout_cells": 0,
+    "matched_cells": 0,
+    "unmatched_schematic": 0,
+    "unmatched_layout": 0,
+    "net_mismatches": 0
+  }
+}

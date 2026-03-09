@@ -1,0 +1,119 @@
+{
+  "flow_state": {
+    "has_netlist": true,
+    "is_synthesized": true,
+    "is_simulated": false,
+    "is_formal_done": false,
+    "is_dft_done": false,
+    "has_floorplan": true,
+    "is_placed": true,
+    "is_routed": true,
+    "is_drc_done": false,
+    "is_lvs_done": false,
+    "is_sta_done": false,
+    "is_power_done": false
+  },
+  "netlist": {
+    "num_nets": 7,
+    "num_gates": 3,
+    "num_ffs": 0,
+    "num_pis": 4,
+    "num_pos": 1,
+    "primary_inputs": [{"id":0,"name":"a"},{"id":1,"name":"b"},{"id":2,"name":"c"},{"id":3,"name":"clk"}],
+    "primary_outputs": [{"id":4,"name":"y"}],
+    "gates": [
+      {"id":0,"name":"assign_w1","type":"AND","inputs":[0,1],"output":5},
+      {"id":1,"name":"assign_w2","type":"OR","inputs":[5,2],"output":6},
+      {"id":2,"name":"assign_y","type":"BUF","inputs":[6],"output":4}
+    ],
+    "nets": [
+      {"id":0,"name":"a","driver":-1,"fanout":[0]},
+      {"id":1,"name":"b","driver":-1,"fanout":[0]},
+      {"id":2,"name":"c","driver":-1,"fanout":[1]},
+      {"id":3,"name":"clk","driver":-1,"fanout":[]},
+      {"id":4,"name":"y","driver":2,"fanout":[]},
+      {"id":5,"name":"w1","driver":0,"fanout":[1]},
+      {"id":6,"name":"w2","driver":1,"fanout":[2]}
+    ]
+  },
+  "synthesis": {
+    "nodes_before": 3,
+    "nodes_after": 3,
+    "depth_before": 3,
+    "depth_after": 3,
+    "reduction_pct": 0
+  },
+  "simulation": {
+    "num_timepoints": 0,
+    "num_signals": 0,
+    "times": [],
+    "signals": [
+    ]
+  },
+  "formal": {
+    "bmc_depth": 0,
+    "num_properties": 0,
+    "properties": [
+    ]
+  },
+  "dft": {
+    "total_faults": 0,
+    "detected": 0,
+    "coverage_pct": 0,
+    "patterns": 0
+  },
+  "physical": {
+    "die": {"w":100,"h":100},
+    "num_cells": 3,
+    "num_wires": 3,
+    "num_vias": 0,
+    "wirelength": 13.861,
+    "utilization": 0.006,
+    "cells": [
+      {"id":0,"name":"assign_w1","type":"AND","x":25.6264,"y":20,"w":2,"h":10},
+      {"id":1,"name":"assign_w2","type":"OR","x":27.6264,"y":20,"w":2,"h":10},
+      {"id":2,"name":"assign_y","type":"BUF","x":25.7654,"y":30,"w":2,"h":10}
+    ],
+    "wires": [
+      {"layer":1,"x1":26.6264,"y1":25,"x2":28.6264,"y2":25,"width":0.1},
+      {"layer":1,"x1":28.6264,"y1":25,"x2":28.6264,"y2":35,"width":0.1},
+      {"layer":1,"x1":28.6264,"y1":35,"x2":26.7654,"y2":35,"width":0.1}
+    ],
+    "vias": [
+    ]
+  },
+  "timing": {
+    "wns": 0,
+    "tns": 0,
+    "num_violations": 0,
+    "num_endpoints": 0,
+    "clock_period_ns": 1,
+    "critical_path": [
+    ]
+  },
+  "power": {
+    "dynamic_mw": 0,
+    "leakage_mw": 0,
+    "switching_mw": 0,
+    "internal_mw": 0,
+    "total_mw": 0,
+    "clock_freq_mhz": 0
+  },
+  "drc": {
+    "total_rules": 0,
+    "violations": 0,
+    "errors": 0,
+    "warnings": 0,
+    "details": [
+    ]
+  },
+  "lvs": {
+    "match": false,
+    "schematic_cells": 0,
+    "layout_cells": 0,
+    "matched_cells": 0,
+    "unmatched_schematic": 0,
+    "unmatched_layout": 0,
+    "net_mismatches": 0
+  }
+}
