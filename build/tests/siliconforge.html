@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SiliconForge Ultimate Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+
+        :root { --bg: #09090b; --fg: #fafafa; --accent: #06b6d4; --panel: #18181b; }
+        body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font-family: 'Inter', sans-serif; display: flex; flex-direction: column; height: 100vh; }
+        header { padding: 1rem 2rem; background: var(--panel); border-bottom: 1px solid #27272a; display: flex; justify-content: space-between; align-items: center; }
+        header h1 { margin: 0; font-size: 1.5rem; font-weight: 700; background: linear-gradient(90deg, #06b6d4, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .main-container { display: flex; flex: 1; overflow: hidden; }
+        .sidebar { width: 300px; background: var(--panel); border-right: 1px solid #27272a; padding: 1.5rem; overflow-y: auto; }
+        .content { flex: 1; position: relative; display: flex; flex-direction: column; }
+        .metric-card { background: #27272a; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border: 1px solid #3f3f46; }
+        .metric-card h3 { margin: 0 0 0.5rem 0; font-size: 0.875rem; color: #a1a1aa; text-transform: uppercase; letter-spacing: 0.05em; }
+        .metric-card .val { font-size: 1.5rem; font-weight: 600; color: var(--accent); }
+        .tabs { display: flex; background: var(--panel); border-bottom: 1px solid #27272a; }
+        .tab { padding: 1rem 2rem; cursor: pointer; color: #a1a1aa; font-weight: 500; transition: all 0.2s; border-bottom: 2px solid transparent; }
+        .tab:hover { color: var(--fg); }
+        .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+        .tab-content { flex: 1; position: relative; display: none; }
+        .tab-content.active { display: block; }
+        canvas { width: 100%; height: 100%; display: block; }
+        </style>
+</head>
+<body>
+
+        <header>
+            <h1>SiliconForge EDA</h1>
+            <div style="color: #a1a1aa; font-size: 0.875rem;">Status: <span style="color: #10b981;">Signoff Complete</span></div>
+        </header>
+        <div class="main-container">
+
+        <div class="sidebar">
+            <h2 style="margin-top: 0; font-size: 1.1rem;">Design Metrics</h2>
+            
+            <div class="metric-card">
+                <h3>Total Nets</h3>
+                <div class="val">10</div>
+            </div>
+            
+            <div class="metric-card">
+                <h3>Total Logic Gates</h3>
+                <div class="val">6</div>
+            </div>
+
+            <div class="metric-card">
+                <h3>Total Std Cells</h3>
+                <div class="val">6</div>
+            </div>
+
+            <div class="metric-card">
+                <h3>Routed Wire Segments</h3>
+                <div class="val">10</div>
+            </div>
+            
+            <div class="metric-card">
+                <h3>Total Wirelength</h3>
+                <div class="val">55.8828 &#181;m</div>
+            </div>
+        </div>
+            <div class="content">
+            <div class="tabs">
+                <div class="tab active" onclick="switchTab('layout')">Physical Layout</div>
+                <div class="tab" onclick="switchTab('rtl')">RTL Data</div>
+            </div>
+
+        <div id="layout" class="tab-content">
+            <canvas id="layoutCanvas"></canvas>
+        </div>
+        <div id="rtl" class="tab-content" style="padding: 2rem;">
+            <h2 style="color: #3b82f6;">RTL Netlist Details</h2>
+            <p style="color: #a1a1aa;">The RTL graph renderer is integrated into a separate view for performance. Use the <code>rtl_out.html</code> for full 3D interactive netlist exploration.</p>
+        </div>
+            </div>
+    </div>
+    <script>
+const pd = {
+  width: 100,
+  height: 100,
+  cells: [
+    { x: 26.1007, y: 30, w: 2, h: 10, type: 'AND' },
+    { x: 28.1007, y: 30, w: 2, h: 10, type: 'OR' },
+    { x: 26.1597, y: 40, w: 2, h: 10, type: 'BUF' },
+    { x: 28.1597, y: 40, w: 2, h: 10, type: 'DFF' },
+    { x: 30.1597, y: 40, w: 2, h: 10, type: 'NOT' },
+    { x: 26.2183, y: 50, w: 2, h: 10, type: 'AND' },
+  ],
+  wires: [
+    { x1: 27.1007, y1: 35, x2: 27.1007, y2: 45, layer: 1 },
+    { x1: 27.1007, y1: 45, x2: 29.1597, y2: 45, layer: 1 },
+    { x1: 27.1597, y1: 45, x2: 31.1597, y2: 45, layer: 1 },
+    { x1: 27.1007, y1: 35, x2: 29.1007, y2: 35, layer: 1 },
+    { x1: 29.1007, y1: 35, x2: 29.1007, y2: 45, layer: 1 },
+    { x1: 29.1007, y1: 45, x2: 27.1597, y2: 45, layer: 1 },
+    { x1: 29.1597, y1: 45, x2: 29.1597, y2: 55, layer: 1 },
+    { x1: 29.1597, y1: 55, x2: 27.2183, y2: 55, layer: 1 },
+    { x1: 31.1597, y1: 45, x2: 31.1597, y2: 55, layer: 1 },
+    { x1: 31.1597, y1: 55, x2: 27.2183, y2: 55, layer: 1 },
+  ]
+};
+
+        function switchTab(id) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelector(`[onclick="switchTab('${id}')"]`).classList.add('active');
+            document.getElementById(id).classList.add('active');
+            if (id === 'layout') drawLayout();
+        }
+
+        function drawLayout() {
+            const canvas = document.getElementById('layoutCanvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = canvas.parentElement.clientWidth;
+            canvas.height = canvas.parentElement.clientHeight;
+            
+            ctx.fillStyle = '#09090b';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Transform
+            const padding = 50;
+            let scaleZoom = Math.min((canvas.width - padding*2) / (pd.width || 100), (canvas.height - padding*2) / (pd.height || 100));
+            if (!isFinite(scaleZoom) || scaleZoom <= 0) scaleZoom = 1;
+            
+            ctx.save();
+            ctx.translate(padding, canvas.height - padding); // flip Y
+            ctx.scale(scaleZoom, -scaleZoom);
+            
+            // Draw Die Bounds
+            ctx.strokeStyle = '#3f3f46';
+            ctx.lineWidth = 2/scaleZoom;
+            ctx.strokeRect(0, 0, pd.width, pd.height);
+
+            // Draw Cells
+            ctx.fillStyle = 'rgba(6, 182, 212, 0.2)';
+            ctx.strokeStyle = '#06b6d4';
+            ctx.lineWidth = 1/scaleZoom;
+            pd.cells.forEach(c => {
+                ctx.fillRect(c.x, c.y, c.w, c.h);
+                ctx.strokeRect(c.x, c.y, c.w, c.h);
+            });
+
+            // Draw Wires
+            ctx.strokeStyle = 'rgba(236, 72, 153, 0.8)'; // Pinkish routed wires
+            ctx.lineWidth = 2/scaleZoom;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.beginPath();
+            pd.wires.forEach(w => {
+                ctx.moveTo(w.x1, w.y1);
+                ctx.lineTo(w.x2, w.y2);
+            });
+            ctx.stroke();
+            
+            ctx.restore();
+        }
+        
+        window.addEventListener('resize', () => {
+            if (document.getElementById('layout').classList.contains('active')) drawLayout();
+        });
+        
+        // Init
+        switchTab('layout');
+        </script>
+</body>
+</html>

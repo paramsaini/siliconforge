@@ -42,6 +42,8 @@ bool SiliconForgeShell::execute_command(const std::string& cmd_line) {
 
     if (cmd == "help") {
         print_help();
+    } else if (cmd == "reset") {
+        engine_.reset();
     } else if (cmd == "read_verilog") {
         std::string filename;
         if (iss >> filename) engine_.read_verilog(filename);

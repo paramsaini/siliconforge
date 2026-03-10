@@ -94,6 +94,7 @@ public:
     static Logic4 eval_gate(GateType type, const std::vector<Logic4>& inputs);
 
     void print_stats() const;
+    void clear();
 
 private:
     std::vector<Net> nets_;

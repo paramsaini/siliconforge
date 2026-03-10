@@ -109,6 +109,9 @@ public:
     bool write_json(const std::string& filename) const;
     bool write_full_json(const std::string& filename) const;
 
+    // Reset
+    void reset();
+
     // Accessors
     Netlist& netlist() { return nl_; }
     PhysicalDesign& physical_design() { return pd_; }

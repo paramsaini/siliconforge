@@ -98,6 +98,11 @@
   }
   .flow-btn:hover { background: linear-gradient(135deg, #00d4ff, #7c3aed); color: #000; box-shadow: 0 0 20px rgba(0,212,255,0.4); }
   .flow-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .flow-btn.reset-btn {
+    background: linear-gradient(135deg, rgba(239,68,68,0.15), rgba(249,115,22,0.15));
+    border-color: #ef4444; margin-left: 12px;
+  }
+  .flow-btn.reset-btn:hover { background: linear-gradient(135deg, #ef4444, #f97316); color: #000; box-shadow: 0 0 20px rgba(239,68,68,0.4); }
 
   /* STAGE SECTIONS */
   .stage {
@@ -223,6 +228,7 @@
   </div>
 
   <button class="flow-btn" id="run-all-btn" onclick="runFullFlow()">Run Full RTL-to-GDSII Flow</button>
+  <button class="flow-btn reset-btn" id="new-design-btn" onclick="newDesign()">New Design</button>
 
   <div class="scroll-hint">scroll to explore each stage</div>
 </section>
@@ -233,7 +239,7 @@
     <div class="stage-number">Stage 01 -- RTL Design</div>
     <div class="stage-title">Circuit Graph</div>
     <div class="stage-desc">Force-directed graph of logic gates from your Verilog. Real netlist data from SiliconForge parser.</div>
-    <button class="run-btn" id="btn-s1" onclick="runStage('read_verilog studio/test_design.v', 1)">Execute: read_verilog</button>
+    <button class="run-btn" id="btn-s1" onclick="runStage('read_verilog ' + currentDesignFile, 1)">Execute: read_verilog</button>
   </div>
   <div class="viz-container">
     <canvas id="c1"></canvas>
@@ -478,6 +484,8 @@
 
 const DPR = window.devicePixelRatio || 1;
 window.STATE = null;
+let currentDesignFile = 'studio/test_design.v';
+let flowAborted = false;
 
 // Animation frame IDs per stage (for cancellation on redraw)
 const animFrames = {};
@@ -650,6 +658,7 @@ function drawStage1() {
   let signalPhase = 0;
   function animate() {
     signalPhase += 0.02;
+    let activeTab = document.querySelector('#s1 .viz-toolbar').dataset.activeTab || 'logic';
     ctx.fillStyle = COLORS.bg;
     ctx.fillRect(0, 0, w, h);
 
@@ -2015,59 +2024,110 @@ async function runStage(cmd, stageNum, followUpCmd) {
   let btn = document.getElementById('btn-s' + stageNum);
   if (btn) { btn.disabled = true; btn.classList.add('running'); btn.innerText = 'Running...'; }
 
-  await runCommand(cmd);
-  if (followUpCmd) {
-    await runCommand(followUpCmd);
+  try {
+    await runCommand(cmd);
+    if (followUpCmd) {
+      await runCommand(followUpCmd);
+    }
+    refreshStage(stageNum);
+  } catch(e) {
+    console.error('Stage ' + stageNum + ' error:', e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.classList.remove('running'); btn.innerText = 'Done \u2713'; }
   }
-
-  refreshStage(stageNum);
-
-  if (btn) { btn.disabled = false; btn.classList.remove('running'); btn.innerText = 'Done \u2713'; }
 }
 
 async function runSignoff() {
   let btn = document.getElementById('btn-s8');
   if (btn) { btn.disabled = true; btn.classList.add('running'); btn.innerText = 'Running signoff...'; }
 
-  await runCommand('drc');
-  await runCommand('lvs');
-  await runCommand('sta');
-  await runCommand('power');
-
-  refreshStage(8);
-
-  if (btn) { btn.disabled = false; btn.classList.remove('running'); btn.innerText = 'Done \u2713'; }
+  try {
+    await runCommand('drc');
+    await runCommand('lvs');
+    await runCommand('sta');
+    await runCommand('power');
+    refreshStage(8);
+  } catch(e) {
+    console.error('Signoff error:', e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.classList.remove('running'); btn.innerText = 'Done \u2713'; }
+  }
 }
 
 async function runFullFlow() {
   let btn = document.getElementById('run-all-btn');
   if (btn) { btn.disabled = true; btn.innerText = 'Running Full Flow...'; }
+  flowAborted = false;
 
-  // Stage 1: Parse Verilog
-  await runStage('read_verilog studio/test_design.v', 1);
-  // Stage 2: Simulate
-  await runStage('simulate', 2);
-  // Stage 3: Formal
-  await runStage('formal_bmc 10', 3);
-  // Stage 4: Synthesize
-  await runStage('synth', 4);
-  // Stage 5: DFT
-  await runStage('run_dft', 5);
-  // Stage 6: Floorplan + Place
-  await runStage('floorplan 200 200 10', 6, 'place');
-  // AI Tune
-  await runCommand('ai_tune');
-  // Stage 7: Route
-  await runStage('route', 7);
-  // Stage 8: Signoff
-  await runSignoff();
-  // Stage 10: GDSII
-  await runStage('write_gds sf_final_layout.gds', 10);
+  try {
+    const steps = [
+      () => runStage('read_verilog ' + currentDesignFile, 1),
+      () => runStage('simulate', 2),
+      () => runStage('formal_bmc 10', 3),
+      () => runStage('synth', 4),
+      () => runStage('run_dft', 5),
+      () => runStage('floorplan 200 200 10', 6, 'place'),
+      () => runCommand('ai_tune'),
+      () => runStage('route', 7),
+      () => runSignoff(),
+      () => runStage('write_gds sf_final_layout.gds', 10),
+    ];
+    for (const step of steps) {
+      if (flowAborted) break;
+      await step();
+    }
+    if (!flowAborted) refreshAllStages();
+  } catch(e) {
+    console.error('Full flow error:', e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerText = flowAborted ? 'Flow Aborted' : 'Flow Complete ✓'; }
+  }
+}
 
-  // Refresh all
-  refreshAllStages();
+// ============================================================
+// NEW DESIGN — Full reset
+// ============================================================
+async function newDesign() {
+  flowAborted = true;
+  let btn = document.getElementById('new-design-btn');
+  if (btn) { btn.disabled = true; btn.innerText = 'Resetting...'; }
 
-  if (btn) { btn.disabled = false; btn.innerText = 'Flow Complete \u2713'; }
+  try {
+    await runCommand('reset');
+    window.STATE = null;
+    currentDesignFile = 'studio/test_design.v';
+
+    // Clear cached layouts
+    delete window.STATE?._s1Layout;
+
+    // Reset all buttons
+    for (let i = 1; i <= 10; i++) {
+      let stageBtn = document.getElementById('btn-s' + i);
+      if (stageBtn) {
+        stageBtn.disabled = false;
+        stageBtn.classList.remove('running');
+        if (i === 1) stageBtn.innerText = 'Execute: read_verilog';
+        else stageBtn.innerText = stageBtn.innerText.replace(/Done ✓|Running\.\.\./, 'Execute');
+      }
+    }
+    let flowBtn = document.getElementById('run-all-btn');
+    if (flowBtn) { flowBtn.disabled = false; flowBtn.innerText = 'Run Full RTL-to-GDSII Flow'; }
+
+    // Refresh all to show waiting state
+    refreshAllStages();
+
+    // Clear terminal
+    const term = document.getElementById('sf-term-log');
+    if (term) term.innerHTML = '<span style="color:#10b981;">Design reset. Ready for new design.</span>\n<span style="color:#00d4ff;">sf&gt;</span> ';
+
+    // Clear file input
+    let fi = document.getElementById('file-input');
+    if (fi) fi.value = '';
+  } catch(e) {
+    console.error('Reset error:', e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerText = 'New Design'; }
+  }
 }
 
 // ============================================================
@@ -2085,12 +2145,12 @@ async function handleFileUpload(event) {
     });
     const data = await res.json();
     if (data.success) {
+      currentDesignFile = data.path;
       const term = document.getElementById('sf-term-log');
       term.innerHTML += '<span style="color:#10b981;">Uploaded: ' + data.filename + ' -> ' + data.path + '</span>\n<span style="color:#00d4ff;">sf&gt;</span> ';
       // Update read_verilog button
       let btn = document.getElementById('btn-s1');
       if (btn) {
-        btn.onclick = function() { runStage('read_verilog ' + data.path, 1); };
         btn.innerText = 'Execute: read_verilog ' + data.filename;
       }
     }

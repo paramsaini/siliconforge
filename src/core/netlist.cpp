@@ -111,4 +111,12 @@ void Netlist::print_stats() const {
               << seq << " FFs, " << pis_.size() << " PIs, " << pos_.size() << " POs\n";
 }
 
+void Netlist::clear() {
+    nets_.clear();
+    gates_.clear();
+    pis_.clear();
+    pos_.clear();
+    dffs_.clear();
+}
+
 } // namespace sf

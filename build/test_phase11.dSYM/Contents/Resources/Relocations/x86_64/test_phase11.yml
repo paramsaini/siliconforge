@@ -1,5 +1,0 @@
----
-triple:          'x86_64-apple-darwin'
-binary-path:     'build/test_phase11'
-relocations:     []
-...

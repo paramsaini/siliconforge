@@ -53,13 +53,17 @@ private:
     // PODEM core: recursive backtracking
     enum class PodemStatus { SUCCESS, FAILURE, BACKTRACK };
 
+    static constexpr int MAX_RECURSION_DEPTH = 200;
+    static constexpr int MAX_BACKTRACKS = 5000;
+    int backtrack_count_;
+
     // 5-value logic for D-algorithm: {0, 1, X, D, D'}
     enum class DLogic { ZERO, ONE, X, D, DBAR };
 
     std::vector<DLogic> net_values_; // Current 5-value assignment
 
     void init_values();
-    bool podem_recursive(const Fault& fault);
+    bool podem_recursive(const Fault& fault, int depth = 0);
     bool objective(const Fault& fault, NetId& obj_net, DLogic& obj_val);
     bool backtrace(NetId obj_net, DLogic obj_val, NetId& pi, Logic4& pi_val);
     bool forward_imply();

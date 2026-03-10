@@ -1,0 +1,15 @@
+Phase1Tests 6 0.0750499
+Phase2Tests 6 0.0794149
+Phase3Tests 6 0.0797241
+Phase4Tests 6 0.0809414
+Phase5Tests 6 0.0783391
+Phase6Tests 6 0.0892724
+Phase7Tests 6 0.0810977
+Phase8Tests 6 0.0835883
+Phase9Tests 6 0.0861355
+Phase10Tests 6 0.0863658
+Phase11Tests 6 0.0779416
+Phase12Tests 6 0.0803929
+Phase13Tests 6 0.078547
+Phase14Tests 6 0.0906974
+---

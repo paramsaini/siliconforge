@@ -173,8 +173,12 @@ bool PodemAtpg::backtrace(NetId obj_net, DLogic obj_val, NetId& pi, Logic4& pi_v
     // Trace back from objective to a primary input
     NetId current = obj_net;
     DLogic required = obj_val;
+    std::unordered_set<NetId> visited;
 
     while (true) {
+        if (visited.count(current)) return false;
+        visited.insert(current);
+
         // Check if current net is a PI
         for (auto p : nl_.primary_inputs()) {
             if (p == current) {
@@ -207,7 +211,10 @@ bool PodemAtpg::backtrace(NetId obj_net, DLogic obj_val, NetId& pi, Logic4& pi_v
     }
 }
 
-bool PodemAtpg::podem_recursive(const Fault& fault) {
+bool PodemAtpg::podem_recursive(const Fault& fault, int depth) {
+    if (depth > MAX_RECURSION_DEPTH || backtrack_count_ > MAX_BACKTRACKS) return false;
+    backtrack_count_++;
+
     // Inject fault value
     DLogic fault_d = (fault.stuck_at == Logic4::ZERO) ? DLogic::D : DLogic::DBAR;
     auto saved = net_values_;
@@ -255,7 +262,7 @@ bool PodemAtpg::podem_recursive(const Fault& fault) {
 
         forward_imply();
         if (fault_propagated(fault)) return true;
-        if (podem_recursive(fault)) return true;
+        if (podem_recursive(fault, depth + 1)) return true;
 
         // Backtrack
         net_values_ = branch_saved;
@@ -268,6 +275,7 @@ bool PodemAtpg::podem_recursive(const Fault& fault) {
 
 AtpgResult PodemAtpg::generate_test(const Fault& fault) {
     init_values();
+    backtrack_count_ = 0;
 
     if (podem_recursive(fault)) {
         AtpgResult r;

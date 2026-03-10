@@ -56,6 +56,7 @@ std::string SiliconForge::json_escape(const std::string& s) {
 
 bool SiliconForge::read_verilog(const std::string& filename) {
     std::cout << "[SiliconForge] Reading Verilog: " << filename << "\n";
+    nl_.clear();
     VerilogParser parser;
     parser.parse_file(filename, nl_);
     
@@ -725,6 +726,34 @@ bool SiliconForge::write_full_json(const std::string& filename) const {
 
     os << "}\n";
     return true;
+}
+
+void SiliconForge::reset() {
+    std::cout << "[SiliconForge] Resetting all state...\n";
+    nl_.clear();
+    pd_ = PhysicalDesign();
+    assertions_.clear();
+    has_netlist_ = false;
+    has_floorplan_ = false;
+    is_placed_ = false;
+    is_routed_ = false;
+    is_synthesized_ = false;
+    is_simulated_ = false;
+    is_formal_done_ = false;
+    is_dft_done_ = false;
+    is_drc_done_ = false;
+    is_lvs_done_ = false;
+    is_sta_done_ = false;
+    is_power_done_ = false;
+    synth_result_ = {};
+    formal_result_ = {};
+    dft_result_ = {};
+    timing_result_ = {};
+    power_result_ = {};
+    drc_result_ = {};
+    lvs_result_ = {};
+    sim_trace_ = {};
+    std::cout << "  [DONE] All state cleared. Ready for new design.\n";
 }
 
 } // namespace sf

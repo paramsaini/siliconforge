@@ -184,7 +184,7 @@ size_t VerilogParser::parse_assign(const std::vector<Token>& t, size_t pos, Netl
     } else if (pos < t.size() && t[pos].type == Token::IDENT) {
         std::string op1 = t[pos].value; pos++;
         if (pos < t.size() && (t[pos].type == Token::AMP || t[pos].type == Token::PIPE ||
-                                t[pos].type == Token::CARET)) {
+                                t[pos].type == Token::CARET || t[pos].type == Token::PLUS)) {
             Token::Type op = t[pos].type; pos++;
             if (pos < t.size() && t[pos].type == Token::IDENT) {
                 std::string op2 = t[pos].value; pos++;
@@ -192,7 +192,8 @@ size_t VerilogParser::parse_assign(const std::vector<Token>& t, size_t pos, Netl
                 NetId in1 = get_or_create_net(nl, op1);
                 NetId in2 = get_or_create_net(nl, op2);
                 GateType gt = (op == Token::AMP) ? GateType::AND :
-                              (op == Token::PIPE) ? GateType::OR : GateType::XOR;
+                              (op == Token::PIPE) ? GateType::OR :
+                              (op == Token::PLUS) ? GateType::XOR : GateType::XOR;
                 nl.add_gate(gt, {in1, in2}, out, "assign_" + lhs);
                 r.num_gates++;
             }

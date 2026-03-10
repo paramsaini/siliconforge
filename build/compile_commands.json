@@ -1,0 +1,506 @@
+[
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/core/aig.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/core/aig.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/core/aig.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/core/aig.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/core/netlist.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/core/netlist.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/core/netlist.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/core/netlist.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/core/design_db.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/core/design_db.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/core/design_db.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/core/design_db.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/core/hierarchy.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/core/hierarchy.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/core/hierarchy.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/core/hierarchy.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/core/die_to_die.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/core/die_to_die.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/core/die_to_die.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/core/die_to_die.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/core/liberty_parser.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/core/liberty_parser.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/core/liberty_parser.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/core/liberty_parser.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/core/def_parser.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/core/def_parser.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/core/def_parser.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/core/def_parser.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/core/report_gen.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/core/report_gen.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/core/report_gen.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/core/report_gen.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/frontend/verilog_parser.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/frontend/verilog_parser.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/frontend/verilog_parser.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/frontend/verilog_parser.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/frontend/sdc_parser.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/frontend/sdc_parser.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/frontend/sdc_parser.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/frontend/sdc_parser.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/frontend/sva_parser.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/frontend/sva_parser.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/frontend/sva_parser.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/frontend/sva_parser.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/synth/aig_opt.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/synth/aig_opt.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/synth/aig_opt.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/synth/aig_opt.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/synth/behavioral_synth.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/synth/behavioral_synth.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/synth/behavioral_synth.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/synth/behavioral_synth.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/synth/clock_gating.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/synth/clock_gating.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/synth/clock_gating.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/synth/clock_gating.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/synth/eco.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/synth/eco.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/synth/eco.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/synth/eco.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/synth/fsm_extract.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/synth/fsm_extract.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/synth/fsm_extract.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/synth/fsm_extract.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/synth/multi_vt.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/synth/multi_vt.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/synth/multi_vt.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/synth/multi_vt.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/synth/resource_share.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/synth/resource_share.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/synth/resource_share.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/synth/resource_share.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/synth/retiming.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/synth/retiming.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/synth/retiming.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/synth/retiming.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/synth/tech_mapper.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/synth/tech_mapper.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/synth/tech_mapper.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/synth/tech_mapper.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/sat/cdcl_solver.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/sat/cdcl_solver.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/sat/cdcl_solver.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/sat/cdcl_solver.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/formal/tseitin.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/formal/tseitin.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/formal/tseitin.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/formal/tseitin.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/formal/equiv_checker.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/formal/equiv_checker.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/formal/equiv_checker.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/formal/equiv_checker.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/formal/bmc.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/formal/bmc.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/formal/bmc.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/formal/bmc.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/formal/k_induction.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/formal/k_induction.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/formal/k_induction.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/formal/k_induction.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/formal/lec.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/formal/lec.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/formal/lec.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/formal/lec.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/formal/sva_engine.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/formal/sva_engine.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/formal/sva_engine.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/formal/sva_engine.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/sim/simulator.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/sim/simulator.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/sim/simulator.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/sim/simulator.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/lint/lint_engine.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/lint/lint_engine.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/lint/lint_engine.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/lint/lint_engine.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/dft/podem.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/dft/podem.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/dft/podem.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/dft/podem.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/dft/fault_sim.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/dft/fault_sim.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/dft/fault_sim.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/dft/fault_sim.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/dft/scan_insert.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/dft/scan_insert.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/dft/scan_insert.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/dft/scan_insert.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/hls/c_parser.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/hls/c_parser.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/hls/c_parser.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/hls/c_parser.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/macro/memory_compiler.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/macro/memory_compiler.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/macro/memory_compiler.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/macro/memory_compiler.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/pnr/physical.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/pnr/physical.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/pnr/physical.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/pnr/physical.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/pnr/floorplan.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/pnr/floorplan.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/pnr/floorplan.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/pnr/floorplan.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/pnr/placer.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/pnr/placer.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/pnr/placer.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/pnr/placer.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/pnr/global_router.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/pnr/global_router.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/pnr/global_router.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/pnr/global_router.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/pnr/detailed_router.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/pnr/detailed_router.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/pnr/detailed_router.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/pnr/detailed_router.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/pnr/detailed_router_v2.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/pnr/detailed_router_v2.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/pnr/detailed_router_v2.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/pnr/detailed_router_v2.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/pnr/cts.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/pnr/cts.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/pnr/cts.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/pnr/cts.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/pnr/post_route_opt.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/pnr/post_route_opt.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/pnr/post_route_opt.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/pnr/post_route_opt.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/pnr/gdsii_writer.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/pnr/gdsii_writer.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/pnr/gdsii_writer.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/pnr/gdsii_writer.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/pnr/chip_assembler.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/pnr/chip_assembler.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/pnr/chip_assembler.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/pnr/chip_assembler.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/pnr/tsv_mgr.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/pnr/tsv_mgr.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/pnr/tsv_mgr.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/pnr/tsv_mgr.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/pnr/ai_tuner.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/pnr/ai_tuner.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/pnr/ai_tuner.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/pnr/ai_tuner.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/timing/sta.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/timing/sta.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/timing/sta.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/timing/sta.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/timing/power.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/timing/power.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/timing/power.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/timing/power.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/timing/parasitics.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/timing/parasitics.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/timing/parasitics.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/timing/parasitics.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/timing/ir_drop.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/timing/ir_drop.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/timing/ir_drop.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/timing/ir_drop.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/timing/pdn.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/timing/pdn.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/timing/pdn.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/timing/pdn.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/timing/noise.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/timing/noise.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/timing/noise.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/timing/noise.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/timing/signal_integrity.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/timing/signal_integrity.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/timing/signal_integrity.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/timing/signal_integrity.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/timing/mcmm.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/timing/mcmm.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/timing/mcmm.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/timing/mcmm.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/verify/drc.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/verify/drc.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/verify/drc.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/verify/drc.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/verify/lvs.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/verify/lvs.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/verify/lvs.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/verify/lvs.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/verify/cdc.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/verify/cdc.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/verify/cdc.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/verify/cdc.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/verify/antenna.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/verify/antenna.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/verify/antenna.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/verify/antenna.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/verify/opc.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/verify/opc.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/verify/opc.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/verify/opc.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/verify/reliability.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/verify/reliability.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/verify/reliability.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/verify/reliability.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/ml/congestion_model.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/ml/congestion_model.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/ml/congestion_model.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/ml/congestion_model.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/ml/timing_model.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/ml/timing_model.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/ml/timing_model.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/ml/timing_model.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/viz/dashboard.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/viz/dashboard.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/viz/dashboard.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/viz/dashboard.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/viz/html_export.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/viz/html_export.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/viz/html_export.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/viz/html_export.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/viz/logic_viz.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/viz/logic_viz.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/viz/logic_viz.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/viz/logic_viz.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/viz/rtl_viz.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/viz/rtl_viz.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/viz/rtl_viz.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/viz/rtl_viz.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/viz/sim_viz.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/viz/sim_viz.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/viz/sim_viz.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/viz/sim_viz.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/flow/engine.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/flow/engine.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/flow/engine.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/flow/engine.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/shell/sf_shell.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/shell/sf_shell.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/shell/sf_shell.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/shell/sf_shell.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge.dir/main.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/main.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/main.cpp",
+  "output": "src/CMakeFiles/siliconforge.dir/main.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/tests",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/test_phase1.dir/test_phase1.cpp.o -c /Users/paramsaini/Desktop/siliconforge/tests/test_phase1.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/tests/test_phase1.cpp",
+  "output": "tests/CMakeFiles/test_phase1.dir/test_phase1.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/tests",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/test_phase2.dir/test_phase2.cpp.o -c /Users/paramsaini/Desktop/siliconforge/tests/test_phase2.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/tests/test_phase2.cpp",
+  "output": "tests/CMakeFiles/test_phase2.dir/test_phase2.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/tests",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/test_phase3.dir/test_phase3.cpp.o -c /Users/paramsaini/Desktop/siliconforge/tests/test_phase3.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/tests/test_phase3.cpp",
+  "output": "tests/CMakeFiles/test_phase3.dir/test_phase3.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/tests",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/test_phase4.dir/test_phase4.cpp.o -c /Users/paramsaini/Desktop/siliconforge/tests/test_phase4.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/tests/test_phase4.cpp",
+  "output": "tests/CMakeFiles/test_phase4.dir/test_phase4.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/tests",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/test_phase5.dir/test_phase5.cpp.o -c /Users/paramsaini/Desktop/siliconforge/tests/test_phase5.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/tests/test_phase5.cpp",
+  "output": "tests/CMakeFiles/test_phase5.dir/test_phase5.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/tests",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/test_phase6.dir/test_phase6.cpp.o -c /Users/paramsaini/Desktop/siliconforge/tests/test_phase6.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/tests/test_phase6.cpp",
+  "output": "tests/CMakeFiles/test_phase6.dir/test_phase6.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/tests",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/test_phase7.dir/test_phase7.cpp.o -c /Users/paramsaini/Desktop/siliconforge/tests/test_phase7.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/tests/test_phase7.cpp",
+  "output": "tests/CMakeFiles/test_phase7.dir/test_phase7.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/tests",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/test_phase8.dir/test_phase8.cpp.o -c /Users/paramsaini/Desktop/siliconforge/tests/test_phase8.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/tests/test_phase8.cpp",
+  "output": "tests/CMakeFiles/test_phase8.dir/test_phase8.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/tests",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/test_phase9.dir/test_phase9.cpp.o -c /Users/paramsaini/Desktop/siliconforge/tests/test_phase9.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/tests/test_phase9.cpp",
+  "output": "tests/CMakeFiles/test_phase9.dir/test_phase9.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/tests",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/test_phase10.dir/test_phase10.cpp.o -c /Users/paramsaini/Desktop/siliconforge/tests/test_phase10.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/tests/test_phase10.cpp",
+  "output": "tests/CMakeFiles/test_phase10.dir/test_phase10.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/tests",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/test_phase11.dir/test_phase11.cpp.o -c /Users/paramsaini/Desktop/siliconforge/tests/test_phase11.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/tests/test_phase11.cpp",
+  "output": "tests/CMakeFiles/test_phase11.dir/test_phase11.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/tests",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/test_phase12.dir/test_phase12.cpp.o -c /Users/paramsaini/Desktop/siliconforge/tests/test_phase12.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/tests/test_phase12.cpp",
+  "output": "tests/CMakeFiles/test_phase12.dir/test_phase12.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/tests",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/test_phase13.dir/test_phase13.cpp.o -c /Users/paramsaini/Desktop/siliconforge/tests/test_phase13.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/tests/test_phase13.cpp",
+  "output": "tests/CMakeFiles/test_phase13.dir/test_phase13.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/tests",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/test_phase14.dir/test_phase14.cpp.o -c /Users/paramsaini/Desktop/siliconforge/tests/test_phase14.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/tests/test_phase14.cpp",
+  "output": "tests/CMakeFiles/test_phase14.dir/test_phase14.cpp.o"
+}
+]
