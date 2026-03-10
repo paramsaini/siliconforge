@@ -1382,7 +1382,7 @@ function drawStage6() {
 // ============================================================
 function drawStage7() {
   if (animFrames[7]) cancelAnimationFrame(animFrames[7]);
-  const { ctx, w, h } = setupCanvas('c7');
+  const { ctx, w, h, c: canvas } = setupCanvas('c7');
   const S = window.STATE;
 
   if (!S || !S.physical || !S.physical.wires || S.physical.wires.length === 0) {
@@ -1393,6 +1393,7 @@ function drawStage7() {
   const phys = S.physical;
   const wires = phys.wires;
   const vias = phys.vias || [];
+  const cells = phys.cells || [];
   const die = phys.die || { w: 200, h: 200 };
 
   setText('ui-wires', wires.length);
@@ -1403,8 +1404,89 @@ function drawStage7() {
   const layerColors = ['#10b981', '#00d4ff', '#7c3aed', '#f59e0b', '#ef4444'];
   const layerNames = ['M1', 'M2', 'M3', 'M4', 'M5'];
 
-  function iso(x, y, z) {
-    return { x: w/2 + (x - y) * 0.7, y: h/2 + (x + y) * 0.35 - z * 1.2 };
+  // ── Interactive state: rotation + zoom + pan ──
+  let rotY = 0.6;       // horizontal rotation (radians)
+  let rotX = 0.5;       // vertical tilt (radians)
+  let zoom = 1.0;
+  let panX = 0, panY = 0;
+  let dragging = false;
+  let lastMX = 0, lastMY = 0;
+  let panning = false;
+
+  // Remove old listeners if any (re-draw safety)
+  canvas._s7listeners && canvas._s7listeners.forEach(([ev, fn]) => canvas.removeEventListener(ev, fn));
+  canvas._s7listeners = [];
+
+  function addEv(ev, fn) { canvas.addEventListener(ev, fn); canvas._s7listeners.push([ev, fn]); }
+
+  addEv('mousedown', function(e) {
+    if (e.button === 1 || e.shiftKey) { panning = true; } else { dragging = true; }
+    lastMX = e.offsetX; lastMY = e.offsetY;
+    e.preventDefault();
+  });
+  addEv('mousemove', function(e) {
+    if (dragging) {
+      rotY += (e.offsetX - lastMX) * 0.008;
+      rotX += (e.offsetY - lastMY) * 0.005;
+      rotX = Math.max(-1.2, Math.min(1.2, rotX));
+      lastMX = e.offsetX; lastMY = e.offsetY;
+    }
+    if (panning) {
+      panX += (e.offsetX - lastMX);
+      panY += (e.offsetY - lastMY);
+      lastMX = e.offsetX; lastMY = e.offsetY;
+    }
+  });
+  addEv('mouseup', function() { dragging = false; panning = false; });
+  addEv('mouseleave', function() { dragging = false; panning = false; });
+  addEv('wheel', function(e) {
+    e.preventDefault();
+    zoom *= e.deltaY > 0 ? 0.92 : 1.08;
+    zoom = Math.max(0.3, Math.min(5.0, zoom));
+  });
+  // Touch support
+  let lastTouch = null; let lastTouchDist = 0;
+  addEv('touchstart', function(e) {
+    e.preventDefault();
+    if (e.touches.length === 1) { dragging = true; lastMX = e.touches[0].clientX; lastMY = e.touches[0].clientY; }
+    if (e.touches.length === 2) {
+      let dx = e.touches[0].clientX - e.touches[1].clientX;
+      let dy = e.touches[0].clientY - e.touches[1].clientY;
+      lastTouchDist = Math.sqrt(dx*dx + dy*dy);
+    }
+  });
+  addEv('touchmove', function(e) {
+    e.preventDefault();
+    if (e.touches.length === 1 && dragging) {
+      rotY += (e.touches[0].clientX - lastMX) * 0.008;
+      rotX += (e.touches[0].clientY - lastMY) * 0.005;
+      rotX = Math.max(-1.2, Math.min(1.2, rotX));
+      lastMX = e.touches[0].clientX; lastMY = e.touches[0].clientY;
+    }
+    if (e.touches.length === 2) {
+      let dx = e.touches[0].clientX - e.touches[1].clientX;
+      let dy = e.touches[0].clientY - e.touches[1].clientY;
+      let dist = Math.sqrt(dx*dx + dy*dy);
+      if (lastTouchDist > 0) { zoom *= dist / lastTouchDist; zoom = Math.max(0.3, Math.min(5.0, zoom)); }
+      lastTouchDist = dist;
+    }
+  });
+  addEv('touchend', function() { dragging = false; lastTouchDist = 0; });
+
+  // ── 3D projection with user-controlled angles ──
+  function project(x, y, z) {
+    // Rotate around Y axis (horizontal drag)
+    let cosY = Math.cos(rotY), sinY = Math.sin(rotY);
+    let rx = x * cosY - y * sinY;
+    let ry = x * sinY + y * cosY;
+    // Tilt around X axis (vertical drag)
+    let cosX = Math.cos(rotX), sinX = Math.sin(rotX);
+    let rz = z * cosX - ry * sinX;
+    let ry2 = z * sinX + ry * cosX;
+    // Isometric-like projection with zoom
+    let sx = w/2 + panX + rx * 0.7 * zoom;
+    let sy = h/2 + panY + ry2 * 0.5 * zoom - rz * 0.8 * zoom;
+    return { x: sx, y: sy, depth: ry2 - rz };
   }
 
   let frame = 0;
@@ -1413,98 +1495,126 @@ function drawStage7() {
     ctx.fillStyle = COLORS.bg;
     ctx.fillRect(0, 0, w, h);
 
-    let angle = frame * 0.003;
-    let cos = Math.cos(angle), sin = Math.sin(angle);
-    function rot(x, y) { return { x: x * cos - y * sin, y: x * sin + y * cos }; }
+    // Grid
+    ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 0.5;
+    for (let gx = 0; gx < w; gx += 50) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, h); ctx.stroke(); }
+    for (let gy = 0; gy < h; gy += 50) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke(); }
 
-    // Normalize coordinates to [-250, 250]
-    let scale = 500 / Math.max(die.w, die.h);
+    // Normalize die to [-250, 250]
+    let dieW = die.w || 200, dieH = die.h || 200;
+    let dieMax = Math.max(dieW, dieH);
+    function toChip(cx, cy) { return { x: (cx / dieMax) * 500 - 250, y: (cy / dieMax) * 500 - 250 }; }
 
-    // Die outline
+    // Die outline (base plane)
     let corners = [[-250,-250], [250,-250], [250,250], [-250,250]];
+    let diePts = corners.map(([cx, cy]) => project(cx, cy, 0));
+    ctx.fillStyle = '#0d0d1a';
+    ctx.strokeStyle = '#00d4ff30';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(diePts[0].x, diePts[0].y);
+    for (let i = 1; i < 4; i++) ctx.lineTo(diePts[i].x, diePts[i].y);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
 
-    let activeTab = document.querySelector('#s7 .viz-toolbar').dataset.activeTab || 'all';
+    // ── Cells on base layer ──
+    let cellColors = { 'GATE': '#00d4ff', 'DFF': '#10b981', 'BUF': '#6366f1', 'INV': '#f59e0b' };
+    for (let c of cells) {
+      let p1 = toChip(c.x, c.y);
+      let p2 = toChip(c.x + c.w, c.y + c.h);
+      let proj1 = project(p1.x, p1.y, 2);
+      let proj2 = project(p2.x, p2.y, 2);
+      let proj3 = project(p2.x, p1.y, 2);
+      let proj4 = project(p1.x, p2.y, 2);
+      let color = '#00d4ff';
+      if (c.type && c.type.includes('DFF')) color = '#10b981';
+      else if (c.type && c.type.includes('BUF')) color = '#6366f1';
+      ctx.fillStyle = color + '50';
+      ctx.strokeStyle = color + '99';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(proj1.x, proj1.y); ctx.lineTo(proj3.x, proj3.y);
+      ctx.lineTo(proj2.x, proj2.y); ctx.lineTo(proj4.x, proj4.y);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
 
-    // Layer planes
+    // ── Layer planes (transparent) ──
     let maxLayer = 0;
     wires.forEach(w2 => { if (w2.layer > maxLayer) maxLayer = w2.layer; });
     maxLayer = Math.max(maxLayer, 2);
-
     for (let layer = 0; layer <= Math.min(maxLayer, 4); layer++) {
-      // Filter by active tab (M1 = layer 0 in UI, or maybe layer 1 depends on backend)
-      let mIdx = layer + 1; // Assuming layer 0 is M1 etc
-      if (activeTab !== 'all' && activeTab !== ('m' + mIdx)) continue;
-
-      let z = layer * 45;
+      let z = (layer + 1) * 50;
       let c = layerColors[layer % 5];
-      let pts = corners.map(([cx, cy]) => {
-        let r = rot(cx, cy);
-        return iso(r.x, r.y, z);
-      });
-      ctx.fillStyle = c + '08';
-      ctx.strokeStyle = c + '25';
+      let pts = corners.map(([cx, cy]) => project(cx, cy, z));
+      ctx.fillStyle = c + '06';
+      ctx.strokeStyle = c + '20';
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
       for (let i = 1; i < 4; i++) ctx.lineTo(pts[i].x, pts[i].y);
       ctx.closePath(); ctx.fill(); ctx.stroke();
-
       // Label
-      let labelPt = iso(rot(270, -250).x, rot(270, -250).y, z);
-      ctx.fillStyle = c; ctx.font = '700 11px JetBrains Mono'; ctx.textAlign = 'left';
-      ctx.fillText(layerNames[layer] || 'M' + (layer+1), labelPt.x, labelPt.y);
+      let lbl = project(270, -260, z);
+      ctx.fillStyle = c; ctx.font = '700 12px JetBrains Mono'; ctx.textAlign = 'left';
+      ctx.fillText(layerNames[layer] || 'M' + (layer+1), lbl.x, lbl.y);
     }
 
-    // Draw wires
+    // ── Wires with thick, glowing lines ──
     for (let wire of wires) {
       let lyr = wire.layer % 5;
-      let mIdx = lyr + 1;
-      if (activeTab !== 'all' && activeTab !== ('m' + mIdx)) continue;
+      let z = (lyr + 1) * 50;
+      let cp1 = toChip(wire.x1, wire.y1);
+      let cp2 = toChip(wire.x2, wire.y2);
+      let p1 = project(cp1.x, cp1.y, z);
+      let p2 = project(cp2.x, cp2.y, z);
+      let c = layerColors[lyr];
 
-      let z = lyr * 45;
-      let sx1 = (wire.x1 / die.w) * 500 - 250;
-      let sy1 = (wire.y1 / die.h) * 500 - 250;
-      let sx2 = (wire.x2 / die.w) * 500 - 250;
-      let sy2 = (wire.y2 / die.h) * 500 - 250;
-
-      let r1 = rot(sx1, sy1);
-      let r2 = rot(sx2, sy2);
-      let p1 = iso(r1.x, r1.y, z);
-      let p2 = iso(r2.x, r2.y, z);
-
-      ctx.strokeStyle = layerColors[lyr] + 'cc';
-      ctx.lineWidth = 3;
-      ctx.shadowColor = layerColors[lyr];
-      ctx.shadowBlur = 4;
+      // Thick wire with glow
+      ctx.strokeStyle = c;
+      ctx.lineWidth = Math.max(2, 4 * zoom);
+      ctx.shadowColor = c;
+      ctx.shadowBlur = 6 * zoom;
+      ctx.globalAlpha = 0.9;
       ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
       ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
 
-      // Signal pulse
-      let t = ((frame * 0.015 + r1.x * 0.01) % 1);
+      // Wire endpoints
+      ctx.fillStyle = c;
+      let dotR = Math.max(2, 3 * zoom);
+      ctx.beginPath(); ctx.arc(p1.x, p1.y, dotR, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(p2.x, p2.y, dotR, 0, Math.PI * 2); ctx.fill();
+
+      // Signal pulse animation
+      let t = ((frame * 0.012 + lyr * 0.2 + wire.x1 * 0.005) % 1);
       let px = lerp(p1.x, p2.x, t);
       let py = lerp(p1.y, p2.y, t);
       ctx.fillStyle = '#fff';
-      ctx.shadowColor = '#fff'; ctx.shadowBlur = 6;
-      ctx.beginPath(); ctx.arc(px, py, 2, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowColor = '#fff'; ctx.shadowBlur = 8;
+      ctx.beginPath(); ctx.arc(px, py, Math.max(2, 3 * zoom), 0, Math.PI * 2); ctx.fill();
       ctx.shadowBlur = 0;
     }
 
-    // Vias
+    // ── Vias (vertical connections) ──
     for (let v of vias) {
-      let vx = (v.x / die.w) * 500 - 250;
-      let vy = (v.y / die.h) * 500 - 250;
-      let r = rot(vx, vy);
-      let z1 = (v.lower || 0) * 45;
-      let z2 = (v.upper || 1) * 45;
-      let p1 = iso(r.x, r.y, z1);
-      let p2 = iso(r.x, r.y, z2);
-
-      ctx.strokeStyle = '#ffffff60'; ctx.lineWidth = 2;
+      let cp = toChip(v.x, v.y);
+      let z1 = ((v.lower || 0) + 1) * 50;
+      let z2 = ((v.upper || 1) + 1) * 50;
+      let p1 = project(cp.x, cp.y, z1);
+      let p2 = project(cp.x, cp.y, z2);
+      ctx.strokeStyle = '#ffffffaa'; ctx.lineWidth = Math.max(2, 3 * zoom);
       ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
       ctx.fillStyle = '#fff';
-      ctx.beginPath(); ctx.arc(p1.x, p1.y, 3, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(p2.x, p2.y, 3, 0, Math.PI * 2); ctx.fill();
+      let vr = Math.max(2, 4 * zoom);
+      ctx.beginPath(); ctx.arc(p1.x, p1.y, vr, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(p2.x, p2.y, vr, 0, Math.PI * 2); ctx.fill();
     }
+
+    // ── HUD: controls hint ──
+    ctx.fillStyle = '#ffffff40';
+    ctx.font = '500 10px JetBrains Mono';
+    ctx.textAlign = 'right';
+    ctx.fillText('Drag: rotate | Scroll: zoom | Shift+drag: pan', w - 15, h - 10);
+    ctx.textAlign = 'left';
 
     animFrames[7] = requestAnimationFrame(animate);
   }
