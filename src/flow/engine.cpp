@@ -266,11 +266,16 @@ bool SiliconForge::place() {
 bool SiliconForge::route() {
     std::cout << "[SiliconForge] Running Detailed Router v2 (Multi-Threaded)...\n";
     if (!is_placed_) return false;
-    DetailedRouterV2 router(pd_);
+
+    // num_layers = 0 tells the router to auto-detect from design complexity
+    DetailedRouterV2 router(pd_, 0);
     router.route(4); // 4 threads
+
     is_routed_ = true;
-    std::cout << "  [PASS] Routing complete. " << pd_.wires.size() << " wires, "
-              << pd_.vias.size() << " vias.\n";
+    std::cout << "  [PASS] Routing complete. "
+              << pd_.wires.size() << " wires, "
+              << pd_.vias.size() << " vias, "
+              << pd_.layers.size() << " metal layers.\n";
     return true;
 }
 
@@ -621,8 +626,24 @@ bool SiliconForge::write_full_json(const std::string& filename) const {
     os << "    \"num_cells\": " << pd_.cells.size() << ",\n";
     os << "    \"num_wires\": " << pd_.wires.size() << ",\n";
     os << "    \"num_vias\": " << pd_.vias.size() << ",\n";
+    os << "    \"num_layers\": " << pd_.layers.size() << ",\n";
     os << "    \"wirelength\": " << pd_.total_wirelength() << ",\n";
     os << "    \"utilization\": " << pd_.utilization() << ",\n";
+
+    // Layer metadata
+    os << "    \"layers\": [\n";
+    for (size_t i = 0; i < pd_.layers.size(); ++i) {
+        auto& l = pd_.layers[i];
+        os << "      {\"id\":" << l.id
+           << ",\"name\":\"" << json_escape(l.name)
+           << "\",\"horizontal\":" << (l.horizontal ? "true" : "false")
+           << ",\"pitch\":" << l.pitch
+           << ",\"width\":" << l.width
+           << ",\"spacing\":" << l.spacing << "}";
+        if (i + 1 < pd_.layers.size()) os << ",";
+        os << "\n";
+    }
+    os << "    ],\n";
 
     // Cells
     os << "    \"cells\": [\n";

@@ -57,8 +57,11 @@
     "num_cells": 0,
     "num_wires": 0,
     "num_vias": 0,
+    "num_layers": 0,
     "wirelength": 0,
     "utilization": 0,
+    "layers": [
+    ],
     "cells": [
     ],
     "wires": [

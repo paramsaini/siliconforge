@@ -28,14 +28,15 @@ struct GCell {
 
 class GlobalRouter {
 public:
-    explicit GlobalRouter(PhysicalDesign& pd, int grid_x = 20, int grid_y = 20)
-        : pd_(pd), grid_x_(grid_x), grid_y_(grid_y) {}
+    explicit GlobalRouter(PhysicalDesign& pd, int grid_x = 20, int grid_y = 20, int num_layers = 0)
+        : pd_(pd), grid_x_(grid_x), grid_y_(grid_y), num_layers_(num_layers) {}
 
     RouteResult route();
 
 private:
     PhysicalDesign& pd_;
     int grid_x_, grid_y_;
+    int num_layers_;
     std::vector<std::vector<GCell>> grid_; // grid_[y][x]
 
     void build_grid();

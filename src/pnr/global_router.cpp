@@ -83,6 +83,17 @@ bool GlobalRouter::route_net(int net_idx) {
     auto& net = pd_.nets[net_idx];
     if (net.cell_ids.size() < 2) return true;
 
+    // Determine layer pair for this net (distribute across available layers)
+    int num_layers = std::max(2, num_layers_);
+    int num_pairs = std::max(1, num_layers / 2);
+    int pair_index = net_idx % num_pairs;
+    int h_layer = pair_index * 2;       // horizontal
+    int v_layer = pair_index * 2 + 1;   // vertical
+    if (h_layer >= num_layers) h_layer = num_layers - 2;
+    if (v_layer >= num_layers) v_layer = num_layers - 1;
+    if (h_layer < 0) h_layer = 0;
+    if (v_layer < 0) v_layer = (num_layers > 1) ? 1 : 0;
+
     // Route as a star: connect all sinks to a Steiner-like center
     // Find bounding box center
     double cx = 0, cy = 0;
@@ -111,6 +122,7 @@ bool GlobalRouter::route_net(int net_idx) {
         if (path.empty() && (gcx != gx || gcy != gy)) return false;
 
         // Update congestion and create wire segments
+        // Assign horizontal segments to h_layer, vertical segments to v_layer
         for (size_t j = 0; j + 1 < path.size(); ++j) {
             grid_[path[j].y][path[j].x].usage++;
 
@@ -119,7 +131,24 @@ bool GlobalRouter::route_net(int net_idx) {
             Point p1(pd_.die_area.x0 + path[j+1].x * cell_w + cell_w/2,
                      pd_.die_area.y0 + path[j+1].y * cell_h + cell_h/2);
 
-            pd_.wires.push_back({1, p0, p1, 0.1});
+            // Determine if segment is horizontal or vertical
+            bool is_horizontal = (path[j].y == path[j+1].y);
+            int wire_layer = is_horizontal ? h_layer : v_layer;
+
+            pd_.wires.push_back({wire_layer, p0, p1, 0.1});
+
+            // Add via at direction change (when previous segment was on different layer)
+            if (j > 0) {
+                bool prev_horiz = (path[j-1].y == path[j].y);
+                if (prev_horiz != is_horizontal) {
+                    int prev_layer = prev_horiz ? h_layer : v_layer;
+                    if (prev_layer != wire_layer) {
+                        int lower = std::min(prev_layer, wire_layer);
+                        int upper = std::max(prev_layer, wire_layer);
+                        pd_.vias.push_back({p0, lower, upper});
+                    }
+                }
+            }
         }
     }
     return true;

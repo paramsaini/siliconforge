@@ -1396,13 +1396,48 @@ function drawStage7() {
   const cells = phys.cells || [];
   const die = phys.die || { w: 200, h: 200 };
 
+  // ── Dynamic layer detection from real backend data ──
+  const layerMeta = phys.layers || [];
+  const numLayers = phys.num_layers || layerMeta.length || 0;
+
+  // Detect actual layers used by wires (no assumptions!)
+  const usedLayerSet = new Set();
+  wires.forEach(w2 => usedLayerSet.add(w2.layer));
+  vias.forEach(v => { usedLayerSet.add(v.lower); usedLayerSet.add(v.upper); });
+  const maxLayer = usedLayerSet.size > 0 ? Math.max(...usedLayerSet) : 0;
+  const totalLayers = Math.max(numLayers, maxLayer + 1);
+
   setText('ui-wires', wires.length);
   setText('ui-vias', vias.length);
   setText('ui-wirelength', (phys.wirelength || 0).toFixed(0) + ' um');
-  setText('label-s7', 'Routing -- ' + wires.length + ' wires, ' + vias.length + ' vias');
+  setText('label-s7', 'Routing -- ' + wires.length + ' wires, ' + vias.length + ' vias, ' + totalLayers + ' layers');
 
-  const layerColors = ['#10b981', '#00d4ff', '#7c3aed', '#f59e0b', '#ef4444'];
-  const layerNames = ['M1', 'M2', 'M3', 'M4', 'M5'];
+  // ── Color palette that scales to 15+ layers ──
+  // Base 15 distinct colors for M1..M15 (all high-contrast on dark background)
+  const layerColorPalette = [
+    '#10b981', // M1  - emerald green
+    '#00d4ff', // M2  - cyan
+    '#7c3aed', // M3  - violet
+    '#f59e0b', // M4  - amber
+    '#ef4444', // M5  - red
+    '#ec4899', // M6  - pink
+    '#06b6d4', // M7  - teal
+    '#8b5cf6', // M8  - purple
+    '#f97316', // M9  - orange
+    '#14b8a6', // M10 - dark teal
+    '#a855f7', // M11 - fuchsia
+    '#eab308', // M12 - yellow
+    '#3b82f6', // M13 - blue
+    '#22c55e', // M14 - lime green
+    '#e11d48', // M15 - rose
+  ];
+  function getLayerColor(idx) {
+    return layerColorPalette[idx % layerColorPalette.length];
+  }
+  function getLayerName(idx) {
+    if (layerMeta[idx] && layerMeta[idx].name) return layerMeta[idx].name;
+    return 'M' + (idx + 1);
+  }
 
   // ── Interactive state: rotation + zoom + pan ──
   let rotY = 0.6;       // horizontal rotation (radians)
@@ -1537,13 +1572,12 @@ function drawStage7() {
       ctx.closePath(); ctx.fill(); ctx.stroke();
     }
 
-    // ── Layer planes (transparent) ──
-    let maxLayer = 0;
-    wires.forEach(w2 => { if (w2.layer > maxLayer) maxLayer = w2.layer; });
-    maxLayer = Math.max(maxLayer, 2);
-    for (let layer = 0; layer <= Math.min(maxLayer, 4); layer++) {
-      let z = (layer + 1) * 50;
-      let c = layerColors[layer % 5];
+    // ── Layer planes (dynamic — renders ALL layers from the design) ──
+    // Adaptive Z-spacing: shrink if many layers so they fit visually
+    let layerZSpacing = totalLayers <= 5 ? 50 : (totalLayers <= 10 ? 35 : 25);
+    for (let layer = 0; layer < totalLayers; layer++) {
+      let z = (layer + 1) * layerZSpacing;
+      let c = getLayerColor(layer);
       let pts = corners.map(([cx, cy]) => project(cx, cy, z));
       ctx.fillStyle = c + '06';
       ctx.strokeStyle = c + '20';
@@ -1552,21 +1586,23 @@ function drawStage7() {
       ctx.moveTo(pts[0].x, pts[0].y);
       for (let i = 1; i < 4; i++) ctx.lineTo(pts[i].x, pts[i].y);
       ctx.closePath(); ctx.fill(); ctx.stroke();
-      // Label
+      // Layer label
       let lbl = project(270, -260, z);
-      ctx.fillStyle = c; ctx.font = '700 12px JetBrains Mono'; ctx.textAlign = 'left';
-      ctx.fillText(layerNames[layer] || 'M' + (layer+1), lbl.x, lbl.y);
+      ctx.fillStyle = c; ctx.font = '700 11px JetBrains Mono'; ctx.textAlign = 'left';
+      let lyrDir = (layerMeta[layer] && layerMeta[layer].horizontal !== undefined)
+        ? (layerMeta[layer].horizontal ? ' H' : ' V') : '';
+      ctx.fillText(getLayerName(layer) + lyrDir, lbl.x, lbl.y);
     }
 
-    // ── Wires with thick, glowing lines ──
+    // ── Wires with thick, glowing lines (dynamic layer colors) ──
     for (let wire of wires) {
-      let lyr = wire.layer % 5;
-      let z = (lyr + 1) * 50;
+      let lyr = wire.layer;
+      let z = (lyr + 1) * layerZSpacing;
       let cp1 = toChip(wire.x1, wire.y1);
       let cp2 = toChip(wire.x2, wire.y2);
       let p1 = project(cp1.x, cp1.y, z);
       let p2 = project(cp2.x, cp2.y, z);
-      let c = layerColors[lyr];
+      let c = getLayerColor(lyr);
 
       // Thick wire with glow
       ctx.strokeStyle = c;
@@ -1594,11 +1630,11 @@ function drawStage7() {
       ctx.shadowBlur = 0;
     }
 
-    // ── Vias (vertical connections) ──
+    // ── Vias (vertical connections between layers) ──
     for (let v of vias) {
       let cp = toChip(v.x, v.y);
-      let z1 = ((v.lower || 0) + 1) * 50;
-      let z2 = ((v.upper || 1) + 1) * 50;
+      let z1 = ((v.lower || 0) + 1) * layerZSpacing;
+      let z2 = ((v.upper || 1) + 1) * layerZSpacing;
       let p1 = project(cp.x, cp.y, z1);
       let p2 = project(cp.x, cp.y, z2);
       ctx.strokeStyle = '#ffffffaa'; ctx.lineWidth = Math.max(2, 3 * zoom);
@@ -1609,11 +1645,12 @@ function drawStage7() {
       ctx.beginPath(); ctx.arc(p2.x, p2.y, vr, 0, Math.PI * 2); ctx.fill();
     }
 
-    // ── HUD: controls hint ──
+    // ── HUD: controls hint + layer count ──
     ctx.fillStyle = '#ffffff40';
     ctx.font = '500 10px JetBrains Mono';
     ctx.textAlign = 'right';
     ctx.fillText('Drag: rotate | Scroll: zoom | Shift+drag: pan', w - 15, h - 10);
+    ctx.fillText(totalLayers + ' metal layers | ' + wires.length + ' wires | ' + vias.length + ' vias', w - 15, h - 24);
     ctx.textAlign = 'left';
 
     animFrames[7] = requestAnimationFrame(animate);
@@ -1792,9 +1829,19 @@ function drawStage9() {
   const S = window.STATE;
   let usedLayers = new Set([0]); // base layer always used
   if (S && S.physical && S.physical.wires) {
-    S.physical.wires.forEach(wire => usedLayers.add(wire.layer || 1));
+    S.physical.wires.forEach(wire => usedLayers.add(wire.layer));
   }
 
+  // Dynamic cross-section: build layer stack from actual backend data
+  const metalColorPalette = [
+    '#10b981', '#00d4ff', '#7c3aed', '#f59e0b', '#ef4444',
+    '#ec4899', '#06b6d4', '#8b5cf6', '#f97316', '#14b8a6',
+    '#a855f7', '#eab308', '#3b82f6', '#22c55e', '#e11d48',
+  ];
+  const layerMeta9 = (S && S.physical && S.physical.layers) || [];
+  const numMetalLayers = (S && S.physical && S.physical.num_layers) || layerMeta9.length || Math.max(0, ...usedLayers) + 1;
+
+  // Base layers (always present in a silicon process)
   const layers = [
     { name: 'Substrate', color: '#4a3728', height: 80 },
     { name: 'p-well / n-well', color: '#5c4033', height: 30 },
@@ -1802,32 +1849,30 @@ function drawStage9() {
     { name: 'Poly', color: '#c41e3a', height: 12 },
     { name: 'Contact', color: '#777', height: 15, via: true },
     { name: 'li1 (Local)', color: '#10b981', height: 20 },
-    { name: 'Via (mcon)', color: '#888', height: 12, via: true },
-    { name: 'Metal 1', color: '#00d4ff', height: 25 },
-    { name: 'Via (via1)', color: '#999', height: 12, via: true },
-    { name: 'Metal 2', color: '#7c3aed', height: 25 },
-    { name: 'Via (via2)', color: '#aaa', height: 12, via: true },
-    { name: 'Metal 3', color: '#f59e0b', height: 30 },
-    { name: 'Via (via3)', color: '#bbb', height: 12, via: true },
-    { name: 'Metal 4', color: '#ec4899', height: 35 },
-    { name: 'Via (via4)', color: '#ccc', height: 12, via: true },
-    { name: 'Metal 5', color: '#ef4444', height: 40 },
-    { name: 'Passivation', color: '#334155', height: 20 },
   ];
+
+  // Dynamically add metal layers + vias based on actual design
+  for (let m = 0; m < numMetalLayers; m++) {
+    let mName = (layerMeta9[m] && layerMeta9[m].name) ? layerMeta9[m].name : ('Metal ' + (m + 1));
+    let mColor = metalColorPalette[m % metalColorPalette.length];
+    // Grey out unused layers
+    if (!usedLayers.has(m)) mColor = '#334155';
+    // Via below this metal (except for first metal)
+    if (m > 0) {
+      layers.push({ name: 'Via ' + m + '/' + (m+1), color: usedLayers.has(m) ? '#999' : '#444', height: 10, via: true });
+    } else {
+      layers.push({ name: 'Via (mcon)', color: usedLayers.has(m) ? '#888' : '#444', height: 10, via: true });
+    }
+    // Metal layer (upper layers get slightly thicker for power routing)
+    let mHeight = 22 + Math.min(m * 3, 25);
+    layers.push({ name: mName, color: mColor, height: mHeight });
+  }
+  layers.push({ name: 'Passivation', color: '#334155', height: 18 });
 
   let totalH = layers.reduce((s, l) => s + l.height, 0);
   let scale = (h - 100) / totalH;
   let cumY = h - 40;
   for (let l of layers) {
-    // Determine layer index (Metal 1 -> 1, Metal 2 -> 2, etc.)
-    let match = l.name.match(/Metal (\d+)/);
-    let layerIdx = match ? parseInt(match[1]) : 0;
-    
-    // Grey out unused metal layers
-    if (layerIdx > 0 && !usedLayers.has(layerIdx)) {
-        l.color = '#334155'; // Dark grey / inactive
-    }
-  
     l.scaledH = l.height * scale;
     l.y = cumY - l.scaledH;
     cumY = l.y;

@@ -1,4 +1,5 @@
 // SiliconForge — Detailed Router Implementation
+// Supports dynamic layer count — distributes nets across available metal layers.
 #include "pnr/detailed_router.hpp"
 #include <algorithm>
 #include <chrono>
@@ -34,10 +35,19 @@ bool DetailedRouter::assign_track(int net_idx, int layer, int track, double star
 }
 
 bool DetailedRouter::route_two_pin(int net_idx, Point p0, Point p1) {
-    // L-shape routing: horizontal on even layers, vertical on odd layers
-    int h_layer = 0; // horizontal
-    int v_layer = 1; // vertical
-    if (num_layers_ > 2) { h_layer = 2; v_layer = 3; }
+    // Dynamic layer pair assignment:
+    // Distribute nets across available layer pairs to reduce congestion.
+    // Even layers = horizontal, odd layers = vertical.
+    int num_pairs = std::max(1, num_layers_ / 2);
+    int pair_index = net_idx % num_pairs;
+    int h_layer = pair_index * 2;
+    int v_layer = pair_index * 2 + 1;
+
+    // Clamp to valid range
+    if (h_layer >= num_layers_) h_layer = num_layers_ - 2;
+    if (v_layer >= num_layers_) v_layer = num_layers_ - 1;
+    if (h_layer < 0) h_layer = 0;
+    if (v_layer < 0) v_layer = (num_layers_ > 1) ? 1 : 0;
 
     double x0 = std::min(p0.x, p1.x), x1 = std::max(p0.x, p1.x);
     double y0 = std::min(p0.y, p1.y), y1 = std::max(p0.y, p1.y);
@@ -47,10 +57,10 @@ bool DetailedRouter::route_two_pin(int net_idx, Point p0, Point p1) {
     bool h_ok = false;
     for (int dt = 0; dt < 20; ++dt) {
         int t = h_track + (dt % 2 == 0 ? dt/2 : -(dt+1)/2);
-        if (t >= 0 && is_available(h_layer % num_layers_, t, x0, x1)) {
-            assign_track(net_idx, h_layer % num_layers_, t, x0, x1);
+        if (t >= 0 && is_available(h_layer, t, x0, x1)) {
+            assign_track(net_idx, h_layer, t, x0, x1);
             double ty = t * track_pitch_;
-            pd_.wires.push_back({h_layer % num_layers_, {x0, ty}, {x1, ty}, track_pitch_ * 0.3});
+            pd_.wires.push_back({h_layer, {x0, ty}, {x1, ty}, track_pitch_ * 0.3});
             h_ok = true;
             break;
         }
@@ -61,19 +71,20 @@ bool DetailedRouter::route_two_pin(int net_idx, Point p0, Point p1) {
     bool v_ok = false;
     for (int dt = 0; dt < 20; ++dt) {
         int t = v_track + (dt % 2 == 0 ? dt/2 : -(dt+1)/2);
-        if (t >= 0 && is_available(v_layer % num_layers_, t, y0, y1)) {
-            assign_track(net_idx, v_layer % num_layers_, t, y0, y1);
+        if (t >= 0 && is_available(v_layer, t, y0, y1)) {
+            assign_track(net_idx, v_layer, t, y0, y1);
             double tx = t * track_pitch_;
-            pd_.wires.push_back({v_layer % num_layers_, {tx, y0}, {tx, y1}, track_pitch_ * 0.3});
+            pd_.wires.push_back({v_layer, {tx, y0}, {tx, y1}, track_pitch_ * 0.3});
             v_ok = true;
             break;
         }
     }
 
-    // Add via at junction
-    if (h_ok && v_ok) {
-        pd_.vias.push_back({{(p0.x + p1.x)/2, (p0.y + p1.y)/2},
-                           h_layer % num_layers_, v_layer % num_layers_});
+    // Add via at junction between the two layers
+    if (h_ok && v_ok && h_layer != v_layer) {
+        int lower = std::min(h_layer, v_layer);
+        int upper = std::max(h_layer, v_layer);
+        pd_.vias.push_back({{(p0.x + p1.x)/2, (p0.y + p1.y)/2}, lower, upper});
         return true;
     }
     return h_ok || v_ok;
@@ -90,7 +101,6 @@ DetailedRouteResult DetailedRouter::route() {
     std::iota(order.begin(), order.end(), 0);
     std::sort(order.begin(), order.end(), [&](int a, int b) {
         auto bb = [&](int n) {
-            double w = 0, h = 0;
             if (pd_.nets[n].cell_ids.size() < 2) return 0.0;
             double xmin=1e18, xmax=-1e18, ymin=1e18, ymax=-1e18;
             for (auto c : pd_.nets[n].cell_ids) {
