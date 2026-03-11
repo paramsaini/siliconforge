@@ -62,6 +62,14 @@ Logic4 Netlist::eval_gate(GateType type, const std::vector<Logic4>& in) {
                                (in[0] == Logic4::ZERO) ? in[2] : Logic4::X;
         case GateType::CONST0: return Logic4::ZERO;
         case GateType::CONST1: return Logic4::ONE;
+        // bufif1(data, enable): output = enable ? data : Z
+        case GateType::BUFIF1: return (in.size() >= 2 && in[1] == Logic4::ONE) ? in[0] : Logic4::X;
+        // bufif0(data, enable): output = !enable ? data : Z
+        case GateType::BUFIF0: return (in.size() >= 2 && in[1] == Logic4::ZERO) ? in[0] : Logic4::X;
+        // notif1(data, enable): output = enable ? ~data : Z
+        case GateType::NOTIF1: return (in.size() >= 2 && in[1] == Logic4::ONE) ? logic_not(in[0]) : Logic4::X;
+        // notif0(data, enable): output = !enable ? ~data : Z
+        case GateType::NOTIF0: return (in.size() >= 2 && in[1] == Logic4::ZERO) ? logic_not(in[0]) : Logic4::X;
         default: return Logic4::X;
     }
 }

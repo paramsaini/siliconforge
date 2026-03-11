@@ -4,12 +4,14 @@
 // Provides full JSON state export for real-time frontend visualization.
 
 #include "core/netlist.hpp"
+#include "core/liberty_parser.hpp"
 #include "pnr/physical.hpp"
 #include "frontend/verilog_parser.hpp"
 #include "frontend/sva_parser.hpp"
 #include "sim/simulator.hpp"
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 namespace sf {
 
@@ -50,6 +52,7 @@ struct TimingResultData {
 struct PowerResultData {
     double dynamic_mw = 0, leakage_mw = 0, total_mw = 0;
     double switching_mw = 0, internal_mw = 0;
+    double clock_mw = 0, glitch_mw = 0;
     double clock_freq_mhz = 0;
 };
 
@@ -96,6 +99,10 @@ public:
     bool run_lvs();
     bool run_sta();
     bool run_power();
+    bool run_cdc();
+    bool run_cts();
+    bool run_reliability();
+    bool run_lec();
 
     // --- ML & Tuners ---
     bool optimize_pnr_with_ai();
@@ -120,6 +127,7 @@ private:
     Netlist nl_;
     PhysicalDesign pd_;
     std::vector<SvaProperty> assertions_;
+    LibertyLibrary lib_;   // Technology library for synthesis & STA
 
     // Flow state flags
     bool has_netlist_ = false;
@@ -134,6 +142,12 @@ private:
     bool is_lvs_done_ = false;
     bool is_sta_done_ = false;
     bool is_power_done_ = false;
+    bool is_cdc_done_ = false;
+    bool is_cts_done_ = false;
+    bool is_reliability_done_ = false;
+    bool is_lec_done_ = false;
+    Netlist pre_synth_nl_; // saved for LEC
+    std::unordered_map<int, double> cts_insertion_delays_; // gate_id → insertion delay
 
     // Per-step stored results for JSON export
     SynthResultData synth_result_;

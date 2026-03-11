@@ -22,6 +22,10 @@ uint64_t FaultSimulator::eval_gate_64(GateType type, const std::vector<uint64_t>
         case GateType::XNOR:  return ~(in[0] ^ in[1]);
         case GateType::CONST0: return 0ULL;
         case GateType::CONST1: return ~0ULL;
+        case GateType::BUFIF1: return (in.size() >= 2) ? (in[0] & in[1]) : 0ULL;
+        case GateType::BUFIF0: return (in.size() >= 2) ? (in[0] & ~in[1]) : 0ULL;
+        case GateType::NOTIF1: return (in.size() >= 2) ? (~in[0] & in[1]) : 0ULL;
+        case GateType::NOTIF0: return (in.size() >= 2) ? (~in[0] & ~in[1]) : 0ULL;
         default: return 0ULL;
     }
 }

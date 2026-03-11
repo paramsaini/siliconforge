@@ -39,27 +39,27 @@
             
             <div class="metric-card">
                 <h3>Total Nets</h3>
-                <div class="val">10</div>
+                <div class="val">12</div>
             </div>
             
             <div class="metric-card">
                 <h3>Total Logic Gates</h3>
-                <div class="val">6</div>
+                <div class="val">8</div>
             </div>
 
             <div class="metric-card">
                 <h3>Total Std Cells</h3>
-                <div class="val">6</div>
+                <div class="val">7</div>
             </div>
 
             <div class="metric-card">
                 <h3>Routed Wire Segments</h3>
-                <div class="val">10</div>
+                <div class="val">21</div>
             </div>
             
             <div class="metric-card">
                 <h3>Total Wirelength</h3>
-                <div class="val">55.8828 &#181;m</div>
+                <div class="val">68 &#181;m</div>
             </div>
         </div>
             <div class="content">
@@ -82,24 +82,36 @@ const pd = {
   width: 100,
   height: 100,
   cells: [
-    { x: 26.1007, y: 30, w: 2, h: 10, type: 'AND' },
-    { x: 28.1007, y: 30, w: 2, h: 10, type: 'OR' },
-    { x: 26.1597, y: 40, w: 2, h: 10, type: 'BUF' },
-    { x: 28.1597, y: 40, w: 2, h: 10, type: 'DFF' },
-    { x: 30.1597, y: 40, w: 2, h: 10, type: 'NOT' },
-    { x: 26.2183, y: 50, w: 2, h: 10, type: 'AND' },
+    { x: 54.7857, y: 50, w: 2, h: 10, type: 'NAND' },
+    { x: 48.7857, y: 40, w: 2, h: 10, type: 'NOT' },
+    { x: 48.7857, y: 50, w: 2, h: 10, type: 'NOR' },
+    { x: 46.7857, y: 40, w: 2, h: 10, type: 'NAND' },
+    { x: 50.7857, y: 50, w: 2, h: 10, type: 'NOT' },
+    { x: 46.7857, y: 50, w: 2, h: 10, type: 'NOT' },
+    { x: 52.7857, y: 50, w: 2, h: 10, type: 'DFF' },
   ],
   wires: [
-    { x1: 27.1007, y1: 35, x2: 29.1597, y2: 35, layer: 0 },
-    { x1: 29.1597, y1: 35, x2: 29.1597, y2: 45, layer: 1 },
-    { x1: 27.1597, y1: 45, x2: 31.1597, y2: 45, layer: 0 },
-    { x1: 27.1007, y1: 35, x2: 29.1007, y2: 35, layer: 0 },
-    { x1: 29.1007, y1: 35, x2: 27.1597, y2: 35, layer: 0 },
-    { x1: 27.1597, y1: 35, x2: 27.1597, y2: 45, layer: 1 },
-    { x1: 29.1597, y1: 45, x2: 27.2183, y2: 45, layer: 0 },
-    { x1: 27.2183, y1: 45, x2: 27.2183, y2: 55, layer: 1 },
-    { x1: 31.1597, y1: 45, x2: 27.2183, y2: 45, layer: 0 },
-    { x1: 27.2183, y1: 45, x2: 27.2183, y2: 55, layer: 1 },
+    { x1: 55.7857, y1: 55, x2: 56, y2: 55, layer: 0 },
+    { x1: 56, y1: 55, x2: 55, y2: 55, layer: 0 },
+    { x1: 55, y1: 55, x2: 54, y2: 55, layer: 0 },
+    { x1: 54, y1: 55, x2: 53.7857, y2: 55, layer: 0 },
+    { x1: 53.7857, y1: 55, x2: 48, y2: 55, layer: 0 },
+    { x1: 48, y1: 55, x2: 48, y2: 45, layer: 1 },
+    { x1: 48, y1: 45, x2: 47.7857, y2: 45, layer: 0 },
+    { x1: 55.7857, y1: 55, x2: 50, y2: 55, layer: 0 },
+    { x1: 50, y1: 55, x2: 50, y2: 45, layer: 1 },
+    { x1: 50, y1: 45, x2: 49.7857, y2: 45, layer: 0 },
+    { x1: 49.7857, y1: 55, x2: 52, y2: 55, layer: 0 },
+    { x1: 52, y1: 55, x2: 51.7857, y2: 55, layer: 0 },
+    { x1: 49.7857, y1: 55, x2: 48, y2: 55, layer: 0 },
+    { x1: 48, y1: 55, x2: 48, y2: 45, layer: 1 },
+    { x1: 48, y1: 45, x2: 47.7857, y2: 45, layer: 0 },
+    { x1: 49.7857, y1: 45, x2: 50, y2: 45, layer: 0 },
+    { x1: 50, y1: 45, x2: 50, y2: 55, layer: 1 },
+    { x1: 50, y1: 55, x2: 49.7857, y2: 55, layer: 0 },
+    { x1: 47.7857, y1: 45, x2: 48, y2: 45, layer: 0 },
+    { x1: 48, y1: 45, x2: 48, y2: 55, layer: 1 },
+    { x1: 48, y1: 55, x2: 47.7857, y2: 55, layer: 0 },
   ]
 };
 

@@ -14,7 +14,8 @@ namespace sf {
 enum class GateType {
     INPUT, OUTPUT, BUF, NOT,
     AND, OR, NAND, NOR, XOR, XNOR,
-    MUX, DFF, DLATCH, TRI, CONST0, CONST1
+    MUX, DFF, DLATCH, TRI, CONST0, CONST1,
+    BUFIF0, BUFIF1, NOTIF0, NOTIF1
 };
 
 inline const char* gate_type_str(GateType t) {
@@ -35,6 +36,10 @@ inline const char* gate_type_str(GateType t) {
         case GateType::TRI:    return "TRI";
         case GateType::CONST0: return "CONST0";
         case GateType::CONST1: return "CONST1";
+        case GateType::BUFIF0: return "BUFIF0";
+        case GateType::BUFIF1: return "BUFIF1";
+        case GateType::NOTIF0: return "NOTIF0";
+        case GateType::NOTIF1: return "NOTIF1";
     }
     return "?";
 }

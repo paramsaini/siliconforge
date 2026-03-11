@@ -415,6 +415,12 @@
 },
 {
   "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
+  "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge_lib.dir/shell/tcl_interp.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/shell/tcl_interp.cpp",
+  "file": "/Users/paramsaini/Desktop/siliconforge/src/shell/tcl_interp.cpp",
+  "output": "src/CMakeFiles/siliconforge_lib.dir/shell/tcl_interp.cpp.o"
+},
+{
+  "directory": "/Users/paramsaini/Desktop/siliconforge/build/src",
   "command": "/usr/bin/c++  -I/Users/paramsaini/Desktop/siliconforge/src -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -Wno-unused-parameter -o CMakeFiles/siliconforge.dir/main.cpp.o -c /Users/paramsaini/Desktop/siliconforge/src/main.cpp",
   "file": "/Users/paramsaini/Desktop/siliconforge/src/main.cpp",
   "output": "src/CMakeFiles/siliconforge.dir/main.cpp.o"

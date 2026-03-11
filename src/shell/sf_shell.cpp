@@ -1,11 +1,24 @@
 // SiliconForge — Interactive Shell (REPL)
 #include "shell/sf_shell.hpp"
 #include <iostream>
+#include <fstream>
 #include <sstream>
 
 namespace sf {
 
 SiliconForgeShell::SiliconForgeShell() {
+    tcl_.register_sf_commands(engine_);
+
+    // Add shell-specific TCL commands
+    tcl_.register_command("help", [this](auto&) -> std::string {
+        print_help();
+        return "";
+    });
+    tcl_.register_command("tcl_mode", [this](auto& args) -> std::string {
+        tcl_mode_ = args.empty() || args[0] != "off";
+        std::cout << "TCL mode " << (tcl_mode_ ? "ON" : "OFF") << "\n";
+        return tcl_mode_ ? "1" : "0";
+    });
 }
 
 void SiliconForgeShell::print_help() const {
@@ -23,18 +36,31 @@ void SiliconForgeShell::print_help() const {
     std::cout << "  lvs                      : Run Layout vs Schematic check\n";
     std::cout << "  sta                      : Static Timing Analysis\n";
     std::cout << "  power                    : Run Power Analysis\n";
+    std::cout << "  cdc                      : Run Clock Domain Crossing Analysis\n";
+    std::cout << "  cts                      : Run Clock Tree Synthesis\n";
+    std::cout << "  reliability              : Run Reliability & IR-Drop Analysis\n";
+    std::cout << "  lec                      : Run Logic Equivalence Checking\n";
     std::cout << "  ai_tune                  : Run AI PnR optimization\n";
     std::cout << "  run_all [w] [h]          : Run full RTL-to-GDSII flow\n";
     std::cout << "  write_gds <file>         : Export GDSII binary\n";
     std::cout << "  dashboard <file>         : Generate Ultimate HTML Dashboard\n";
     std::cout << "  export_json <file>       : Dump basic state to JSON (legacy)\n";
     std::cout << "  export_full <file>       : Dump FULL EDA state to JSON (for frontend)\n";
+    std::cout << "  source <file>            : Execute a TCL script file\n";
+    std::cout << "  tcl_mode [on|off]        : Toggle TCL scripting mode\n";
     std::cout << "  help                     : Print this menu\n";
     std::cout << "  exit / quit              : Exit shell\n\n";
 }
 
 bool SiliconForgeShell::execute_command(const std::string& cmd_line) {
     if (cmd_line.empty()) return true;
+
+    // In TCL mode, send everything through the TCL interpreter
+    if (tcl_mode_) {
+        std::string result = tcl_.eval(cmd_line);
+        if (result == "exit") return false;
+        return true;
+    }
 
     std::istringstream iss(cmd_line);
     std::string cmd;
@@ -79,6 +105,14 @@ bool SiliconForgeShell::execute_command(const std::string& cmd_line) {
         engine_.run_sta();
     } else if (cmd == "power") {
         engine_.run_power();
+    } else if (cmd == "cdc") {
+        engine_.run_cdc();
+    } else if (cmd == "cts") {
+        engine_.run_cts();
+    } else if (cmd == "reliability" || cmd == "ir_drop") {
+        engine_.run_reliability();
+    } else if (cmd == "lec") {
+        engine_.run_lec();
     } else if (cmd == "ai_tune") {
         engine_.optimize_pnr_with_ai();
     } else if (cmd == "run_all") {
@@ -103,8 +137,23 @@ bool SiliconForgeShell::execute_command(const std::string& cmd_line) {
         else std::cerr << "Usage: export_full <file>\n";
     } else if (cmd == "exit" || cmd == "quit") {
         return false;
+    } else if (cmd == "source") {
+        std::string file;
+        if (iss >> file) run_script(file);
+        else std::cerr << "Usage: source <file.tcl>\n";
+    } else if (cmd == "tcl_mode") {
+        std::string arg;
+        iss >> arg;
+        tcl_mode_ = (arg != "off");
+        std::cout << "TCL mode " << (tcl_mode_ ? "ON" : "OFF") << "\n";
     } else {
-        std::cerr << "Unknown command: " << cmd << "\n";
+        // In TCL mode, pass unknown commands to TCL interpreter
+        if (tcl_mode_) {
+            std::string result = tcl_.eval(cmd_line);
+            if (result == "exit") return false;
+        } else {
+            std::cerr << "Unknown command: " << cmd << "\n";
+        }
     }
     return true;
 }
@@ -122,6 +171,34 @@ void SiliconForgeShell::run_interactive() {
         if (!std::getline(std::cin, line)) break;
         if (!execute_command(line)) break;
     }
+}
+
+bool SiliconForgeShell::run_script(const std::string& filename) {
+    // .tcl files are run through TCL interpreter; others use line-by-line native commands
+    bool is_tcl = (filename.size() > 4 &&
+                   filename.substr(filename.size() - 4) == ".tcl");
+    if (is_tcl) {
+        std::cout << "[SiliconForge] Sourcing TCL script: " << filename << "\n";
+        std::string result = tcl_.source_file(filename);
+        return result != "exit";
+    }
+
+    // Native script mode
+    std::ifstream f(filename);
+    if (!f.is_open()) {
+        std::cerr << "Error: cannot open script '" << filename << "'\n";
+        return false;
+    }
+    std::string line;
+    while (std::getline(f, line)) {
+        // Strip comments
+        size_t p = line.find_first_not_of(" \t");
+        if (p == std::string::npos) continue;
+        if (line[p] == '#' || (p + 1 < line.size() && line[p] == '/' && line[p+1] == '/'))
+            continue;
+        if (!execute_command(line)) return false;
+    }
+    return true;
 }
 
 } // namespace sf

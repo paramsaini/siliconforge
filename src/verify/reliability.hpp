@@ -38,14 +38,26 @@ struct AgingResult {
 
 class ReliabilityAnalyzer {
 public:
-    ReliabilityAnalyzer(const Netlist& nl) : nl_(nl) {}
+    ReliabilityAnalyzer(const Netlist& nl, const PhysicalDesign* pd = nullptr)
+        : nl_(nl), pd_(pd) {}
 
     void set_config(const AgingConfig& cfg) { cfg_ = cfg; }
 
     AgingResult analyze();
 
+    // IR-drop resistive mesh simulation
+    struct IrDropResult {
+        double max_drop_mv = 0;
+        double avg_drop_mv = 0;
+        double drop_pct = 0;        // % of VDD
+        int hotspots = 0;           // nodes exceeding 5% VDD drop
+        std::vector<std::pair<double,double>> hotspot_locations; // (x,y)
+    };
+    IrDropResult analyze_ir_drop(double total_power_mw = 0);
+
 private:
     const Netlist& nl_;
+    const PhysicalDesign* pd_;
     AgingConfig cfg_;
 
     double compute_nbti(double t_years, double temp_c, double vdd, double duty) const;

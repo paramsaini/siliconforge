@@ -69,6 +69,7 @@ struct WireSegment {
     int layer;
     Point start, end;
     double width;
+    int net_id = -1;  // owning net (-1 = unknown)
 };
 
 // Via between layers

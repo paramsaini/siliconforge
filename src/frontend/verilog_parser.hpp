@@ -1,13 +1,14 @@
 #pragma once
-// SiliconForge — Structural Verilog Parser
-// Parses gate-level and structural Verilog netlists into internal Netlist.
-// Supports: module, input, output, wire, assign, gate primitives, always @(posedge).
+// SiliconForge — Verilog Parser (Structural + Behavioral)
+// Supports: module, input, output, wire, assign, gate primitives, always blocks,
+//           full expression parsing with operator precedence, for loops, parameters.
 
 #include "core/netlist.hpp"
 #include "synth/behavioral_synth.hpp"
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <set>
 
 namespace sf {
 
@@ -24,24 +25,52 @@ struct VerilogParseResult {
 
 class VerilogParser {
 public:
-    // Returns true if parser detected behavioral blocks (always) requiring synthesis
     bool has_behavioral_blocks = false;
     BehavioralAST ast;
 
     VerilogParseResult parse_string(const std::string& src, Netlist& nl);
     VerilogParseResult parse_file(const std::string& filename, Netlist& nl);
-
-    // Export netlist back to Verilog
     static std::string to_verilog(const Netlist& nl, const std::string& module_name = "top");
 
 private:
     struct Token {
-        enum Type { IDENT, NUMBER, LPAREN, RPAREN, LBRACKET, RBRACKET,
-                    COMMA, SEMI, DOT, ASSIGN, TILDE, AMP, PIPE, CARET,
-                    LBRACE, RBRACE, AT, HASH, COLON, QUESTION,
-                    // Behavioral extensions
-                    ALWAYS, IF, ELSE, BEGIN_KW, END_KW, POSEDGE, NEGEDGE,
-                    LEQ, PLUS, MINUS, STAR, EQEQ, END };
+        enum Type {
+            IDENT, NUMBER, LPAREN, RPAREN, LBRACKET, RBRACKET,
+            COMMA, SEMI, DOT, ASSIGN, TILDE, AMP, PIPE, CARET,
+            LBRACE, RBRACE, AT, HASH, COLON, QUESTION,
+            // Behavioral keywords
+            ALWAYS, IF, ELSE, BEGIN_KW, END_KW, POSEDGE, NEGEDGE,
+            LEQ, PLUS, MINUS, STAR, EQEQ, NEQ,
+            CASE_KW, ENDCASE_KW, DEFAULT_KW,
+            // New operators
+            LSHIFT, RSHIFT,      // << >>
+            LT, GT, GTE,         // < > >=
+            LAND, LOR,           // && ||
+            BANG,                 // !
+            SLASH, PERCENT,      // / %
+            // New keywords
+            FOR_KW,              // for
+            PARAMETER_KW,        // parameter, localparam
+            SIGNED_KW,           // signed
+            INTEGER_KW,          // integer
+            // Phase 16 — new keywords
+            GENERATE_KW, ENDGENERATE_KW, GENVAR_KW,
+            FUNCTION_KW, ENDFUNCTION_KW, TASK_KW, ENDTASK_KW,
+            WHILE_KW, REPEAT_KW, FOREVER_KW,
+            INITIAL_KW,
+            ARSHIFT,             // >>>
+            // Phase 17 — remaining Verilog-2001
+            SPECIFY_KW, ENDSPECIFY_KW,
+            DISABLE_KW,
+            DEFPARAM_KW,
+            // Phase 18 — final Verilog-2001 coverage
+            XNOR_OP,            // ~^ or ^~
+            POWER_OP,            // **
+            CASE_EQ, CASE_NEQ,   // === !==
+            PLUS_COLON, MINUS_COLON, // +: -:
+            AUTOMATIC_KW,        // automatic
+            END
+        };
         Type type;
         std::string value;
         int line = 0;
@@ -57,16 +86,87 @@ private:
     size_t parse_gate_inst(const std::vector<Token>& t, size_t pos, Netlist& nl,
                            VerilogParseResult& r, GateType gtype);
     size_t parse_assign(const std::vector<Token>& t, size_t pos, Netlist& nl, VerilogParseResult& r);
-    
+    size_t parse_module_inst(const std::vector<Token>& t, size_t pos, Netlist& nl,
+                             VerilogParseResult& r, const std::string& mod_type);
+    size_t parse_parameter(const std::vector<Token>& t, size_t pos);
+
     // Behavioral block parsers
     size_t parse_always(const std::vector<Token>& t, size_t pos, std::shared_ptr<AstNode> parent);
     size_t parse_statement_block(const std::vector<Token>& t, size_t pos, std::shared_ptr<AstNode> block);
     size_t parse_statement(const std::vector<Token>& t, size_t pos, std::shared_ptr<AstNode> parent);
-    std::shared_ptr<AstNode> parse_expression(const std::vector<Token>& t, size_t& pos);
+    size_t parse_case(const std::vector<Token>& t, size_t pos, std::shared_ptr<AstNode> parent);
+    size_t parse_for_loop(const std::vector<Token>& t, size_t pos, std::shared_ptr<AstNode> parent);
 
+    // Phase 16 — generate, function, task
+    size_t parse_generate_for(const std::vector<Token>& t, size_t pos, Netlist& nl, VerilogParseResult& r);
+    size_t parse_generate_if(const std::vector<Token>& t, size_t pos, Netlist& nl, VerilogParseResult& r);
+    size_t parse_function_def(const std::vector<Token>& t, size_t pos);
+    size_t parse_task_def(const std::vector<Token>& t, size_t pos);
+    size_t parse_generate_case(const std::vector<Token>& t, size_t pos, Netlist& nl, VerilogParseResult& r);
+    std::string preprocess(const std::string& src);
+    int eval_const_expr(const std::vector<Token>& t, size_t& pos);
+
+    // Precedence-based expression parser (recursive descent)
+    std::shared_ptr<AstNode> parse_expression(const std::vector<Token>& t, size_t& pos);
+    std::shared_ptr<AstNode> parse_ternary(const std::vector<Token>& t, size_t& pos);
+    std::shared_ptr<AstNode> parse_logor(const std::vector<Token>& t, size_t& pos);
+    std::shared_ptr<AstNode> parse_logand(const std::vector<Token>& t, size_t& pos);
+    std::shared_ptr<AstNode> parse_bitor(const std::vector<Token>& t, size_t& pos);
+    std::shared_ptr<AstNode> parse_bitxor(const std::vector<Token>& t, size_t& pos);
+    std::shared_ptr<AstNode> parse_bitand(const std::vector<Token>& t, size_t& pos);
+    std::shared_ptr<AstNode> parse_equality(const std::vector<Token>& t, size_t& pos);
+    std::shared_ptr<AstNode> parse_relational(const std::vector<Token>& t, size_t& pos);
+    std::shared_ptr<AstNode> parse_shift(const std::vector<Token>& t, size_t& pos);
+    std::shared_ptr<AstNode> parse_additive(const std::vector<Token>& t, size_t& pos);
+    std::shared_ptr<AstNode> parse_multiplicative(const std::vector<Token>& t, size_t& pos);
+    std::shared_ptr<AstNode> parse_unary(const std::vector<Token>& t, size_t& pos);
+    std::shared_ptr<AstNode> parse_primary(const std::vector<Token>& t, size_t& pos);
+
+    // Bus helpers
+    std::pair<int,int> parse_bus_range(const std::vector<Token>& t, size_t& pos);
+    std::vector<NetId> get_or_create_bus(Netlist& nl, const std::string& name, int msb, int lsb);
     NetId get_or_create_net(Netlist& nl, const std::string& name);
+    int bus_width(const std::string& name) const;
 
     std::unordered_map<std::string, NetId> net_map_;
+    std::unordered_map<std::string, std::pair<int,int>> bus_ranges_;
+    std::unordered_map<std::string, int> params_;  // parameter name → integer value
+    std::vector<std::string> known_modules_;
+    StructuralSynthesizer struct_synth_;
+
+    // Module library for hierarchical elaboration
+    struct ModuleDef {
+        std::string name;
+        std::vector<Token> tokens;  // tokens from 'module' to 'endmodule'
+        std::vector<std::string> port_names;
+        std::unordered_map<std::string, std::string> port_dirs; // port → "input"/"output"/"inout"
+        std::unordered_map<std::string, std::pair<int,int>> port_ranges; // port → {msb,lsb}
+    };
+    std::unordered_map<std::string, ModuleDef> module_defs_;
+    int hierarchy_depth_ = 0;
+    static constexpr int MAX_HIERARCHY_DEPTH = 16;
+
+    // Hierarchical elaboration: expand instance into parent netlist
+    void elaborate_instance(const std::string& mod_type, const std::string& inst_name,
+                            const std::vector<std::pair<std::string,std::string>>& connections,
+                            const std::unordered_map<std::string,int>& param_overrides,
+                            Netlist& nl, VerilogParseResult& r);
+
+    // Phase 16 — preprocessor defines, function storage, signed tracking
+    std::unordered_map<std::string, std::string> defines_;
+    struct FuncDef {
+        std::pair<int,int> return_range = {-1,-1};
+        std::vector<std::string> param_names;
+        std::vector<Token> body_tokens;
+    };
+    std::unordered_map<std::string, FuncDef> functions_;
+    std::set<std::string> signed_signals_;
+    // Memory arrays: name → {word_width, depth}
+    std::unordered_map<std::string, std::pair<int,int>> memory_arrays_;
+    // Task storage: name → {param_names, body_tokens} (reuse FuncDef, no return range)
+    std::unordered_map<std::string, FuncDef> tasks_;
+    // Multi-dimensional arrays: name → {word_width, dim1_depth, dim2_depth}
+    std::unordered_map<std::string, std::tuple<int,int,int>> multidim_arrays_;
 };
 
 } // namespace sf

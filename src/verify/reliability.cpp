@@ -116,4 +116,123 @@ AgingResult ReliabilityAnalyzer::analyze() {
     return r;
 }
 
+// ── IR-Drop Resistive Mesh Simulation ────────────────────────────────
+// Builds a 2D resistive grid across the die area, assigns current sinks
+// at cell locations, applies VDD at boundary pads, and solves via
+// Gauss-Seidel iterative relaxation.
+
+ReliabilityAnalyzer::IrDropResult
+ReliabilityAnalyzer::analyze_ir_drop(double total_power_mw) {
+    IrDropResult ir;
+    double vdd = cfg_.voltage;
+    if (vdd <= 0) vdd = 1.0;
+
+    // Grid dimensions (NxN mesh)
+    const int N = 16;
+    double die_w = 100, die_h = 100;
+    if (pd_) {
+        die_w = std::max(1.0, pd_->die_area.width());
+        die_h = std::max(1.0, pd_->die_area.height());
+    }
+
+    double dx = die_w / N, dy = die_h / N;
+
+    // Sheet resistance model: R = Rsheet * length / width
+    // For top-level power mesh (M8+): ~10 mΩ/sq typical
+    double r_sheet = 0.010; // Ohms per square
+    double r_x = r_sheet * dx / dy; // resistance between horizontal neighbors
+    double r_y = r_sheet * dy / dx; // resistance between vertical neighbors
+
+    // Current density map: distribute total current across grid
+    double total_current = (total_power_mw > 0) ? total_power_mw / (vdd * 1000) : 0.001;
+    // Per-cell current
+    int num_logic = 0;
+    for (size_t i = 0; i < nl_.num_gates(); ++i) {
+        auto t = nl_.gate(i).type;
+        if (t != GateType::INPUT && t != GateType::OUTPUT &&
+            t != GateType::CONST0 && t != GateType::CONST1) num_logic++;
+    }
+    double per_cell_current = (num_logic > 0) ? total_current / num_logic : 0;
+
+    // Build current source map on grid
+    std::vector<std::vector<double>> I_sink(N, std::vector<double>(N, 0));
+    if (pd_) {
+        for (size_t ci = 0; ci < pd_->cells.size(); ++ci) {
+            auto& c = pd_->cells[ci];
+            if (!c.placed) continue;
+            int gx = std::clamp((int)(c.position.x / dx), 0, N - 1);
+            int gy = std::clamp((int)(c.position.y / dy), 0, N - 1);
+            I_sink[gx][gy] += per_cell_current;
+        }
+    } else {
+        // Uniform distribution
+        double i_per_node = total_current / (N * N);
+        for (int x = 0; x < N; x++)
+            for (int y = 0; y < N; y++)
+                I_sink[x][y] = i_per_node;
+    }
+
+    // Voltage grid — initialize to VDD
+    std::vector<std::vector<double>> V(N, std::vector<double>(N, vdd));
+
+    // Boundary: VDD pads at edges (held at VDD)
+    auto is_pad = [&](int x, int y) {
+        return x == 0 || x == N - 1 || y == 0 || y == N - 1;
+    };
+
+    // Gauss-Seidel iterative relaxation
+    // Node equation: sum_neighbors((V_n - V_ij)/R_n) = I_sink_ij
+    // V_ij = (sum(V_n/R_n) - I_sink_ij) / sum(1/R_n)
+    const int MAX_ITER = 200;
+    const double TOL = 1e-8;
+
+    for (int iter = 0; iter < MAX_ITER; iter++) {
+        double max_delta = 0;
+        for (int x = 0; x < N; x++) {
+            for (int y = 0; y < N; y++) {
+                if (is_pad(x, y)) continue; // pads held at VDD
+
+                double sum_g = 0, sum_gv = 0;
+                // Left neighbor
+                if (x > 0) { double g = 1.0 / r_x; sum_g += g; sum_gv += g * V[x-1][y]; }
+                // Right neighbor
+                if (x < N-1) { double g = 1.0 / r_x; sum_g += g; sum_gv += g * V[x+1][y]; }
+                // Down neighbor
+                if (y > 0) { double g = 1.0 / r_y; sum_g += g; sum_gv += g * V[x][y-1]; }
+                // Up neighbor
+                if (y < N-1) { double g = 1.0 / r_y; sum_g += g; sum_gv += g * V[x][y+1]; }
+
+                double v_new = (sum_gv - I_sink[x][y]) / sum_g;
+                v_new = std::min(v_new, vdd); // can't exceed VDD
+                double delta = std::abs(v_new - V[x][y]);
+                if (delta > max_delta) max_delta = delta;
+                V[x][y] = v_new;
+            }
+        }
+        if (max_delta < TOL) break;
+    }
+
+    // Analyze results
+    double max_drop = 0, total_drop = 0;
+    int count = 0;
+    for (int x = 0; x < N; x++) {
+        for (int y = 0; y < N; y++) {
+            if (is_pad(x, y)) continue;
+            double drop = vdd - V[x][y];
+            if (drop > max_drop) max_drop = drop;
+            total_drop += drop;
+            count++;
+            if (drop / vdd > 0.05) {
+                ir.hotspots++;
+                ir.hotspot_locations.push_back({x * dx + dx/2, y * dy + dy/2});
+            }
+        }
+    }
+
+    ir.max_drop_mv = max_drop * 1000;
+    ir.avg_drop_mv = (count > 0) ? (total_drop / count) * 1000 : 0;
+    ir.drop_pct = (max_drop / vdd) * 100;
+    return ir;
+}
+
 } // namespace sf

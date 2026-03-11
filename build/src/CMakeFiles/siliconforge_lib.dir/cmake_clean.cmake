@@ -79,6 +79,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/siliconforge_lib.dir/sat/cdcl_solver.cpp.o.d"
   "CMakeFiles/siliconforge_lib.dir/shell/sf_shell.cpp.o"
   "CMakeFiles/siliconforge_lib.dir/shell/sf_shell.cpp.o.d"
+  "CMakeFiles/siliconforge_lib.dir/shell/tcl_interp.cpp.o"
+  "CMakeFiles/siliconforge_lib.dir/shell/tcl_interp.cpp.o.d"
   "CMakeFiles/siliconforge_lib.dir/sim/simulator.cpp.o"
   "CMakeFiles/siliconforge_lib.dir/sim/simulator.cpp.o.d"
   "CMakeFiles/siliconforge_lib.dir/synth/aig_opt.cpp.o"

@@ -83,6 +83,8 @@
     "leakage_mw": 0,
     "switching_mw": 0,
     "internal_mw": 0,
+    "clock_mw": 0,
+    "glitch_mw": 0,
     "total_mw": 0,
     "clock_freq_mhz": 0
   },

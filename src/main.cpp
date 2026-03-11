@@ -24,8 +24,16 @@ static void print_banner() {
 )" << std::endl;
 }
 
-// Execute a script file: reads line-by-line and dispatches to the shell
-static bool run_script(SiliconForgeShell& shell, const std::string& filename) {
+// Execute a script file: uses shell's run_script for TCL support
+static bool run_script_file(SiliconForgeShell& shell, const std::string& filename) {
+    // .tcl files go through TCL interpreter automatically
+    bool is_tcl = (filename.size() > 4 &&
+                   filename.substr(filename.size() - 4) == ".tcl");
+    if (is_tcl) {
+        return shell.run_script(filename);
+    }
+
+    // Legacy native script mode
     std::ifstream ifs(filename);
     if (!ifs.is_open()) {
         std::cerr << "Error: cannot open script file: " << filename << "\n";
@@ -36,7 +44,6 @@ static bool run_script(SiliconForgeShell& shell, const std::string& filename) {
     int line_num = 0;
     while (std::getline(ifs, line)) {
         ++line_num;
-        // Skip empty lines and comments (# or //)
         if (line.empty()) continue;
         size_t first = line.find_first_not_of(" \t");
         if (first == std::string::npos) continue;
@@ -61,7 +68,7 @@ int main(int argc, char** argv) {
     if (argc > 1) {
         // Run script file(s) provided as arguments
         for (int i = 1; i < argc; ++i) {
-            run_script(shell, argv[i]);
+            run_script_file(shell, argv[i]);
         }
     } else {
         // Start REPL

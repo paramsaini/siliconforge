@@ -1138,6 +1138,30 @@ shell/sf_shell.cpp.s:
 	cd /Users/paramsaini/Desktop/siliconforge/build && $(MAKE) $(MAKESILENT) -f src/CMakeFiles/siliconforge_lib.dir/build.make src/CMakeFiles/siliconforge_lib.dir/shell/sf_shell.cpp.s
 .PHONY : shell/sf_shell.cpp.s
 
+shell/tcl_interp.o: shell/tcl_interp.cpp.o
+.PHONY : shell/tcl_interp.o
+
+# target to build an object file
+shell/tcl_interp.cpp.o:
+	cd /Users/paramsaini/Desktop/siliconforge/build && $(MAKE) $(MAKESILENT) -f src/CMakeFiles/siliconforge_lib.dir/build.make src/CMakeFiles/siliconforge_lib.dir/shell/tcl_interp.cpp.o
+.PHONY : shell/tcl_interp.cpp.o
+
+shell/tcl_interp.i: shell/tcl_interp.cpp.i
+.PHONY : shell/tcl_interp.i
+
+# target to preprocess a source file
+shell/tcl_interp.cpp.i:
+	cd /Users/paramsaini/Desktop/siliconforge/build && $(MAKE) $(MAKESILENT) -f src/CMakeFiles/siliconforge_lib.dir/build.make src/CMakeFiles/siliconforge_lib.dir/shell/tcl_interp.cpp.i
+.PHONY : shell/tcl_interp.cpp.i
+
+shell/tcl_interp.s: shell/tcl_interp.cpp.s
+.PHONY : shell/tcl_interp.s
+
+# target to generate assembly for a file
+shell/tcl_interp.cpp.s:
+	cd /Users/paramsaini/Desktop/siliconforge/build && $(MAKE) $(MAKESILENT) -f src/CMakeFiles/siliconforge_lib.dir/build.make src/CMakeFiles/siliconforge_lib.dir/shell/tcl_interp.cpp.s
+.PHONY : shell/tcl_interp.cpp.s
+
 sim/simulator.o: sim/simulator.cpp.o
 .PHONY : sim/simulator.o
 
@@ -1968,6 +1992,9 @@ help:
 	@echo "... shell/sf_shell.o"
 	@echo "... shell/sf_shell.i"
 	@echo "... shell/sf_shell.s"
+	@echo "... shell/tcl_interp.o"
+	@echo "... shell/tcl_interp.i"
+	@echo "... shell/tcl_interp.s"
 	@echo "... sim/simulator.o"
 	@echo "... sim/simulator.i"
 	@echo "... sim/simulator.s"

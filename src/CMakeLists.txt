@@ -99,6 +99,7 @@ add_library(siliconforge_lib STATIC
     # ── Flow Engine & Shell ───────────────────────────────────────────
     flow/engine.cpp
     shell/sf_shell.cpp
+    shell/tcl_interp.cpp
 )
 
 target_include_directories(siliconforge_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

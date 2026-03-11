@@ -46,6 +46,9 @@ private:
     // Compare single output cones using SAT
     bool compare_output(const std::string& name, NetId g_out, NetId r_out,
                         LecResult& result);
+
+    // Simulation-based equivalence check (robust to structural changes)
+    bool sim_compare(LecResult& result);
 };
 
 } // namespace sf

@@ -8,6 +8,7 @@
 #include "core/netlist.hpp"
 #include <string>
 #include <vector>
+#include <unordered_set>
 
 namespace sf {
 
@@ -61,12 +62,15 @@ private:
     enum class DLogic { ZERO, ONE, X, D, DBAR };
 
     std::vector<DLogic> net_values_; // Current 5-value assignment
+    std::unordered_set<NetId> pi_set_; // Cached PI + pseudo-PI set (includes DFF outputs)
+    std::unordered_set<NetId> po_set_; // Cached PO + pseudo-PO set (includes DFF inputs)
+    const Fault* current_fault_ = nullptr;
 
     void init_values();
     bool podem_recursive(const Fault& fault, int depth = 0);
     bool objective(const Fault& fault, NetId& obj_net, DLogic& obj_val);
     bool backtrace(NetId obj_net, DLogic obj_val, NetId& pi, Logic4& pi_val);
-    bool forward_imply();
+    void forward_imply_with_fault(const Fault& fault);
     bool fault_propagated(const Fault& fault);
     DLogic eval_gate_d(GateType type, const std::vector<DLogic>& inputs);
 };
