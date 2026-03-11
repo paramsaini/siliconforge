@@ -6,6 +6,8 @@
 #include <iostream>
 #include <cmath>
 #include <unordered_map>
+#include <fstream>
+#include <sstream>
 
 namespace sf {
 
@@ -283,6 +285,134 @@ PowerResult PowerAnalyzer::analyze(double clock_freq_mhz, double supply_voltage,
                      ", clock: " + std::to_string(result.clock_power_mw) +
                      ", glitch: " + std::to_string(result.glitch_power_mw) + ")";
     return result;
+}
+
+bool PowerAnalyzer::load_vcd(const std::string& filename) {
+    std::ifstream f(filename);
+    if (!f.is_open()) return false;
+    std::string content((std::istreambuf_iterator<char>(f)),
+                         std::istreambuf_iterator<char>());
+    return parse_vcd_string(content);
+}
+
+bool PowerAnalyzer::parse_vcd_string(const std::string& content) {
+    // Parse IEEE 1364-2001 VCD format to extract toggle counts per signal
+    // $var wire 1 ! clk $end
+    // $var wire 1 " rst $end
+    // #0 0! 0"
+    // #10 1!
+    
+    std::unordered_map<std::string, std::string> code_to_name; // VCD code → net name
+    std::unordered_map<std::string, int> toggles; // net name → toggle count
+    std::unordered_map<std::string, char> last_val; // VCD code → last value
+    
+    std::istringstream iss(content);
+    std::string line;
+    uint64_t end_time = 0;
+    bool in_defs = true;
+    
+    while (std::getline(iss, line)) {
+        // Trim
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+            line.pop_back();
+        
+        if (line.find("$var") == 0) {
+            // $var wire 1 ! clk $end
+            std::istringstream ls(line);
+            std::string tok, type, width, code, name;
+            ls >> tok >> type >> width >> code >> name;
+            if (!code.empty() && !name.empty()) {
+                code_to_name[code] = name;
+                last_val[code] = 'x';
+                toggles[name] = 0;
+            }
+        } else if (line.find("$enddefinitions") == 0) {
+            in_defs = false;
+        } else if (!in_defs && !line.empty()) {
+            if (line[0] == '#') {
+                // Timestamp
+                end_time = std::stoull(line.substr(1));
+            } else if (line[0] == '0' || line[0] == '1' || line[0] == 'x' || line[0] == 'z') {
+                // Value change: 0! or 1"
+                char val = line[0];
+                std::string code = line.substr(1);
+                if (code_to_name.count(code)) {
+                    if (last_val[code] != val && last_val[code] != 'x')
+                        toggles[code_to_name[code]]++;
+                    last_val[code] = val;
+                }
+            } else if (line[0] == 'b' || line[0] == 'B') {
+                // Bus value change: b1010 <code>
+                auto sp = line.find(' ');
+                if (sp != std::string::npos) {
+                    std::string code = line.substr(sp + 1);
+                    if (code_to_name.count(code))
+                        toggles[code_to_name[code]]++;
+                }
+            }
+        }
+    }
+    
+    if (end_time == 0) end_time = 1;
+    
+    // Convert toggle counts to activity factors and set on nets
+    for (auto& [name, count] : toggles) {
+        double activity = (double)count / (double)end_time;
+        activity = std::min(activity, 1.0);
+        
+        // Find matching net by name
+        for (size_t i = 0; i < nl_.num_nets(); i++) {
+            if (nl_.net(i).name == name || nl_.net(i).name.find(name) != std::string::npos) {
+                activities_[i] = activity;
+                break;
+            }
+        }
+    }
+    
+    return true;
+}
+
+bool PowerAnalyzer::load_saif(const std::string& filename) {
+    // SAIF (Switching Activity Interchange Format) parser
+    // Simplified: reads TC (toggle count), T0, T1 per signal
+    std::ifstream f(filename);
+    if (!f.is_open()) return false;
+    
+    std::string line, current_signal;
+    uint64_t total_time = 1;
+    
+    while (std::getline(f, line)) {
+        std::istringstream ls(line);
+        std::string tok;
+        ls >> tok;
+        
+        if (tok == "(DURATION") {
+            ls >> total_time;
+        } else if (tok == "(INSTANCE" || tok == "(PORT") {
+            // Next token might have the signal name
+        } else if (line.find("(") != std::string::npos && line.find("TC") != std::string::npos) {
+            // (signal_name (TC 42) (T0 58) (T1 42))
+            auto paren = line.find('(');
+            auto space = line.find(' ', paren + 1);
+            if (space != std::string::npos) {
+                current_signal = line.substr(paren + 1, space - paren - 1);
+                auto tc_pos = line.find("TC");
+                if (tc_pos != std::string::npos) {
+                    int tc = 0;
+                    std::sscanf(line.c_str() + tc_pos, "TC %d", &tc);
+                    double activity = (double)tc / (double)total_time;
+                    
+                    for (size_t i = 0; i < nl_.num_nets(); i++) {
+                        if (nl_.net(i).name == current_signal) {
+                            activities_[i] = std::min(activity, 1.0);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return true;
 }
 
 } // namespace sf

@@ -14,9 +14,8 @@ namespace sf {
 
 double StaEngine::gate_delay(GateId gid, double input_slew) const {
     auto& g = nl_.gate(gid);
-    // Slew-dependent delay: base_delay * (1 + k * slew)
-    // k models the slow-input penalty seen in real NLDM tables
-    double slew_factor = 1.0 + 0.5 * input_slew; // 50% penalty per ns of slew
+    double slew_factor = 1.0 + 0.5 * input_slew;
+    double load = net_load_cap(g.output >= 0 ? g.output : 0);
 
     if (lib_) {
         std::string type_str = gate_type_str(g.type);
@@ -31,6 +30,13 @@ double StaEngine::gate_delay(GateId gid, double input_slew) const {
         for (auto& cand : candidates) {
             if (auto* cell = lib_->find_cell(cand)) {
                 for (auto& t : cell->timings) {
+                    // Try NLDM 2D table interpolation first
+                    if (t.nldm_rise.valid() && t.nldm_fall.valid()) {
+                        double d_rise = t.nldm_rise.interpolate(input_slew, load);
+                        double d_fall = t.nldm_fall.interpolate(input_slew, load);
+                        return std::max(d_rise, d_fall) * derate_.cell_derate;
+                    }
+                    // Fallback to scalar values with slew scaling
                     double d = (t.cell_rise + t.cell_fall) / 2.0;
                     if (d > 0) return d * slew_factor * derate_.cell_derate;
                 }
@@ -58,10 +64,8 @@ double StaEngine::gate_delay(GateId gid, double input_slew) const {
 
 double StaEngine::output_slew(GateId gid, double input_slew, double load_cap) const {
     auto& g = nl_.gate(gid);
-    // Output slew model: slew_out = slew_intrinsic + R_drive * C_load
-    // Intrinsic slew depends on cell type and input slew
-    double slew_intrinsic = 0.005; // 5ps base
-    double r_drive = 0.5; // kOhm effective output resistance
+    double slew_intrinsic = 0.005;
+    double r_drive = 0.5;
 
     if (lib_) {
         std::string type_str = gate_type_str(g.type);
@@ -73,13 +77,17 @@ double StaEngine::output_slew(GateId gid, double input_slew, double load_cap) co
         for (auto& cand : candidates) {
             if (auto* cell = lib_->find_cell(cand)) {
                 for (auto& t : cell->timings) {
+                    // Try NLDM table for transition
+                    if (t.nldm_rise_tr.valid() && t.nldm_fall_tr.valid()) {
+                        double s_rise = t.nldm_rise_tr.interpolate(input_slew, load_cap);
+                        double s_fall = t.nldm_fall_tr.interpolate(input_slew, load_cap);
+                        return std::max(s_rise, s_fall) * derate_.cell_derate;
+                    }
                     double s = (t.rise_transition + t.fall_transition) / 2.0;
                     if (s > 0) {
-                        // Scale by load: Liberty slew is at nominal load
                         return s * (1.0 + load_cap * 0.5) * derate_.cell_derate;
                     }
                 }
-                // Estimate from area (larger cell = lower drive resistance)
                 if (cell->area > 0) r_drive = 2.0 / cell->area;
             }
         }

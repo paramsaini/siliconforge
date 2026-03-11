@@ -83,6 +83,12 @@ const AigNode& AigGraph::and_node(uint32_t var) const {
     throw std::runtime_error("Variable " + std::to_string(var) + " is not an AND gate");
 }
 
+AigNode& AigGraph::and_node_mut(uint32_t var) {
+    for (size_t i = 0; i < and_vars_.size(); ++i)
+        if (and_vars_[i] == var) return nodes_[i];
+    throw std::runtime_error("Variable " + std::to_string(var) + " is not an AND gate");
+}
+
 std::vector<bool> AigGraph::evaluate(const std::vector<bool>& input_values) const {
     std::vector<bool> vals(next_var_, false);
     for (size_t i = 0; i < inputs_.size(); ++i)

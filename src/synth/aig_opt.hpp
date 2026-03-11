@@ -33,6 +33,9 @@ public:
     // Constant propagation and dead node elimination
     void sweep();
 
+    // SAT-based redundancy removal
+    void sat_sweep();
+
     // Compute AIG depth (longest path from input to output)
     static uint32_t compute_depth(const AigGraph& aig);
 

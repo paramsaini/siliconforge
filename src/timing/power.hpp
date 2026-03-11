@@ -47,6 +47,19 @@ public:
     // Set supply voltage domain for a gate
     void set_voltage_domain(GateId gid, double vdd) { voltage_domains_[gid] = vdd; }
 
+    // Load VCD toggle counts for activity factors
+    bool load_vcd(const std::string& filename);
+    bool parse_vcd_string(const std::string& content);
+
+    // Load SAIF activity factors
+    bool load_saif(const std::string& filename);
+
+    // UPF power intent
+    void set_power_domain(const std::string& domain, double voltage, 
+                          const std::vector<GateId>& gates) {
+        for (auto gid : gates) voltage_domains_[gid] = voltage;
+    }
+
 private:
     const Netlist& nl_;
     const LibertyLibrary* lib_;

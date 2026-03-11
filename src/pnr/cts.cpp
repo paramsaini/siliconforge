@@ -100,12 +100,21 @@ CtsResult CtsEngine::build_clock_tree(const Point& source, const std::vector<int
     };
     create_wires(root);
 
-    // Insert buffers at intermediate nodes (non-leaf, non-root)
+    // Initialize buffer library for drive-strength-aware sizing
+    init_buffer_library();
+    
+    // Insert buffers at intermediate nodes with proper sizing
     int buffers = 0;
     for (size_t i = sink_nodes.size(); i < tree_.size(); ++i) {
         if ((int)i != root && tree_[i].left >= 0) {
-            // Add buffer cell
-            pd_.add_cell("clkbuf_" + std::to_string(i), "CLKBUF_X1", 2.0, pd_.row_height);
+            // Compute load capacitance of subtree
+            double subtree_cap = compute_subtree_cap((int)i);
+            double wl = tree_[i].position.dist(tree_[root].position);
+            
+            // Select appropriately-sized buffer
+            auto buf = select_buffer(subtree_cap, wl);
+            
+            pd_.add_cell("clkbuf_" + std::to_string(i), buf.name, buf.area, pd_.row_height);
             pd_.cells.back().position = tree_[i].position;
             pd_.cells.back().placed = true;
             buffers++;
@@ -120,6 +129,51 @@ CtsResult CtsEngine::build_clock_tree(const Point& source, const std::vector<int
     result.message = "Clock tree built — skew: " + std::to_string(result.skew) +
                      "ps, " + std::to_string(buffers) + " buffers";
     return result;
+}
+
+
+void CtsEngine::init_buffer_library() {
+    // Clock buffer library: different drive strengths
+    buf_lib_ = {
+        {"CLKBUF_X1",  200.0, 2.0,  15.0, 1.0},  // weak, small
+        {"CLKBUF_X2",  100.0, 4.0,  12.0, 2.0},  // medium
+        {"CLKBUF_X4",   50.0, 8.0,  10.0, 4.0},  // strong
+        {"CLKBUF_X8",   25.0, 16.0,  8.0, 8.0},  // very strong
+        {"CLKBUF_X16",  12.5, 32.0,  7.0, 16.0}, // maximum drive
+    };
+}
+
+ClkBufType CtsEngine::select_buffer(double load_cap, double wire_length) {
+    // Select buffer based on load: use smallest buffer that meets timing
+    // RC delay = R_buf * (C_wire + C_load) + R_wire * C_load
+    double wire_cap = wire_length * 0.05; // fF/um
+    double wire_res = wire_length * 0.1;  // Ohm/um
+    double total_cap = wire_cap + load_cap;
+    
+    for (auto& buf : buf_lib_) {
+        double delay = buf.drive_strength * total_cap * 1e-3 + wire_res * load_cap * 1e-3;
+        if (delay < 50.0) return buf; // 50ps target
+    }
+    return buf_lib_.back(); // strongest if nothing meets target
+}
+
+double CtsEngine::compute_subtree_cap(int node) {
+    auto& n = tree_[node];
+    double cap = 0;
+    if (n.cell_id >= 0) {
+        // Leaf: input capacitance of the flip-flop
+        cap = 5.0; // fF typical FF clock pin cap
+    } else {
+        if (n.left >= 0) {
+            double wl = n.position.dist(tree_[n.left].position);
+            cap += compute_subtree_cap(n.left) + wl * 0.05;
+        }
+        if (n.right >= 0) {
+            double wl = n.position.dist(tree_[n.right].position);
+            cap += compute_subtree_cap(n.right) + wl * 0.05;
+        }
+    }
+    return cap;
 }
 
 } // namespace sf

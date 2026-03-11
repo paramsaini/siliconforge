@@ -9,10 +9,20 @@
 
 namespace sf {
 
+struct ClkBufType {
+    std::string name;
+    double drive_strength; // output resistance, Ohm
+    double input_cap;      // fF
+    double intrinsic_delay; // ps
+    double area;           // um²
+};
+
 struct CtsResult {
     double skew = 0;
     double wirelength = 0;
     int buffers_inserted = 0;
+    double max_latency_ps = 0;
+    double min_latency_ps = 0;
     double time_ms = 0;
     std::string message;
 };
@@ -38,8 +48,12 @@ private:
 
     // DME: build balanced merge tree
     int dme_merge(const std::vector<int>& sinks);
-    void dme_bottom_up(int node);
-    void dme_top_down(int node, const Point& parent_pos);
+
+    // Buffer sizing
+    std::vector<ClkBufType> buf_lib_;
+    void init_buffer_library();
+    ClkBufType select_buffer(double load_cap, double wire_length);
+    double compute_subtree_cap(int node);
 };
 
 } // namespace sf

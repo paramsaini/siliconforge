@@ -436,7 +436,57 @@ Netlist TechMapper::map(bool optimize_area) {
 
     auto t1 = std::chrono::high_resolution_clock::now();
     stats_.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    // Post-mapping: insert buffers for high-fanout nets
+    insert_buffers(nl);
+
     return nl;
+}
+
+void TechMapper::insert_buffers(Netlist& nl, int max_fanout) {
+    // For each net with fanout > max_fanout, insert a buffer tree
+    // This reduces load capacitance on the driver and improves timing
+    int bufs_inserted = 0;
+    
+    for (size_t ni = 0; ni < nl.num_nets(); ni++) {
+        auto& net = nl.net(ni);
+        int fo = (int)net.fanout.size();
+        if (fo <= max_fanout) continue;
+        
+        // Need ceil(fo / max_fanout) buffers
+        int num_bufs = (fo + max_fanout - 1) / max_fanout;
+        if (num_bufs <= 1) continue;
+        
+        // Create buffer gates that split the fanout
+        std::vector<GateId> original_fanout(net.fanout.begin(), net.fanout.end());
+        net.fanout.clear();
+        
+        for (int b = 0; b < num_bufs; b++) {
+            // Create intermediate net
+            NetId buf_out = nl.add_net("buf_" + net.name + "_" + std::to_string(b));
+            // Create buffer gate
+            GateId buf = nl.add_gate(GateType::BUF, {(int)ni}, buf_out,
+                                     "BUF_X2_" + std::to_string(ni) + "_" + std::to_string(b));
+            
+            // Assign portion of original fanout to this buffer's output
+            int start = b * max_fanout;
+            int end = std::min(start + max_fanout, fo);
+            for (int i = start; i < end; i++) {
+                // Reconnect: change input of fanout gate from original net to buf_out
+                auto& fg = nl.gate(original_fanout[i]);
+                for (auto& inp : fg.inputs) {
+                    if (inp == (int)ni) { inp = buf_out; break; }
+                }
+                nl.net(buf_out).fanout.push_back(original_fanout[i]);
+            }
+            
+            net.fanout.push_back(buf); // Original net drives the buffer
+            bufs_inserted++;
+        }
+    }
+    
+    if (bufs_inserted > 0)
+        std::cout << "  [Buffer] Inserted " << bufs_inserted << " buffers for high-fanout nets\n";
 }
 
 } // namespace sf

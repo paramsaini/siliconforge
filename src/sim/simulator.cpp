@@ -1,22 +1,43 @@
 // SiliconForge — Event-Driven Simulator Implementation
+// True event-driven: maintains net→gate fanout map, only re-evaluates affected gates.
 #include "sim/simulator.hpp"
 #include <sstream>
 #include <algorithm>
 #include <iostream>
 #include <cassert>
+#include <set>
+#include <unordered_set>
 
 namespace sf {
 
 EventSimulator::EventSimulator(Netlist& nl) : nl_(nl) {
     topo_ = nl_.topo_order();
+    build_event_structures();
+}
+
+void EventSimulator::build_event_structures() {
+    // Build net → fanout gates map
+    net_fanout_gates_.resize(nl_.num_nets());
+    for (size_t gid = 0; gid < nl_.num_gates(); gid++) {
+        auto& g = nl_.gate(gid);
+        if (g.type == GateType::DFF || g.type == GateType::INPUT ||
+            g.type == GateType::OUTPUT) continue;
+        for (auto ni : g.inputs) {
+            if (ni >= 0 && ni < (int)net_fanout_gates_.size())
+                net_fanout_gates_[ni].push_back((int)gid);
+        }
+    }
+
+    // Assign topo levels to gates for priority ordering
+    gate_level_.resize(nl_.num_gates(), 0);
+    for (size_t i = 0; i < topo_.size(); i++)
+        gate_level_[topo_[i]] = (int)i;
 }
 
 void EventSimulator::initialize() {
-    // All nets start at X
     for (size_t i = 0; i < nl_.num_nets(); ++i)
         nl_.net(i).value = Logic4::X;
 
-    // Evaluate constant gates
     for (auto& g : nl_.gates()) {
         if (g.type == GateType::CONST0 && g.output >= 0)
             nl_.net(g.output).value = Logic4::ZERO;
@@ -24,7 +45,6 @@ void EventSimulator::initialize() {
             nl_.net(g.output).value = Logic4::ONE;
     }
 
-    // Initialize DFFs to their init values
     for (auto gid : nl_.flip_flops()) {
         auto& ff = nl_.gate(gid);
         if (ff.output >= 0)
@@ -34,6 +54,7 @@ void EventSimulator::initialize() {
     current_time_ = 0;
     trace_.times.clear();
     trace_.traces.clear();
+    changed_nets_.clear();
     record_state();
 }
 
@@ -51,11 +72,50 @@ void EventSimulator::apply_vector(const TestVector& tv) {
 }
 
 void EventSimulator::eval_combinational() {
-    // Evaluate all combinational gates in topological order
-    for (auto gid : topo_) {
+    // True event-driven: only evaluate gates whose inputs changed
+    // Use a priority queue ordered by topo level to ensure correct evaluation order
+
+    if (changed_nets_.empty()) {
+        // Fallback: full topo eval (first call or after initialize)
+        for (auto gid : topo_) {
+            auto& g = nl_.gate(gid);
+            if (g.type == GateType::DFF || g.type == GateType::INPUT ||
+                g.type == GateType::OUTPUT || g.output < 0) continue;
+
+            std::vector<Logic4> in_vals;
+            for (auto ni : g.inputs)
+                in_vals.push_back(nl_.net(ni).value);
+
+            Logic4 new_val = Netlist::eval_gate(g.type, in_vals);
+            if (nl_.net(g.output).value != new_val) {
+                nl_.net(g.output).value = new_val;
+                changed_nets_.push_back(g.output);
+            }
+        }
+        return;
+    }
+
+    // Event-driven propagation
+    // Collect all affected gates from changed nets, sort by topo level
+    auto cmp = [this](GateId a, GateId b) { return gate_level_[a] > gate_level_[b]; };
+    std::priority_queue<GateId, std::vector<GateId>, decltype(cmp)> pq(cmp);
+    std::unordered_set<GateId> in_queue;
+
+    for (auto net_id : changed_nets_) {
+        if (net_id < 0 || net_id >= (int)net_fanout_gates_.size()) continue;
+        for (auto gid : net_fanout_gates_[net_id]) {
+            if (!in_queue.count(gid)) {
+                pq.push(gid);
+                in_queue.insert(gid);
+            }
+        }
+    }
+    changed_nets_.clear();
+
+    while (!pq.empty()) {
+        GateId gid = pq.top(); pq.pop();
         auto& g = nl_.gate(gid);
-        if (g.type == GateType::DFF || g.type == GateType::INPUT ||
-            g.type == GateType::OUTPUT || g.output < 0) continue;
+        if (g.output < 0) continue;
 
         std::vector<Logic4> in_vals;
         for (auto ni : g.inputs)
@@ -64,27 +124,39 @@ void EventSimulator::eval_combinational() {
         Logic4 new_val = Netlist::eval_gate(g.type, in_vals);
         if (nl_.net(g.output).value != new_val) {
             nl_.net(g.output).value = new_val;
-            changed_nets_.push_back(g.output);
+            // Propagate: add downstream gates
+            NetId out = g.output;
+            if (out >= 0 && out < (int)net_fanout_gates_.size()) {
+                for (auto downstream : net_fanout_gates_[out]) {
+                    if (!in_queue.count(downstream)) {
+                        pq.push(downstream);
+                        in_queue.insert(downstream);
+                    }
+                }
+            }
         }
     }
 }
 
 void EventSimulator::clock_edge(NetId clk_net) {
-    // Rising clock edge: capture DFF D inputs into Q outputs
     for (auto gid : nl_.flip_flops()) {
         auto& ff = nl_.gate(gid);
         if (ff.clk != clk_net) continue;
 
-        // Check reset
         if (ff.reset >= 0 && nl_.net(ff.reset).value == Logic4::ONE) {
-            if (ff.output >= 0) nl_.net(ff.output).value = ff.init_val;
+            if (ff.output >= 0) {
+                Logic4 old = nl_.net(ff.output).value;
+                nl_.net(ff.output).value = ff.init_val;
+                if (old != ff.init_val) changed_nets_.push_back(ff.output);
+            }
             continue;
         }
 
-        // Capture D input
         if (!ff.inputs.empty() && ff.output >= 0) {
             Logic4 d_val = nl_.net(ff.inputs[0]).value;
+            Logic4 old = nl_.net(ff.output).value;
             nl_.net(ff.output).value = d_val;
+            if (old != d_val) changed_nets_.push_back(ff.output);
         }
     }
 }
@@ -99,17 +171,15 @@ void EventSimulator::run(const std::vector<TestVector>& vectors, uint64_t max_ti
     initialize();
 
     std::vector<Logic4> prev_state(nl_.num_nets(), Logic4::X);
-    for (size_t i = 0; i < nl_.num_nets(); ++i) {
+    for (size_t i = 0; i < nl_.num_nets(); ++i)
         prev_state[i] = nl_.net(i).value;
-    }
 
     for (auto& tv : vectors) {
         if (tv.time > max_time) break;
-        
+
         apply_vector(tv);
         eval_combinational();
-        
-        // Detect rising edges
+
         bool any_edge = false;
         for (size_t i = 0; i < nl_.num_nets(); ++i) {
             if (prev_state[i] == Logic4::ZERO && nl_.net(i).value == Logic4::ONE) {
@@ -117,18 +187,13 @@ void EventSimulator::run(const std::vector<TestVector>& vectors, uint64_t max_ti
                 any_edge = true;
             }
         }
-        
-        // If DFFs changed, re-evaluate combinational logic
-        if (any_edge) {
-            eval_combinational();
-        }
+
+        if (any_edge) eval_combinational();
 
         record_state();
-        
-        // Update prev_state for next time step
-        for (size_t i = 0; i < nl_.num_nets(); ++i) {
+
+        for (size_t i = 0; i < nl_.num_nets(); ++i)
             prev_state[i] = nl_.net(i).value;
-        }
     }
 }
 
@@ -195,5 +260,6 @@ std::string EventSimulator::generate_vcd(const std::string& module_name) const {
 
     return vcd.str();
 }
+
 
 } // namespace sf

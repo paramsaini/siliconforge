@@ -1,10 +1,10 @@
-Start testing: Mar 11 13:45 GMT
+Start testing: Mar 11 14:54 GMT
 ----------------------------------------------------------
 1/14 Testing: Phase1Tests
 1/14 Test: Phase1Tests
 Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase1"
 Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase1Tests" start time: Mar 11 13:45 GMT
+"Phase1Tests" start time: Mar 11 14:54 GMT
 Output:
 ----------------------------------------------------------
 
@@ -63,10 +63,10 @@ Running: bmc_counter_overflow
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.40 sec
+Test time =   0.53 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase1Tests" end time: Mar 11 13:45 GMT
+"Phase1Tests" end time: Mar 11 14:54 GMT
 "Phase1Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -74,7 +74,7 @@ Test Passed.
 2/14 Test: Phase2Tests
 Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase2"
 Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase2Tests" start time: Mar 11 13:45 GMT
+"Phase2Tests" start time: Mar 11 14:54 GMT
 Output:
 ----------------------------------------------------------
 
@@ -123,10 +123,10 @@ Running: fault_sim_basic
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.44 sec
+Test time =   0.50 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase2Tests" end time: Mar 11 13:45 GMT
+"Phase2Tests" end time: Mar 11 14:54 GMT
 "Phase2Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -134,7 +134,7 @@ Test Passed.
 3/14 Test: Phase3Tests
 Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase3"
 Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase3Tests" start time: Mar 11 13:45 GMT
+"Phase3Tests" start time: Mar 11 14:54 GMT
 Output:
 ----------------------------------------------------------
 
@@ -175,10 +175,10 @@ Running: scan_insert_multi_chain
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.43 sec
+Test time =   0.55 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase3Tests" end time: Mar 11 13:45 GMT
+"Phase3Tests" end time: Mar 11 14:54 GMT
 "Phase3Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -186,7 +186,7 @@ Test Passed.
 4/14 Test: Phase4Tests
 Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase4"
 Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase4Tests" start time: Mar 11 13:45 GMT
+"Phase4Tests" start time: Mar 11 14:54 GMT
 Output:
 ----------------------------------------------------------
 
@@ -223,10 +223,10 @@ Running: gdsii_binary
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.40 sec
+Test time =   0.47 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase4Tests" end time: Mar 11 13:45 GMT
+"Phase4Tests" end time: Mar 11 14:54 GMT
 "Phase4Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -234,7 +234,7 @@ Test Passed.
 5/14 Test: Phase5Tests
 Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase5"
 Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase5Tests" start time: Mar 11 13:45 GMT
+"Phase5Tests" start time: Mar 11 14:54 GMT
 Output:
 ----------------------------------------------------------
 
@@ -279,10 +279,10 @@ Running: def_roundtrip
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.44 sec
+Test time =   0.53 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase5Tests" end time: Mar 11 13:45 GMT
+"Phase5Tests" end time: Mar 11 14:54 GMT
 "Phase5Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -290,7 +290,7 @@ Test Passed.
 6/14 Test: Phase6Tests
 Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase6"
 Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase6Tests" start time: Mar 11 13:45 GMT
+"Phase6Tests" start time: Mar 11 14:54 GMT
 Output:
 ----------------------------------------------------------
 
@@ -333,10 +333,10 @@ Running: ir_drop_hotspot
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.54 sec
+Test time =   0.64 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase6Tests" end time: Mar 11 13:45 GMT
+"Phase6Tests" end time: Mar 11 14:54 GMT
 "Phase6Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -344,7 +344,7 @@ Test Passed.
 7/14 Test: Phase7Tests
 Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase7"
 Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase7Tests" start time: Mar 11 13:45 GMT
+"Phase7Tests" start time: Mar 11 14:54 GMT
 Output:
 ----------------------------------------------------------
 
@@ -389,10 +389,10 @@ Running: pdn_em_check
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.43 sec
+Test time =   0.62 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase7Tests" end time: Mar 11 13:45 GMT
+"Phase7Tests" end time: Mar 11 14:54 GMT
 "Phase7Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -400,7 +400,7 @@ Test Passed.
 8/14 Test: Phase8Tests
 Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase8"
 Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase8Tests" start time: Mar 11 13:45 GMT
+"Phase8Tests" start time: Mar 11 14:54 GMT
 Output:
 ----------------------------------------------------------
 
@@ -441,10 +441,10 @@ Running: chip_export
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.42 sec
+Test time =   0.59 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase8Tests" end time: Mar 11 13:45 GMT
+"Phase8Tests" end time: Mar 11 14:54 GMT
 "Phase8Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -452,7 +452,7 @@ Test Passed.
 9/14 Test: Phase9Tests
 Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase9"
 Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase9Tests" start time: Mar 11 13:45 GMT
+"Phase9Tests" start time: Mar 11 14:54 GMT
 Output:
 ----------------------------------------------------------
 
@@ -491,10 +491,10 @@ Running: postroute_opt
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.44 sec
+Test time =   0.48 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase9Tests" end time: Mar 11 13:45 GMT
+"Phase9Tests" end time: Mar 11 14:54 GMT
 "Phase9Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -502,7 +502,7 @@ Test Passed.
 10/14 Test: Phase10Tests
 Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase10"
 Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase10Tests" start time: Mar 11 13:45 GMT
+"Phase10Tests" start time: Mar 11 14:54 GMT
 Output:
 ----------------------------------------------------------
 
@@ -541,10 +541,10 @@ Running: design_db_multi
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.41 sec
+Test time =   0.51 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase10Tests" end time: Mar 11 13:45 GMT
+"Phase10Tests" end time: Mar 11 14:54 GMT
 "Phase10Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -552,7 +552,7 @@ Test Passed.
 11/14 Test: Phase11Tests
 Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase11"
 Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase11Tests" start time: Mar 11 13:45 GMT
+"Phase11Tests" start time: Mar 11 14:54 GMT
 Output:
 ----------------------------------------------------------
 
@@ -580,10 +580,10 @@ AI Tuner: [Iter 0] New Best! WNS=-0.15 ns, Cong=0.291667, D=0.5, W=1.5
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.45 sec
+Test time =   0.50 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase11Tests" end time: Mar 11 13:45 GMT
+"Phase11Tests" end time: Mar 11 14:54 GMT
 "Phase11Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -591,7 +591,7 @@ Test Passed.
 12/14 Test: Phase12Tests
 Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase12"
 Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase12Tests" start time: Mar 11 13:45 GMT
+"Phase12Tests" start time: Mar 11 14:54 GMT
 Output:
 ----------------------------------------------------------
 
@@ -611,10 +611,10 @@ Running: logic_viz
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.43 sec
+Test time =   0.56 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase12Tests" end time: Mar 11 13:45 GMT
+"Phase12Tests" end time: Mar 11 14:54 GMT
 "Phase12Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -622,7 +622,7 @@ Test Passed.
 13/14 Test: Phase13Tests
 Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase13"
 Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase13Tests" start time: Mar 11 13:45 GMT
+"Phase13Tests" start time: Mar 11 14:54 GMT
 Output:
 ----------------------------------------------------------
 
@@ -659,10 +659,10 @@ DetailedRouterV2: Routing complete. 8 wires, 3 vias across 2 layers.
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.42 sec
+Test time =   0.48 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase13Tests" end time: Mar 11 13:45 GMT
+"Phase13Tests" end time: Mar 11 14:54 GMT
 "Phase13Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -670,7 +670,7 @@ Test Passed.
 14/14 Test: Phase14Tests
 Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase14"
 Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase14Tests" start time: Mar 11 13:45 GMT
+"Phase14Tests" start time: Mar 11 14:54 GMT
 Output:
 ----------------------------------------------------------
 
@@ -723,11 +723,11 @@ DetailedRouterV2: Routing complete. 21 wires, 8 vias across 2 layers.
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.52 sec
+Test time =   0.58 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase14Tests" end time: Mar 11 13:45 GMT
+"Phase14Tests" end time: Mar 11 14:54 GMT
 "Phase14Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Mar 11 13:45 GMT
+End testing: Mar 11 14:54 GMT

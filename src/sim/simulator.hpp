@@ -1,13 +1,14 @@
 #pragma once
 // SiliconForge — Event-Driven Simulator
 // IEEE 1364-compliant 4-state simulation with event queue.
-// Supports combinational and sequential (DFF) circuits.
+// True event-driven: only re-evaluates gates whose inputs changed.
 
 #include "core/netlist.hpp"
 #include <vector>
 #include <string>
 #include <functional>
 #include <map>
+#include <queue>
 
 namespace sf {
 
@@ -20,7 +21,6 @@ struct TestVector {
 // Simulation results
 struct SimTrace {
     std::vector<uint64_t> times;
-    // traces[net_id] = vector of values at each recorded time
     std::unordered_map<NetId, std::vector<Logic4>> traces;
 };
 
@@ -33,9 +33,9 @@ public:
     void apply_vector(const TestVector& tv);
 
     // Run simulation
-    void initialize();                    // Set all nets to X, propagate constants
-    void eval_combinational();            // Evaluate all comb logic in topo order
-    void clock_edge(NetId clk_net);       // Rising edge — capture DFF inputs
+    void initialize();
+    void eval_combinational();            // Event-driven: only changed gates
+    void clock_edge(NetId clk_net);
     void run(const std::vector<TestVector>& vectors, uint64_t max_time = 1000);
 
     // VCD output
@@ -52,6 +52,12 @@ private:
     uint64_t current_time_ = 0;
     std::vector<NetId> changed_nets_;
 
+    // Event-driven: net → gates that read this net as input
+    std::vector<std::vector<GateId>> net_fanout_gates_;
+    // Gate topo level for prioritized evaluation
+    std::vector<int> gate_level_;
+
+    void build_event_structures();
     void record_state();
     void propagate_event(NetId net);
 };

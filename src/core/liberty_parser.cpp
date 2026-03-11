@@ -284,3 +284,33 @@ bool LibertyLibrary::parse_tokens(const std::vector<Token>& t) {
 }
 
 } // namespace sf
+
+// NLDM 2D bilinear interpolation
+double sf::LibertyTiming::NldmTable::interpolate(double slew, double load) const {
+    if (!valid()) return 0;
+    
+    auto find_bracket = [](const std::vector<double>& v, double x) -> std::pair<int,int> {
+        if (x <= v.front()) return {0, 0};
+        if (x >= v.back()) return {(int)v.size()-1, (int)v.size()-1};
+        for (int i = 0; i + 1 < (int)v.size(); i++)
+            if (x >= v[i] && x <= v[i+1]) return {i, i+1};
+        return {0, 0};
+    };
+    
+    auto [i0, i1] = find_bracket(index_1, slew);
+    auto [j0, j1] = find_bracket(index_2, load);
+    
+    if (i0 >= (int)values.size() || i1 >= (int)values.size()) return values[0][0];
+    if (j0 >= (int)values[i0].size() || j1 >= (int)values[i0].size()) return values[0][0];
+    
+    // Bilinear interpolation
+    double t_s = (i0 == i1) ? 0 : (slew - index_1[i0]) / (index_1[i1] - index_1[i0]);
+    double t_l = (j0 == j1) ? 0 : (load - index_2[j0]) / (index_2[j1] - index_2[j0]);
+    
+    double v00 = values[i0][j0], v01 = values[i0][j1];
+    double v10 = values[i1][j0], v11 = values[i1][j1];
+    
+    double v0 = v00 + (v01 - v00) * t_l;
+    double v1 = v10 + (v11 - v10) * t_l;
+    return v0 + (v1 - v0) * t_s;
+}

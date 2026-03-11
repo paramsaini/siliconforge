@@ -25,6 +25,19 @@ struct LibertyTiming {
     double cell_fall = 0.0;
     double rise_transition = 0.0;
     double fall_transition = 0.0;
+
+    // NLDM 2D tables (indexed by input_slew × output_load)
+    struct NldmTable {
+        std::vector<double> index_1; // input transition (slew) breakpoints
+        std::vector<double> index_2; // output capacitance (load) breakpoints
+        std::vector<std::vector<double>> values; // 2D table [slew][load]
+        bool valid() const { return !index_1.empty() && !index_2.empty() && !values.empty(); }
+        double interpolate(double slew, double load) const;
+    };
+    NldmTable nldm_rise;     // cell_rise table
+    NldmTable nldm_fall;     // cell_fall table
+    NldmTable nldm_rise_tr;  // rise_transition table
+    NldmTable nldm_fall_tr;  // fall_transition table
 };
 
 struct LibertyCell {

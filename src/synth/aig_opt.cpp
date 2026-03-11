@@ -2,6 +2,8 @@
 // Real implementation of DAG-aware rewriting and MFFC refactoring
 // Reference: Mishchenko et al., "DAG-Aware AIG Rewriting", DAC 2006
 #include "synth/aig_opt.hpp"
+#include "formal/tseitin.hpp"
+#include "sat/cdcl_solver.hpp"
 #include <algorithm>
 #include <unordered_set>
 #include <functional>
@@ -500,11 +502,12 @@ OptStats AigOptimizer::optimize(int num_passes) {
         AigGraph saved = aig_;
         uint32_t before = aig_.num_ands();
 
-        // Pass sequence: rewrite → balance → refactor → sweep
+        // Pass sequence: rewrite → balance → refactor → sweep → SAT sweep
         rewrite();
         balance();
         refactor();
         sweep();
+        sat_sweep();
 
         uint32_t after = aig_.num_ands();
 
@@ -536,6 +539,96 @@ OptStats AigOptimizer::optimize(int num_passes) {
     stats.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
     return stats;
+}
+
+// ── SAT-based redundancy removal ─────────────────────────────────────
+// For each AND node, check if output is stuck-at-0 or stuck-at-1.
+// If SAT proves the node is constant, replace it.
+void AigOptimizer::sat_sweep() {
+    if (aig_.num_ands() == 0 || aig_.num_ands() > 500) return; // skip large designs
+
+    // Collect live AND variables
+    std::unordered_set<uint32_t> live;
+    std::function<void(AigLit)> mark = [&](AigLit lit) {
+        uint32_t v = aig_var(lit);
+        if (live.count(v) || !aig_.is_and(v)) return;
+        live.insert(v);
+        const auto& nd = aig_.and_node(v);
+        mark(nd.fanin0);
+        mark(nd.fanin1);
+    };
+    for (auto olit : aig_.outputs()) mark(olit);
+
+    int removed = 0;
+    for (uint32_t v : live) {
+        if (!aig_.is_and(v)) continue;
+
+        // Build small AIG for this single node and check if it's constant
+        AigGraph test_aig;
+        std::unordered_map<uint32_t, AigLit> var_map;
+
+        std::function<AigLit(AigLit)> translate = [&](AigLit lit) -> AigLit {
+            uint32_t lv = aig_var(lit);
+            if (lv == 0) return aig_sign(lit) ? AIG_TRUE : AIG_FALSE;
+            if (var_map.count(lv)) {
+                AigLit base = var_map[lv];
+                return aig_sign(lit) ? aig_not(base) : base;
+            }
+            if (!aig_.is_and(lv)) {
+                AigLit inp = test_aig.create_input("v" + std::to_string(lv));
+                var_map[lv] = inp;
+                return aig_sign(lit) ? aig_not(inp) : inp;
+            }
+            const auto& nd = aig_.and_node(lv);
+            AigLit f0 = translate(nd.fanin0);
+            AigLit f1 = translate(nd.fanin1);
+            AigLit result = test_aig.create_and(f0, f1);
+            var_map[lv] = result;
+            return aig_sign(lit) ? aig_not(result) : result;
+        };
+
+        AigLit node_lit = translate(aig_make(v));
+        test_aig.add_output(node_lit, "target");
+
+        // Check if node can be 1
+        TseitinEncoder enc1;
+        CnfFormula cnf1 = enc1.encode(test_aig);
+        CnfLit target1 = enc1.aig_lit_to_cnf(node_lit);
+        cnf1.add_unit(target1);
+
+        CdclSolver solver1;
+        for (auto& cl : cnf1.clauses()) solver1.add_clause(cl);
+        auto r1 = solver1.solve();
+
+        if (r1 == SatResult::UNSAT) {
+            // Node is always 0 — replace with constant
+            auto& nd = aig_.and_node_mut(v);
+            nd.fanin0 = AIG_FALSE;
+            nd.fanin1 = AIG_FALSE;
+            removed++;
+            continue;
+        }
+
+        // Check if node can be 0
+        TseitinEncoder enc0;
+        CnfFormula cnf0 = enc0.encode(test_aig);
+        CnfLit target0 = enc0.aig_lit_to_cnf(aig_not(node_lit));
+        cnf0.add_unit(target0);
+
+        CdclSolver solver0;
+        for (auto& cl : cnf0.clauses()) solver0.add_clause(cl);
+        auto r0 = solver0.solve();
+
+        if (r0 == SatResult::UNSAT) {
+            // Node is always 1 — replace with constant TRUE
+            auto& nd = aig_.and_node_mut(v);
+            nd.fanin0 = AIG_TRUE;
+            nd.fanin1 = AIG_TRUE;
+            removed++;
+        }
+    }
+
+    if (removed > 0) sweep(); // clean up after constant replacement
 }
 
 } // namespace sf

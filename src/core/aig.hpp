@@ -71,6 +71,7 @@ public:
     bool is_and(uint32_t var) const;
     bool is_latch(uint32_t var) const;
     const AigNode& and_node(uint32_t var) const;
+    AigNode& and_node_mut(uint32_t var);
 
     // --- Simulation ---
     // Evaluate all nodes given input values. Returns value for each variable.

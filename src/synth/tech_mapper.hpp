@@ -46,6 +46,9 @@ private:
 
     // Build netlist from matches
     Netlist build_netlist(const std::vector<CellMatch>& matches);
+
+    // Post-mapping buffer insertion for high-fanout nets
+    void insert_buffers(Netlist& nl, int max_fanout = 8);
 };
 
 } // namespace sf
