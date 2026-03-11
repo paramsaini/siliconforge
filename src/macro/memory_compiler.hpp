@@ -25,6 +25,25 @@ struct MemoryConfig {
     double decoder_overhead = 1.2;
     double sense_amp_height = 5.0;  // um
     double periphery_ratio = 0.3;   // 30% overhead for periphery
+    // Column multiplexing (1, 2, 4, 8)
+    int column_mux = 1;
+    // Banking
+    int num_banks = 1;
+    bool bank_interleave = false;
+    // ECC
+    bool enable_ecc = false;        // SECDED (Single Error Correct, Double Error Detect)
+    // MBIST wrapper
+    bool enable_mbist = false;
+    // Redundancy
+    int redundant_rows = 0;
+    int redundant_cols = 0;
+    // Power management
+    bool enable_power_gating = false;
+    bool enable_retention = false;
+    double vdd = 1.0;              // Supply voltage (V)
+    double temperature = 25.0;     // Operating temperature (°C)
+    // Process corner
+    enum ProcessCorner { TT, FF, SS, SF, FS } corner = TT;
 };
 
 struct MemoryTiming {
@@ -33,6 +52,16 @@ struct MemoryTiming {
     double tSetup_ns = 0;   // Data setup time
     double tHold_ns = 0;    // Data hold time
     double tWC_ns = 0;      // Write cycle time
+    double tCKH_ns = 0;    // Clock high time
+    double tCKL_ns = 0;    // Clock low time
+    double tAS_ns = 0;     // Address setup
+    double tAH_ns = 0;     // Address hold
+    double tDS_ns = 0;     // Data setup (alias for tSetup)
+    double tDH_ns = 0;     // Data hold (alias for tHold)
+    double tWEH_ns = 0;    // Write enable hold
+    double tWES_ns = 0;    // Write enable setup
+    double tCD_ns = 0;     // Clock to data output
+    double tOE_ns = 0;     // Output enable delay
 };
 
 struct MemoryResult {
@@ -46,6 +75,28 @@ struct MemoryResult {
     double leakage_uw = 0;
     double read_energy_pj = 0;
     double write_energy_pj = 0;
+
+    // Banking/mux info
+    int actual_banks = 1;
+    int actual_column_mux = 1;
+    int total_rows = 0;
+    int total_cols = 0;
+    // ECC
+    int ecc_bits = 0;          // Extra parity bits for SECDED
+    int total_bits_per_word = 0;  // bits + ecc_bits
+    // Redundancy
+    int total_redundant_rows = 0;
+    int total_redundant_cols = 0;
+    // Power details
+    double dynamic_power_mw = 0;
+    double standby_leakage_uw = 0;
+    double retention_leakage_uw = 0;
+    // Corner-adjusted timing
+    double timing_derating = 1.0;    // Applied to all timing values
+    // MBIST
+    std::string mbist_report;
+    // Reports
+    std::string detailed_report;     // Full characterization report
 
     // Generated outputs
     Netlist netlist;
@@ -65,6 +116,12 @@ private:
     void generate_verilog(const MemoryConfig& cfg, MemoryResult& r);
     void compute_dimensions(const MemoryConfig& cfg, MemoryResult& r);
     void compute_power(const MemoryConfig& cfg, MemoryResult& r);
+    void compute_ecc(const MemoryConfig& cfg, MemoryResult& r);
+    void compute_banking(const MemoryConfig& cfg, MemoryResult& r);
+    void compute_redundancy(const MemoryConfig& cfg, MemoryResult& r);
+    void compute_corner_derating(const MemoryConfig& cfg, MemoryResult& r);
+    void generate_mbist_wrapper(const MemoryConfig& cfg, MemoryResult& r);
+    void generate_detailed_report(const MemoryConfig& cfg, MemoryResult& r);
 };
 
 } // namespace sf
