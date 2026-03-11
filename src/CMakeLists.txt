@@ -7,6 +7,7 @@ add_library(siliconforge_lib STATIC
     core/die_to_die.cpp
     core/liberty_parser.cpp
     core/def_parser.cpp
+    core/lef_parser.cpp
     core/report_gen.cpp
 
     # ── Frontend Parsers ──────────────────────────────────────────────
@@ -46,6 +47,7 @@ add_library(siliconforge_lib STATIC
     dft/podem.cpp
     dft/fault_sim.cpp
     dft/scan_insert.cpp
+    dft/jtag_bist.cpp
 
     # ── HLS ───────────────────────────────────────────────────────────
     hls/c_parser.cpp
@@ -75,6 +77,7 @@ add_library(siliconforge_lib STATIC
     timing/pdn.cpp
     timing/noise.cpp
     timing/signal_integrity.cpp
+    timing/electromigration.cpp
     timing/mcmm.cpp
 
     # ── Physical Verification ─────────────────────────────────────────
