@@ -157,23 +157,23 @@ void DrcEngine::load_advanced_rules(double mf, int num_metal) {
         double ww_thresh = w_min * 3;
         double ww_spacing = s_min * 1.8;
         rules_.push_back({lp + ".S.WW1", lp + " wide-wire spacing (>3x min)", ww_spacing,
-                          DrcRule::WIDE_WIRE_SPACING, l, ww_thresh});
+                          DrcRule::WIDE_WIRE_SPACING, l, -1, ww_thresh});
         double ww_thresh2 = w_min * 10;
         double ww_spacing2 = s_min * 3.0;
         rules_.push_back({lp + ".S.WW2", lp + " wide-wire spacing (>10x min)", ww_spacing2,
-                          DrcRule::WIDE_WIRE_SPACING, l, ww_thresh2});
+                          DrcRule::WIDE_WIRE_SPACING, l, -1, ww_thresh2});
 
         // End-of-line spacing
         double eol_w = w_min * 1.5;
         double eol_spacing = s_min * 1.5;
         rules_.push_back({lp + ".S.EOL", lp + " end-of-line spacing", eol_spacing,
-                          DrcRule::END_OF_LINE_SPACING, l, eol_w});
+                          DrcRule::END_OF_LINE_SPACING, l, -1, eol_w});
 
         // Parallel run length dependent spacing
         double prl_thresh = mf * 10;
         double prl_spacing = s_min * 1.5;
         rules_.push_back({lp + ".S.PRL", lp + " parallel-run-length spacing", prl_spacing,
-                          DrcRule::PARALLEL_RUN_LENGTH_SPACING, l, prl_thresh});
+                          DrcRule::PARALLEL_RUN_LENGTH_SPACING, l, -1, prl_thresh});
 
         // Minimum step
         rules_.push_back({lp + ".STEP", lp + " minimum step", w_min * 0.5, DrcRule::MIN_STEP, l});
