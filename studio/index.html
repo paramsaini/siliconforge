@@ -3,830 +3,1261 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SiliconForge Studio — RTL-to-GDSII EDA Platform</title>
+<title>SiliconForge Studio</title>
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
 :root {
-  --bg-primary: #0d1117;
-  --bg-secondary: #161b22;
-  --bg-tertiary: #21262d;
-  --bg-card: #1c2128;
-  --border: #30363d;
-  --text-primary: #e6edf3;
-  --text-secondary: #8b949e;
-  --text-muted: #484f58;
-  --accent: #58a6ff;
-  --green: #3fb950;
-  --red: #f85149;
-  --orange: #d29922;
-  --purple: #bc8cff;
-  --cyan: #39d2c0;
-  --sidebar-width: 260px;
-  --header-height: 48px;
+  --bg-deep: #06080f;
+  --bg-primary: #0a0e1a;
+  --bg-secondary: #0f1424;
+  --bg-card: rgba(15,22,42,0.65);
+  --bg-card-solid: #111827;
+  --bg-hover: rgba(56,189,248,0.06);
+  --border: rgba(148,163,184,0.08);
+  --border-accent: rgba(56,189,248,0.15);
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #475569;
+  --accent: #38bdf8;
+  --accent-bright: #7dd3fc;
+  --green: #34d399;
+  --green-glow: rgba(52,211,153,0.3);
+  --red: #f87171;
+  --red-glow: rgba(248,113,113,0.3);
+  --orange: #fbbf24;
+  --purple: #a78bfa;
+  --cyan: #22d3ee;
+  --pink: #f472b6;
+  --gradient-1: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
+  --gradient-2: linear-gradient(135deg, #34d399 0%, #38bdf8 100%);
+  --gradient-3: linear-gradient(135deg, #f472b6 0%, #a78bfa 100%);
+  --gradient-4: linear-gradient(135deg, #fbbf24 0%, #f87171 100%);
+  --glass: rgba(15,22,42,0.6);
+  --glass-border: rgba(148,163,184,0.1);
+  --sidebar-w: 240px;
+  --header-h: 52px;
+  --radius: 12px;
+  --radius-sm: 8px;
 }
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-  background: var(--bg-primary); color: var(--text-primary);
-  height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+*{margin:0;padding:0;box-sizing:border-box;}
+body{
+  font-family:'Inter',system-ui,-apple-system,sans-serif;
+  background:var(--bg-deep);color:var(--text-primary);
+  height:100vh;display:flex;flex-direction:column;overflow:hidden;
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(56,189,248,0.08) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 40% at 80% 100%, rgba(129,140,248,0.06) 0%, transparent 50%);
 }
-.header {
-  height: var(--header-height); background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; padding: 0 16px; gap: 16px; flex-shrink: 0;
+::selection{background:rgba(56,189,248,0.3);color:#fff;}
+::-webkit-scrollbar{width:5px;height:5px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:rgba(148,163,184,0.15);border-radius:10px;}
+::-webkit-scrollbar-thumb:hover{background:rgba(148,163,184,0.3);}
+
+/* ─── HEADER ─── */
+.header{
+  height:var(--header-h);
+  background:rgba(10,14,26,0.8);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 20px;gap:16px;flex-shrink:0;
+  z-index:100;
 }
-.header .logo { font-size: 15px; font-weight: 700; color: var(--accent); letter-spacing: 0.5px; }
-.header .logo span { color: var(--text-secondary); font-weight: 400; }
-.header-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
-.btn {
-  padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border);
-  background: var(--bg-tertiary); color: var(--text-primary); font-size: 12px;
-  cursor: pointer; transition: all 0.15s;
+.logo{display:flex;align-items:center;gap:10px;}
+.logo-icon{
+  width:28px;height:28px;border-radius:7px;
+  background:var(--gradient-1);
+  display:flex;align-items:center;justify-content:center;
+  font-size:14px;font-weight:800;color:#fff;
+  box-shadow:0 0 20px rgba(56,189,248,0.3);
 }
-.btn:hover { border-color: var(--accent); color: var(--accent); }
-.btn-primary { background: #238636; border-color: #238636; color: #fff; }
-.btn-primary:hover { background: #2ea043; }
-.main-layout { display: flex; flex: 1; overflow: hidden; }
-.sidebar {
-  width: var(--sidebar-width); background: var(--bg-secondary);
-  border-right: 1px solid var(--border); overflow-y: auto; flex-shrink: 0;
+.logo-text{font-size:15px;font-weight:700;letter-spacing:-0.3px;}
+.logo-text span{color:var(--text-muted);font-weight:400;margin-left:4px;}
+.header-sep{width:1px;height:24px;background:var(--border);margin:0 4px;}
+.header-status{
+  font-size:11px;color:var(--text-muted);
+  display:flex;align-items:center;gap:6px;
 }
-.sidebar::-webkit-scrollbar { width: 6px; }
-.sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-.sidebar-group { border-bottom: 1px solid var(--border); }
-.sidebar-group-header {
-  padding: 10px 14px; font-size: 11px; font-weight: 600;
-  text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);
-  cursor: pointer; display: flex; align-items: center; gap: 6px; user-select: none;
+.header-status .pulse{
+  width:6px;height:6px;border-radius:50%;background:var(--green);
+  box-shadow:0 0 8px var(--green-glow);
+  animation:pulse 2s ease-in-out infinite;
 }
-.sidebar-group-header:hover { color: var(--text-primary); }
-.sidebar-group-header .arrow { font-size: 10px; transition: transform 0.2s; }
-.sidebar-group.collapsed .arrow { transform: rotate(-90deg); }
-.sidebar-group.collapsed .sidebar-items { display: none; }
-.sidebar-item {
-  padding: 7px 14px 7px 28px; font-size: 13px; color: var(--text-secondary);
-  cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.15s;
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.4;}}
+.header-actions{margin-left:auto;display:flex;gap:8px;align-items:center;}
+.btn{
+  padding:6px 14px;border-radius:var(--radius-sm);
+  border:1px solid var(--border);
+  background:rgba(255,255,255,0.03);
+  color:var(--text-secondary);font-size:12px;font-weight:500;
+  font-family:'Inter',sans-serif;
+  cursor:pointer;transition:all 0.2s ease;
 }
-.sidebar-item:hover { background: var(--bg-tertiary); color: var(--text-primary); }
-.sidebar-item.active { background: var(--bg-tertiary); color: var(--accent); border-right: 2px solid var(--accent); }
-.sidebar-item .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
-.sidebar-item .dot.done { background: var(--green); }
-.content-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-.stage-content { flex: 1; overflow-y: auto; padding: 20px; }
-.stage-content::-webkit-scrollbar { width: 8px; }
-.stage-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-.stage-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-.stage-header h2 { font-size: 18px; font-weight: 600; }
-.stage-header .num { color: var(--text-muted); font-size: 13px; }
-.card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-.card-title { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.3px; }
-.metric-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-.metric { background: var(--bg-tertiary); border-radius: 6px; padding: 10px; }
-.metric-label { font-size: 11px; color: var(--text-secondary); margin-bottom: 2px; }
-.metric-value { font-size: 18px; font-weight: 700; }
-.metric-value.good { color: var(--green); }
-.metric-value.warn { color: var(--orange); }
-.metric-value.bad { color: var(--red); }
-.viz-container { width: 100%; background: var(--bg-primary); border-radius: 6px; border: 1px solid var(--border); overflow: hidden; }
-.viz-container canvas { display: block; width: 100%; }
-.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.data-table th { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text-secondary); font-weight: 600; font-size: 11px; text-transform: uppercase; }
-.data-table td { padding: 6px 12px; border-bottom: 1px solid var(--bg-tertiary); }
-.flow-progress { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
-.flow-chip { font-size: 11px; padding: 3px 8px; border-radius: 12px; border: 1px solid var(--border); color: var(--text-muted); }
-.flow-chip.done { border-color: var(--green); color: var(--green); background: rgba(63,185,80,0.1); }
-.terminal-panel { height: 180px; background: var(--bg-primary); border-top: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
-.terminal-header { display: flex; align-items: center; padding: 6px 12px; background: var(--bg-secondary); border-bottom: 1px solid var(--border); gap: 8px; }
-.terminal-header span { font-size: 12px; color: var(--text-secondary); }
-.terminal-output { flex: 1; overflow-y: auto; padding: 8px 12px; font-family: 'SF Mono','Fira Code',monospace; font-size: 12px; line-height: 1.5; color: var(--text-secondary); white-space: pre-wrap; }
-.terminal-input-row { display: flex; align-items: center; padding: 4px 12px; border-top: 1px solid var(--border); background: var(--bg-secondary); }
-.terminal-prompt { color: var(--green); font-family: monospace; font-size: 12px; margin-right: 8px; }
-.terminal-input { flex: 1; background: transparent; border: none; color: var(--text-primary); font-family: monospace; font-size: 12px; outline: none; }
+.btn:hover{border-color:var(--border-accent);color:var(--text-primary);background:var(--bg-hover);}
+.btn-primary{
+  background:linear-gradient(135deg,rgba(56,189,248,0.15),rgba(129,140,248,0.15));
+  border-color:rgba(56,189,248,0.3);color:var(--accent-bright);
+}
+.btn-primary:hover{
+  background:linear-gradient(135deg,rgba(56,189,248,0.25),rgba(129,140,248,0.25));
+  box-shadow:0 0 20px rgba(56,189,248,0.15);
+}
+.btn-run{
+  background:linear-gradient(135deg,rgba(52,211,153,0.15),rgba(56,189,248,0.15));
+  border-color:rgba(52,211,153,0.3);color:var(--green);
+}
+.btn-run:hover{
+  background:linear-gradient(135deg,rgba(52,211,153,0.25),rgba(56,189,248,0.25));
+  box-shadow:0 0 20px rgba(52,211,153,0.15);
+}
+
+/* ─── LAYOUT ─── */
+.main{display:flex;flex:1;overflow:hidden;}
+
+/* ─── SIDEBAR ─── */
+.sidebar{
+  width:var(--sidebar-w);
+  background:rgba(10,14,26,0.5);
+  backdrop-filter:blur(10px);
+  border-right:1px solid var(--border);
+  overflow-y:auto;flex-shrink:0;
+  padding:8px 0;
+}
+.sb-group{margin-bottom:4px;}
+.sb-group-hdr{
+  padding:8px 16px;font-size:10px;font-weight:600;
+  text-transform:uppercase;letter-spacing:1.2px;
+  color:var(--text-muted);cursor:pointer;
+  display:flex;align-items:center;gap:6px;
+  transition:color 0.2s;user-select:none;
+}
+.sb-group-hdr:hover{color:var(--text-secondary);}
+.sb-group-hdr svg{width:10px;height:10px;transition:transform 0.2s;fill:currentColor;}
+.sb-group.collapsed .sb-group-hdr svg{transform:rotate(-90deg);}
+.sb-group.collapsed .sb-items{display:none;}
+.sb-item{
+  padding:6px 16px 6px 20px;font-size:13px;font-weight:400;
+  color:var(--text-muted);cursor:pointer;
+  display:flex;align-items:center;gap:10px;
+  transition:all 0.15s ease;border-left:2px solid transparent;
+  margin:1px 0;
+}
+.sb-item:hover{color:var(--text-secondary);background:var(--bg-hover);border-left-color:rgba(56,189,248,0.2);}
+.sb-item.active{
+  color:var(--accent);background:rgba(56,189,248,0.06);
+  border-left-color:var(--accent);font-weight:500;
+}
+.sb-dot{
+  width:6px;height:6px;border-radius:50%;flex-shrink:0;
+  background:var(--text-muted);opacity:0.4;
+  transition:all 0.3s ease;
+}
+.sb-dot.done{
+  background:var(--green);opacity:1;
+  box-shadow:0 0 6px var(--green-glow);
+}
+
+/* ─── CONTENT ─── */
+.content{flex:1;display:flex;flex-direction:column;overflow:hidden;}
+.stage-view{flex:1;overflow-y:auto;padding:24px;scroll-behavior:smooth;}
+.stage-hdr{display:flex;align-items:center;gap:14px;margin-bottom:20px;}
+.stage-num{
+  font-size:11px;font-weight:600;color:var(--accent);
+  background:rgba(56,189,248,0.1);border:1px solid rgba(56,189,248,0.2);
+  padding:2px 8px;border-radius:20px;
+}
+.stage-hdr h2{font-size:20px;font-weight:700;letter-spacing:-0.3px;}
+
+/* ─── CARDS ─── */
+.card{
+  background:var(--bg-card);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  border:1px solid var(--glass-border);
+  border-radius:var(--radius);padding:20px;margin-bottom:16px;
+  transition:border-color 0.3s;
+}
+.card:hover{border-color:var(--border-accent);}
+.card-title{
+  font-size:11px;font-weight:600;text-transform:uppercase;
+  letter-spacing:0.8px;color:var(--text-muted);margin-bottom:14px;
+  display:flex;align-items:center;gap:8px;
+}
+.card-title::before{
+  content:'';width:3px;height:12px;border-radius:2px;
+  background:var(--gradient-1);
+}
+
+/* ─── METRICS ─── */
+.metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;}
+.m-card{
+  background:rgba(255,255,255,0.02);border:1px solid var(--border);
+  border-radius:var(--radius-sm);padding:12px 14px;
+  transition:all 0.2s;position:relative;overflow:hidden;
+}
+.m-card:hover{border-color:var(--border-accent);transform:translateY(-1px);}
+.m-card::after{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:var(--gradient-1);opacity:0;transition:opacity 0.3s;
+}
+.m-card:hover::after{opacity:1;}
+.m-label{font-size:10px;color:var(--text-muted);font-weight:500;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px;}
+.m-val{font-size:20px;font-weight:700;letter-spacing:-0.5px;font-variant-numeric:tabular-nums;}
+.m-val.good{color:var(--green);}
+.m-val.warn{color:var(--orange);}
+.m-val.bad{color:var(--red);}
+
+/* ─── FLOW CHIPS ─── */
+.flow-chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;}
+.f-chip{
+  font-size:10px;font-weight:500;padding:4px 10px;border-radius:20px;
+  border:1px solid var(--border);color:var(--text-muted);
+  transition:all 0.3s;
+}
+.f-chip.done{
+  border-color:rgba(52,211,153,0.3);color:var(--green);
+  background:rgba(52,211,153,0.08);
+}
+
+/* ─── GAUGE ─── */
+.gauge-row{display:flex;gap:20px;justify-content:center;flex-wrap:wrap;margin:16px 0;}
+.gauge-wrap{text-align:center;}
+.gauge-label{font-size:10px;color:var(--text-muted);margin-top:8px;text-transform:uppercase;letter-spacing:0.5px;}
+.gauge-value{font-size:13px;font-weight:700;margin-top:2px;}
+
+/* ─── TABLES ─── */
+.dt{width:100%;border-collapse:collapse;font-size:12px;}
+.dt th{
+  text-align:left;padding:8px 12px;font-size:10px;font-weight:600;
+  text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);
+  border-bottom:1px solid var(--border);
+}
+.dt td{padding:7px 12px;border-bottom:1px solid rgba(148,163,184,0.04);}
+.dt tr:hover td{background:var(--bg-hover);}
+
+/* ─── CANVAS ─── */
+.viz{
+  width:100%;border-radius:var(--radius-sm);overflow:hidden;
+  border:1px solid var(--border);background:var(--bg-deep);
+  position:relative;
+}
+.viz canvas{display:block;width:100%;}
+
+/* ─── TERMINAL ─── */
+.terminal{
+  height:170px;background:rgba(6,8,15,0.95);
+  border-top:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;
+}
+.term-bar{
+  display:flex;align-items:center;padding:6px 14px;gap:8px;
+  background:rgba(15,20,36,0.8);border-bottom:1px solid var(--border);
+}
+.term-dots{display:flex;gap:5px;}
+.term-dots span{width:8px;height:8px;border-radius:50%;opacity:0.6;}
+.term-bar-label{font-size:11px;color:var(--text-muted);font-weight:500;}
+.term-out{
+  flex:1;overflow-y:auto;padding:8px 14px;
+  font-family:'JetBrains Mono','SF Mono','Fira Code',monospace;
+  font-size:11.5px;line-height:1.6;color:var(--text-muted);white-space:pre-wrap;
+}
+.term-in-row{
+  display:flex;align-items:center;padding:4px 14px;gap:8px;
+  border-top:1px solid var(--border);background:rgba(15,20,36,0.5);
+}
+.term-prompt{color:var(--green);font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:500;}
+.term-input{
+  flex:1;background:transparent;border:none;
+  color:var(--text-primary);font-family:'JetBrains Mono',monospace;
+  font-size:12px;outline:none;
+}
+
+/* ─── STATUS BAR ─── */
+.pass-badge{color:var(--green);font-weight:600;font-size:13px;}
+.fail-badge{color:var(--red);font-weight:600;font-size:13px;}
 </style>
 </head>
 <body>
 <div class="header">
-  <div class="logo">SiliconForge <span>Studio</span></div>
+  <div class="logo">
+    <div class="logo-icon">SF</div>
+    <div class="logo-text">SiliconForge<span>Studio</span></div>
+  </div>
+  <div class="header-sep"></div>
+  <div class="header-status"><div class="pulse"></div><span id="hdr-status">Ready</span></div>
   <div class="header-actions">
     <input type="file" id="verilog-upload" accept=".v,.sv" style="display:none" onchange="uploadFile(this)">
     <button class="btn" onclick="document.getElementById('verilog-upload').click()">Upload Verilog</button>
-    <button class="btn btn-primary" onclick="runFullFlow()">Run Full Flow</button>
-    <button class="btn" onclick="refreshState()">Refresh</button>
+    <button class="btn btn-primary" onclick="runFullFlow()">▶ Run Full Flow</button>
+    <button class="btn" onclick="refreshState()">↻ Refresh</button>
   </div>
 </div>
-<div class="main-layout">
+<div class="main">
   <div class="sidebar" id="sidebar"></div>
-  <div class="content-area">
-    <div class="stage-content" id="stage-content"></div>
-    <div class="terminal-panel">
-      <div class="terminal-header">
-        <span style="color:var(--green)">●</span><span>Terminal</span>
-        <button class="btn" style="margin-left:auto;padding:2px 8px;font-size:11px" onclick="clearTerminal()">Clear</button>
+  <div class="content">
+    <div class="stage-view" id="stage-view"></div>
+    <div class="terminal">
+      <div class="term-bar">
+        <div class="term-dots"><span style="background:#f87171"></span><span style="background:#fbbf24"></span><span style="background:#34d399"></span></div>
+        <span class="term-bar-label">Terminal</span>
+        <button class="btn" style="margin-left:auto;padding:2px 8px;font-size:10px" onclick="clearTerm()">Clear</button>
       </div>
-      <div class="terminal-output" id="terminal-output"></div>
-      <div class="terminal-input-row">
-        <span class="terminal-prompt">sf&gt;</span>
-        <input class="terminal-input" id="terminal-input" placeholder="Enter command..." onkeydown="if(event.key==='Enter')sendTerminalCmd()">
+      <div class="term-out" id="term-out"></div>
+      <div class="term-in-row">
+        <span class="term-prompt">sf ❯</span>
+        <input class="term-input" id="term-input" placeholder="Enter command..." onkeydown="if(event.key==='Enter')sendCmd()">
       </div>
     </div>
   </div>
 </div>
-<script>
-let STATE = {};
-let currentStage = 'dashboard';
-let currentDesignFile = 'test_design.v';
 
-const STAGE_GROUPS = [
-  { name: 'Overview', stages: [
-    { id: 'dashboard', label: 'Dashboard', cmd: null },
+<script>
+/* ═══════════════════════════════════════════════════════
+   STATE & CONFIG
+   ═══════════════════════════════════════════════════════ */
+let S = {};
+let curStage = 'dashboard';
+let designFile = 'test_design.v';
+const DPR = window.devicePixelRatio || 1;
+
+const GROUPS = [
+  {name:'Overview', items:[{id:'dashboard',label:'Dashboard'}]},
+  {name:'RTL & Frontend', items:[
+    {id:'rtl',label:'RTL Design',cmd:'read_verilog '},
+    {id:'simulation',label:'Simulation',cmd:'simulate'},
+    {id:'formal',label:'Formal Verify',cmd:'formal_bmc 10'},
+    {id:'synthesis',label:'Synthesis',cmd:'synthesize'},
+    {id:'dft',label:'DFT / ATPG',cmd:'run_dft'},
+    {id:'lec',label:'LEC',cmd:'lec'},
   ]},
-  { name: 'RTL & Frontend', stages: [
-    { id: 'rtl', label: 'RTL Design', cmd: 'read_verilog ' },
-    { id: 'simulation', label: 'Simulation', cmd: 'simulate' },
-    { id: 'formal', label: 'Formal Verification', cmd: 'formal_bmc 10' },
-    { id: 'synthesis', label: 'Logic Synthesis', cmd: 'synthesize' },
-    { id: 'dft', label: 'Design for Test', cmd: 'run_dft' },
-    { id: 'lec', label: 'LEC', cmd: 'lec' },
+  {name:'Physical Design', items:[
+    {id:'placement',label:'Placement',cmd:'floorplan 200 200 10'},
+    {id:'cts',label:'Clock Tree',cmd:'cts'},
+    {id:'routing',label:'Routing',cmd:'route'},
+    {id:'post_route',label:'Post-Route Opt',cmd:'post_route_opt'},
+    {id:'chip',label:'Chip Assembly',cmd:'chip_assemble'},
   ]},
-  { name: 'Physical Design', stages: [
-    { id: 'placement', label: 'Placement', cmd: 'floorplan 200 200 10' },
-    { id: 'cts', label: 'Clock Tree Synthesis', cmd: 'cts' },
-    { id: 'routing', label: 'Routing', cmd: 'route' },
-    { id: 'post_route', label: 'Post-Route Opt', cmd: 'post_route_opt' },
-    { id: 'chip', label: 'Chip Assembly', cmd: 'chip_assemble' },
+  {name:'Signoff', items:[
+    {id:'sta',label:'Timing (STA)',cmd:'sta'},
+    {id:'power',label:'Power',cmd:'power'},
+    {id:'drc',label:'DRC',cmd:'drc'},
+    {id:'lvs',label:'LVS',cmd:'lvs'},
   ]},
-  { name: 'Signoff', stages: [
-    { id: 'sta', label: 'Static Timing', cmd: 'sta' },
-    { id: 'power', label: 'Power Analysis', cmd: 'power' },
-    { id: 'drc', label: 'DRC', cmd: 'drc' },
-    { id: 'lvs', label: 'LVS', cmd: 'lvs' },
+  {name:'Advanced', items:[
+    {id:'mcmm',label:'MCMM',cmd:'mcmm'},
+    {id:'ssta',label:'SSTA & Yield',cmd:'ssta'},
+    {id:'ir_drop',label:'IR Drop',cmd:'ir_drop'},
+    {id:'pdn',label:'PDN Impedance',cmd:'pdn'},
+    {id:'si',label:'Signal Integrity',cmd:'si'},
+    {id:'thermal',label:'Thermal',cmd:'thermal'},
+    {id:'em',label:'Electromigration',cmd:'em'},
+    {id:'noise',label:'Noise / SSN',cmd:'noise'},
+    {id:'ml',label:'ML Optimization',cmd:'ai_tune'},
+    {id:'adv_formal',label:'Adv. Formal',cmd:'adv_formal'},
   ]},
-  { name: 'Advanced Analysis', stages: [
-    { id: 'mcmm', label: 'MCMM Signoff', cmd: 'mcmm' },
-    { id: 'ssta', label: 'SSTA & Yield', cmd: 'ssta' },
-    { id: 'ir_drop', label: 'IR Drop', cmd: 'ir_drop' },
-    { id: 'pdn', label: 'PDN Impedance', cmd: 'pdn' },
-    { id: 'si', label: 'Signal Integrity', cmd: 'si' },
-    { id: 'thermal', label: 'Thermal Analysis', cmd: 'thermal' },
-    { id: 'em', label: 'Electromigration', cmd: 'em' },
-    { id: 'noise', label: 'Noise / SSN', cmd: 'noise' },
-    { id: 'ml', label: 'ML Optimization', cmd: 'ai_tune' },
-    { id: 'adv_formal', label: 'Advanced Formal', cmd: 'adv_formal' },
-  ]},
-  { name: 'Output', stages: [
-    { id: 'gdsii', label: 'GDSII Export', cmd: 'write_gds out.gds' },
-  ]},
+  {name:'Output', items:[{id:'gdsii',label:'GDSII Export',cmd:'write_gds out.gds'}]},
 ];
 
-const STAGE_STATE_MAP = {
-  rtl:'has_netlist', simulation:'is_simulated', formal:'is_formal_done',
-  synthesis:'is_synthesized', dft:'is_dft_done', lec:'is_lec_done',
-  placement:'is_placed', cts:'is_cts_done', routing:'is_routed',
-  post_route:'is_post_route_done', chip:'is_chip_assembled',
-  sta:'is_sta_done', power:'is_power_done', drc:'is_drc_done', lvs:'is_lvs_done',
-  mcmm:'is_mcmm_done', ssta:'is_ssta_done', ir_drop:'is_ir_drop_done',
-  pdn:'is_pdn_done', si:'is_si_done', thermal:'is_thermal_done',
-  em:'is_em_done', noise:'is_noise_done', ml:'is_ml_done', adv_formal:'is_adv_formal_done',
+const FLAG = {
+  rtl:'has_netlist',simulation:'is_simulated',formal:'is_formal_done',
+  synthesis:'is_synthesized',dft:'is_dft_done',lec:'is_lec_done',
+  placement:'is_placed',cts:'is_cts_done',routing:'is_routed',
+  post_route:'is_post_route_done',chip:'is_chip_assembled',
+  sta:'is_sta_done',power:'is_power_done',drc:'is_drc_done',lvs:'is_lvs_done',
+  mcmm:'is_mcmm_done',ssta:'is_ssta_done',ir_drop:'is_ir_drop_done',
+  pdn:'is_pdn_done',si:'is_si_done',thermal:'is_thermal_done',
+  em:'is_em_done',noise:'is_noise_done',ml:'is_ml_done',adv_formal:'is_adv_formal_done',
 };
 
-function buildSidebar() {
-  const sb = document.getElementById('sidebar');
-  sb.innerHTML = '';
-  for (const group of STAGE_GROUPS) {
-    const gDiv = document.createElement('div');
-    gDiv.className = 'sidebar-group';
-    const hdr = document.createElement('div');
-    hdr.className = 'sidebar-group-header';
-    hdr.innerHTML = '<span class="arrow">▾</span> ' + group.name;
-    hdr.onclick = function() { gDiv.classList.toggle('collapsed'); };
-    gDiv.appendChild(hdr);
-    const items = document.createElement('div');
-    items.className = 'sidebar-items';
-    for (const s of group.stages) {
-      const item = document.createElement('div');
-      item.className = 'sidebar-item' + (s.id === currentStage ? ' active' : '');
-      item.dataset.id = s.id;
-      const stateKey = STAGE_STATE_MAP[s.id];
-      const isDone = stateKey && STATE.flow_state && STATE.flow_state[stateKey];
-      item.innerHTML = '<span class="dot ' + (isDone ? 'done' : '') + '"></span>' + s.label;
-      item.onclick = function() { selectStage(s.id); };
-      items.appendChild(item);
+/* ═══════════════════════════════════════════════════════
+   SIDEBAR
+   ═══════════════════════════════════════════════════════ */
+function buildSidebar(){
+  const sb=document.getElementById('sidebar');sb.innerHTML='';
+  for(const g of GROUPS){
+    const gd=document.createElement('div');gd.className='sb-group';
+    const hdr=document.createElement('div');hdr.className='sb-group-hdr';
+    hdr.innerHTML='<svg viewBox="0 0 10 10"><path d="M2 3l3 4 3-4z"/></svg>'+g.name;
+    hdr.onclick=()=>gd.classList.toggle('collapsed');
+    gd.appendChild(hdr);
+    const items=document.createElement('div');items.className='sb-items';
+    for(const s of g.items){
+      const it=document.createElement('div');
+      it.className='sb-item'+(s.id===curStage?' active':'');
+      it.dataset.id=s.id;
+      const fs=S.flow_state||{};
+      const done=FLAG[s.id]&&fs[FLAG[s.id]];
+      it.innerHTML='<span class="sb-dot'+(done?' done':'')+'"></span>'+s.label;
+      it.onclick=()=>selectStage(s.id);
+      items.appendChild(it);
     }
-    gDiv.appendChild(items);
-    sb.appendChild(gDiv);
+    gd.appendChild(items);sb.appendChild(gd);
   }
 }
 
-function selectStage(id) {
-  currentStage = id;
-  document.querySelectorAll('.sidebar-item').forEach(function(el) {
-    el.classList.toggle('active', el.dataset.id === id);
-  });
-  renderStage();
+function selectStage(id){
+  curStage=id;
+  document.querySelectorAll('.sb-item').forEach(el=>el.classList.toggle('active',el.dataset.id===id));
+  render();
 }
 
-function renderStage() {
-  var el = document.getElementById('stage-content');
-  var fn = RENDERERS[currentStage];
-  if (fn) { el.innerHTML = ''; fn(el); }
-  else { el.innerHTML = '<div class="card"><p style="color:var(--text-secondary)">Select a stage.</p></div>'; }
+/* ═══════════════════════════════════════════════════════
+   API
+   ═══════════════════════════════════════════════════════ */
+async function apiCmd(cmd){
+  tOut('> '+cmd);setStatus('Running...');
+  try{
+    const r=await fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:cmd})});
+    const d=await r.json();
+    if(d.output)tOut(d.output);
+    if(d.state){S=d.state;buildSidebar();render();}
+    setStatus('Ready');return d;
+  }catch(e){tOut('[ERROR] '+e.message);setStatus('Error');}
+}
+async function refreshState(){
+  try{const r=await fetch('/api/state');S=await r.json();buildSidebar();render();tOut('[State refreshed]');}
+  catch(e){tOut('[ERROR] '+e.message);}
+}
+async function uploadFile(inp){
+  const f=inp.files[0];if(!f)return;designFile=f.name;
+  const fd=new FormData();fd.append('file',f);
+  try{await fetch('/api/upload',{method:'POST',body:fd});tOut('[Uploaded] '+f.name);await apiCmd('read_verilog studio/'+f.name);}
+  catch(e){tOut('[ERROR] '+e.message);}
+}
+async function runFullFlow(){tOut('[Running full RTL-to-GDSII flow...]');await apiCmd('run_all 200 200');}
+
+function tOut(t){const el=document.getElementById('term-out');el.textContent+=t+'\n';el.scrollTop=el.scrollHeight;}
+function clearTerm(){document.getElementById('term-out').textContent='';}
+function sendCmd(){const inp=document.getElementById('term-input');const c=inp.value.trim();if(!c)return;inp.value='';apiCmd(c);}
+function setStatus(t){document.getElementById('hdr-status').textContent=t;}
+
+/* ═══════════════════════════════════════════════════════
+   HELPERS
+   ═══════════════════════════════════════════════════════ */
+function mc(label,value,cls){
+  return '<div class="m-card"><div class="m-label">'+label+'</div><div class="m-val '+(cls||'')+'">'+value+'</div></div>';
+}
+function sHdr(num,title,cmd){
+  let h='<div class="stage-hdr"><span class="stage-num">#'+num+'</span><h2>'+title+'</h2>';
+  if(cmd)h+='<button class="btn btn-run" style="margin-left:auto" onclick="apiCmd(\''+cmd.replace(/'/g,"\\'")+'\')">▶ Run</button>';
+  return h+'</div>';
+}
+function mkCanvas(id,w,h){
+  return '<div class="viz"><canvas id="'+id+'" width="'+w+'" height="'+h+'"></canvas></div>';
+}
+function hiDpiCanvas(canvas,w,h){
+  canvas.width=w*DPR;canvas.height=h*DPR;
+  canvas.style.width=w+'px';canvas.style.height=h+'px';
+  const ctx=canvas.getContext('2d');ctx.scale(DPR,DPR);return ctx;
 }
 
-// API
-async function apiCommand(cmd) {
-  appendTerminal('> ' + cmd);
-  try {
-    var r = await fetch('/api/command', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({command:cmd}) });
-    var d = await r.json();
-    if (d.output) appendTerminal(d.output);
-    if (d.state) { STATE = d.state; buildSidebar(); renderStage(); }
-    return d;
-  } catch(e) { appendTerminal('[ERROR] ' + e.message); }
+/* ═══════════════════════════════════════════════════════
+   RENDER DISPATCH
+   ═══════════════════════════════════════════════════════ */
+function render(){
+  const el=document.getElementById('stage-view');
+  const fn=R[curStage];
+  if(fn){el.innerHTML='';fn(el);}
+  else el.innerHTML='<div class="card"><p style="color:var(--text-secondary)">Select a stage from the sidebar.</p></div>';
 }
 
-async function refreshState() {
-  try {
-    var r = await fetch('/api/state');
-    STATE = await r.json();
-    buildSidebar(); renderStage();
-    appendTerminal('[State refreshed]');
-  } catch(e) { appendTerminal('[ERROR] ' + e.message); }
-}
+/* ═══════════════════════════════════════════════════════
+   RENDERERS
+   ═══════════════════════════════════════════════════════ */
+const R={};
 
-async function uploadFile(input) {
-  var file = input.files[0];
-  if (!file) return;
-  currentDesignFile = file.name;
-  var form = new FormData();
-  form.append('file', file);
-  try {
-    await fetch('/api/upload', { method:'POST', body:form });
-    appendTerminal('[Uploaded] ' + file.name);
-    await apiCommand('read_verilog studio/' + file.name);
-  } catch(e) { appendTerminal('[ERROR] ' + e.message); }
-}
+// ── DASHBOARD ──
+R.dashboard=function(el){
+  const fs=S.flow_state||{},nl=S.netlist||{},t=S.timing||{},p=S.power||{},ph=S.physical||{},drc=S.drc||{};
+  const all=Object.entries(FLAG);const done=all.filter(e=>fs[e[1]]).length;
+  let h='<div class="stage-hdr"><h2>Design Dashboard</h2></div>';
 
-async function runFullFlow() {
-  appendTerminal('[Running full RTL-to-GDSII flow...]');
-  await apiCommand('run_all 200 200');
-}
+  // Progress gauges
+  h+='<div class="card"><div class="card-title">Flow Progress</div>';
+  h+='<div class="gauge-row">';
+  h+='<div class="gauge-wrap">'+mkCanvas('g-progress',100,100)+'<div class="gauge-label">Stages</div><div class="gauge-value">'+done+'/'+all.length+'</div></div>';
+  const yield_v=((S.ssta||{}).yield_estimate||0)*100;
+  h+='<div class="gauge-wrap">'+mkCanvas('g-yield',100,100)+'<div class="gauge-label">Yield</div><div class="gauge-value">'+yield_v.toFixed(1)+'%</div></div>';
+  const drc_v=drc.violations||0;
+  h+='<div class="gauge-wrap">'+mkCanvas('g-drc',100,100)+'<div class="gauge-label">DRC Clean</div><div class="gauge-value">'+(drc_v===0?'✓':''+drc_v)+'</div></div>';
+  h+='</div>';
+  h+='<div class="flow-chips">';
+  const allItems=[];GROUPS.forEach(g=>g.items.forEach(s=>allItems.push(s)));
+  for(const[id,flag] of all){const info=allItems.find(s=>s.id===id);h+='<span class="f-chip'+(fs[flag]?' done':'')+'">'+((info?info.label:id))+'</span>';}
+  h+='</div></div>';
 
-function appendTerminal(text) {
-  var el = document.getElementById('terminal-output');
-  el.textContent += text + '\n';
-  el.scrollTop = el.scrollHeight;
-}
-function clearTerminal() { document.getElementById('terminal-output').textContent = ''; }
-function sendTerminalCmd() {
-  var inp = document.getElementById('terminal-input');
-  var cmd = inp.value.trim();
-  if (!cmd) return;
-  inp.value = '';
-  apiCommand(cmd);
-}
+  // Key metrics
+  h+='<div class="card"><div class="card-title">Key Metrics</div><div class="metrics">';
+  h+=mc('Gates',nl.num_gates||0)+mc('Nets',nl.num_nets||0)+mc('FFs',nl.num_ffs||0);
+  h+=mc('WNS',(t.wns||0).toFixed(3)+' ns',(t.wns||0)>=0?'good':'bad');
+  h+=mc('TNS',(t.tns||0).toFixed(3)+' ns',(t.tns||0)>=0?'good':'warn');
+  h+=mc('Power',(p.total_mw||0).toFixed(2)+' mW');
+  h+=mc('Cells',ph.num_cells||0)+mc('Wires',ph.num_wires||0);
+  h+=mc('DRC',drc_v,drc_v===0?'good':'bad');
+  h+='</div></div>';
 
-// Helpers
-function mc(label, value, cls) {
-  return '<div class="metric"><div class="metric-label">' + label + '</div><div class="metric-value ' + (cls||'') + '">' + value + '</div></div>';
-}
-
-function stageHdr(num, title, cmd) {
-  var s = '<div class="stage-header"><span class="num">#' + num + '</span><h2>' + title + '</h2>';
-  if (cmd) s += '<button class="btn btn-primary" style="margin-left:auto" onclick="apiCommand(\'' + cmd.replace(/'/g,"\\'") + '\')">Run</button>';
-  s += '</div>';
-  return s;
-}
-
-function makeCanvas(id, w, h) {
-  return '<div class="viz-container"><canvas id="' + id + '" width="' + w + '" height="' + h + '"></canvas></div>';
-}
-
-// RENDERERS
-var RENDERERS = {};
-
-RENDERERS.dashboard = function(el) {
-  var fs = STATE.flow_state || {};
-  var allStages = Object.entries(STAGE_STATE_MAP);
-  var doneCount = allStages.filter(function(e) { return fs[e[1]]; }).length;
-  var html = '<div class="stage-header"><h2>Design Overview</h2></div>';
-  html += '<div class="card"><div class="card-title">Flow Progress — ' + doneCount + '/' + allStages.length + ' stages</div><div class="flow-progress">';
-  var allStageList = [];
-  STAGE_GROUPS.forEach(function(g) { g.stages.forEach(function(s) { allStageList.push(s); }); });
-  for (var e of allStages) {
-    var info = allStageList.find(function(s) { return s.id === e[0]; });
-    html += '<span class="flow-chip ' + (fs[e[1]] ? 'done' : '') + '">' + (info ? info.label : e[0]) + '</span>';
+  // 3D chip overview
+  if(ph.cells&&ph.cells.length){
+    h+='<div class="card"><div class="card-title">Chip Overview — Isometric</div>'+mkCanvas('c-iso',700,450)+'</div>';
   }
-  html += '</div></div>';
-  var nl = STATE.netlist || {}, t = STATE.timing || {}, p = STATE.power || {}, ph = STATE.physical || {}, drc = STATE.drc || {};
-  html += '<div class="card"><div class="card-title">Key Metrics</div><div class="metric-grid">';
-  html += mc('Gates', nl.num_gates||0) + mc('Nets', nl.num_nets||0) + mc('Flip-Flops', nl.num_ffs||0);
-  html += mc('WNS (ns)', (t.wns||0).toFixed(3), (t.wns||0)>=0?'good':'bad');
-  html += mc('TNS (ns)', (t.tns||0).toFixed(3), (t.tns||0)>=0?'good':'warn');
-  html += mc('Power (mW)', (p.total_mw||0).toFixed(2));
-  html += mc('Cells', ph.num_cells||0) + mc('Wires', ph.num_wires||0);
-  html += mc('DRC Violations', drc.violations||0, (drc.violations||0)===0?'good':'bad');
-  html += '</div></div>';
-  el.innerHTML = html;
+  el.innerHTML=h;
+
+  // Draw gauges
+  setTimeout(()=>{
+    drawGauge('g-progress',done/all.length,['#38bdf8','#818cf8']);
+    drawGauge('g-yield',yield_v/100,['#34d399','#38bdf8']);
+    drawGauge('g-drc',drc_v===0?1:Math.max(0,1-drc_v/50),drc_v===0?['#34d399','#38bdf8']:['#f87171','#fbbf24']);
+    if(ph.cells&&ph.cells.length)drawIsoChip(document.getElementById('c-iso'),ph);
+  },10);
 };
 
-RENDERERS.rtl = function(el) {
-  var nl = STATE.netlist || {};
-  var html = stageHdr('01','RTL Design','read_verilog '+currentDesignFile);
-  html += '<div class="card"><div class="card-title">Netlist</div><div class="metric-grid">';
-  html += mc('Gates',nl.num_gates||0)+mc('Nets',nl.num_nets||0)+mc('PIs',nl.num_pis||0)+mc('POs',nl.num_pos||0)+mc('FFs',nl.num_ffs||0);
-  html += '</div></div>';
-  if (nl.gates && nl.gates.length > 0) html += '<div class="card"><div class="card-title">Gate Graph</div>' + makeCanvas('c-rtl',800,350) + '</div>';
-  el.innerHTML = html;
-  if (nl.gates && nl.gates.length > 0) drawRtlGraph(document.getElementById('c-rtl'), nl);
+// ── RTL ──
+R.rtl=function(el){
+  const nl=S.netlist||{};
+  let h=sHdr('01','RTL Design','read_verilog '+designFile);
+  h+='<div class="card"><div class="card-title">Netlist Statistics</div><div class="metrics">';
+  h+=mc('Gates',nl.num_gates||0)+mc('Nets',nl.num_nets||0)+mc('PIs',nl.num_pis||0)+mc('POs',nl.num_pos||0)+mc('FFs',nl.num_ffs||0);
+  h+='</div></div>';
+  if(nl.gates&&nl.gates.length){h+='<div class="card"><div class="card-title">Gate Network</div>'+mkCanvas('c-rtl',700,380)+'</div>';}
+  el.innerHTML=h;
+  if(nl.gates&&nl.gates.length)setTimeout(()=>drawRtlGraph(document.getElementById('c-rtl'),nl),10);
 };
 
-RENDERERS.simulation = function(el) {
-  var sim = STATE.simulation || {};
-  var html = stageHdr('02','Simulation','simulate');
-  if (sim.num_signals > 0) {
-    html += '<div class="card"><div class="card-title">Waveforms — '+sim.num_signals+' signals, '+sim.num_timepoints+' timepoints</div>'+makeCanvas('c-sim',800,Math.max(200,(sim.signals||[]).length*30+40))+'</div>';
-    el.innerHTML = html;
-    drawWaveform(document.getElementById('c-sim'), sim);
-  } else {
-    html += '<div class="card"><p style="color:var(--text-secondary)">No simulation data yet.</p></div>';
-    el.innerHTML = html;
-  }
+// ── SIMULATION ──
+R.simulation=function(el){
+  const sim=S.simulation||{};
+  let h=sHdr('02','Simulation','simulate');
+  h+='<div class="card"><div class="card-title">Waveform Viewer</div><div class="metrics">';
+  h+=mc('Signals',sim.num_signals||0)+mc('Timepoints',sim.num_timepoints||0);
+  h+='</div></div>';
+  if((sim.signals||[]).length){
+    const ch=Math.max(200,(sim.signals||[]).length*28+40);
+    h+='<div class="card">'+mkCanvas('c-sim',700,ch)+'</div>';
+    el.innerHTML=h;setTimeout(()=>drawWaveform(document.getElementById('c-sim'),sim),10);
+  }else el.innerHTML=h;
 };
 
-RENDERERS.formal = function(el) {
-  var f = STATE.formal || {};
-  var html = stageHdr('03','Formal Verification','formal_bmc 10');
-  html += '<div class="card"><div class="card-title">BMC — Depth ' + (f.bmc_depth||0) + '</div>';
-  if (f.properties && f.properties.length) {
-    html += '<table class="data-table"><thead><tr><th>Property</th><th>Status</th><th>Depth</th><th>CEX</th></tr></thead><tbody>';
-    for (var p of f.properties) {
-      var c = p.status==='proved'?'var(--green)':p.status==='failed'?'var(--red)':'var(--orange)';
-      html += '<tr><td>'+p.name+'</td><td style="color:'+c+'">'+p.status+'</td><td>'+p.depth+'</td><td>'+p.cex_cycle+'</td></tr>';
+// ── FORMAL ──
+R.formal=function(el){
+  const f=S.formal||{};
+  let h=sHdr('03','Formal Verification','formal_bmc 10');
+  h+='<div class="card"><div class="card-title">BMC — Depth '+(f.bmc_depth||0)+'</div>';
+  if(f.properties&&f.properties.length){
+    h+='<table class="dt"><thead><tr><th>Property</th><th>Status</th><th>Depth</th><th>CEX</th></tr></thead><tbody>';
+    for(const p of f.properties){
+      const c=p.status==='proved'?'var(--green)':p.status==='failed'?'var(--red)':'var(--orange)';
+      h+='<tr><td>'+p.name+'</td><td style="color:'+c+';font-weight:600">'+p.status.toUpperCase()+'</td><td>'+p.depth+'</td><td>'+p.cex_cycle+'</td></tr>';
     }
-    html += '</tbody></table>';
-  } else html += '<p style="color:var(--text-secondary)">No properties yet.</p>';
-  html += '</div>';
-  el.innerHTML = html;
+    h+='</tbody></table>';
+  }else h+='<p style="color:var(--text-muted)">No properties checked yet.</p>';
+  h+='</div>';el.innerHTML=h;
 };
 
-RENDERERS.synthesis = function(el) {
-  var s = STATE.synthesis || {};
-  var html = stageHdr('04','Logic Synthesis','synthesize');
-  html += '<div class="card"><div class="card-title">Results</div><div class="metric-grid">';
-  html += mc('Nodes Before',s.nodes_before||0)+mc('Nodes After',s.nodes_after||0);
-  html += mc('Depth Before',s.depth_before||0)+mc('Depth After',s.depth_after||0);
-  html += mc('Reduction',(s.reduction_pct||0).toFixed(1)+'%','good');
-  html += '</div></div>';
-  html += '<div class="card"><div class="card-title">Optimization</div>'+makeCanvas('c-synth',500,200)+'</div>';
-  el.innerHTML = html;
-  drawBarComp(document.getElementById('c-synth'),[{l:'Nodes',b:s.nodes_before||0,a:s.nodes_after||0},{l:'Depth',b:s.depth_before||0,a:s.depth_after||0}]);
+// ── SYNTHESIS ──
+R.synthesis=function(el){
+  const s=S.synthesis||{};
+  let h=sHdr('04','Logic Synthesis','synthesize');
+  h+='<div class="card"><div class="card-title">Optimization Results</div><div class="metrics">';
+  h+=mc('Before',s.nodes_before||0)+mc('After',s.nodes_after||0);
+  h+=mc('Depth Before',s.depth_before||0)+mc('Depth After',s.depth_after||0);
+  h+=mc('Reduction',(s.reduction_pct||0).toFixed(1)+'%','good');
+  h+='</div></div>';
+  h+='<div class="card"><div class="card-title">Before vs After</div>'+mkCanvas('c-synth',500,220)+'</div>';
+  el.innerHTML=h;
+  setTimeout(()=>drawBarComp(document.getElementById('c-synth'),[{l:'Nodes',b:s.nodes_before||0,a:s.nodes_after||0},{l:'Depth',b:s.depth_before||0,a:s.depth_after||0}]),10);
 };
 
-RENDERERS.dft = function(el) {
-  var d = STATE.dft || {};
-  var html = stageHdr('05','Design for Test','run_dft');
-  html += '<div class="card"><div class="card-title">Fault Coverage</div><div class="metric-grid">';
-  html += mc('Total Faults',d.total_faults||0)+mc('Detected',d.detected||0,'good');
-  html += mc('Coverage',(d.coverage_pct||0).toFixed(1)+'%',(d.coverage_pct||0)>90?'good':'warn');
-  html += mc('Patterns',d.patterns||0);
-  html += '</div></div>';
-  el.innerHTML = html;
+// ── DFT ──
+R.dft=function(el){
+  const d=S.dft||{};
+  let h=sHdr('05','DFT / ATPG','run_dft');
+  h+='<div class="card"><div class="card-title">Fault Coverage</div><div class="metrics">';
+  h+=mc('Total Faults',d.total_faults||0)+mc('Detected',d.detected||0,'good');
+  h+=mc('Coverage',(d.coverage_pct||0).toFixed(1)+'%',(d.coverage_pct||0)>90?'good':'warn');
+  h+=mc('Patterns',d.patterns||0);
+  h+='</div></div>';
+  h+='<div class="card"><div class="card-title">Coverage</div>'+mkCanvas('c-dft',300,160)+'</div>';
+  el.innerHTML=h;
+  setTimeout(()=>drawGauge('c-dft',(d.coverage_pct||0)/100,['#34d399','#38bdf8'],60),10);
 };
 
-RENDERERS.lec = function(el) {
-  var fs = STATE.flow_state || {};
-  var html = stageHdr('06','Logic Equivalence Checking','lec');
-  html += '<div class="card"><div class="card-title">LEC Status</div>';
-  html += '<p style="color:'+(fs.is_lec_done?'var(--green)':'var(--text-secondary)')+';font-size:16px">'+(fs.is_lec_done?'✓ Equivalence verified':'Not run yet')+'</p></div>';
-  el.innerHTML = html;
+// ── LEC ──
+R.lec=function(el){
+  const fs=S.flow_state||{};
+  let h=sHdr('06','Logic Equivalence Checking','lec');
+  h+='<div class="card" style="text-align:center;padding:40px">';
+  h+=fs.is_lec_done?'<div class="pass-badge" style="font-size:32px">✓ EQUIVALENT</div><p style="color:var(--text-muted);margin-top:8px">All key points verified</p>':'<p style="color:var(--text-muted);font-size:16px">Not run yet</p>';
+  h+='</div>';el.innerHTML=h;
 };
 
-RENDERERS.placement = function(el) {
-  var ph = STATE.physical || {};
-  var html = stageHdr('07','Cell Placement','floorplan 200 200 10');
-  html += '<div class="card"><div class="card-title">Placement</div><div class="metric-grid">';
-  html += mc('Die',((ph.die||{}).w||0)+' × '+((ph.die||{}).h||0));
-  html += mc('Cells',ph.num_cells||0)+mc('Utilization',((ph.utilization||0)*100).toFixed(1)+'%');
-  html += '</div></div>';
-  if (ph.cells && ph.cells.length) {
-    html += '<div class="card"><div class="card-title">Cell Map</div>'+makeCanvas('c-place',600,500)+'</div>';
-    el.innerHTML = html;
-    drawPlacement(document.getElementById('c-place'), ph);
-  } else el.innerHTML = html;
+// ── PLACEMENT ──
+R.placement=function(el){
+  const ph=S.physical||{};
+  let h=sHdr('07','Cell Placement','floorplan 200 200 10');
+  h+='<div class="card"><div class="card-title">Layout</div><div class="metrics">';
+  h+=mc('Die',((ph.die||{}).w||0).toFixed(0)+' × '+((ph.die||{}).h||0).toFixed(0));
+  h+=mc('Cells',ph.num_cells||0)+mc('Utilization',((ph.utilization||0)*100).toFixed(1)+'%');
+  h+='</div></div>';
+  if(ph.cells&&ph.cells.length){
+    h+='<div class="card"><div class="card-title">3D Cell View</div>'+mkCanvas('c-place',700,500)+'</div>';
+    el.innerHTML=h;setTimeout(()=>drawIsoChip(document.getElementById('c-place'),ph),10);
+  }else el.innerHTML=h;
 };
 
-RENDERERS.cts = function(el) {
-  var c = STATE.cts || {};
-  var html = stageHdr('08','Clock Tree Synthesis','cts');
-  html += '<div class="card"><div class="card-title">CTS Results</div><div class="metric-grid">';
-  html += mc('Buffers',c.buffers_inserted||0)+mc('Wirelength',(c.wirelength||0).toFixed(1));
-  html += mc('Skew (ps)',(c.skew||0).toFixed(2),(c.skew||0)<50?'good':'warn');
-  html += mc('Max Latency',(c.max_latency||0).toFixed(1))+mc('Min Latency',(c.min_latency||0).toFixed(1));
-  html += '</div></div>';
-  el.innerHTML = html;
+// ── CTS ──
+R.cts=function(el){
+  const c=S.cts||{};
+  let h=sHdr('08','Clock Tree Synthesis','cts');
+  h+='<div class="card"><div class="card-title">CTS Results</div><div class="metrics">';
+  h+=mc('Buffers',c.buffers_inserted||0)+mc('Wirelength',(c.wirelength||0).toFixed(0));
+  h+=mc('Skew (ps)',(c.skew||0).toFixed(2),(c.skew||0)<50?'good':'warn');
+  h+=mc('Max Latency',(c.max_latency||0).toFixed(1))+mc('Min Latency',(c.min_latency||0).toFixed(1));
+  h+='</div></div>';el.innerHTML=h;
 };
 
-RENDERERS.routing = function(el) {
-  var ph = STATE.physical || {};
-  var html = stageHdr('09','Routing','route');
-  html += '<div class="card"><div class="card-title">Routing</div><div class="metric-grid">';
-  html += mc('Wires',ph.num_wires||0)+mc('Vias',ph.num_vias||0)+mc('Layers',ph.num_layers||0)+mc('Wirelength',(ph.wirelength||0).toFixed(0));
-  html += '</div></div>';
-  if (ph.wires && ph.wires.length) {
-    html += '<div class="card"><div class="card-title">Route Map</div>'+makeCanvas('c-route',600,500)+'</div>';
-    el.innerHTML = html;
-    drawRouting(document.getElementById('c-route'), ph);
-  } else el.innerHTML = html;
+// ── ROUTING ──
+R.routing=function(el){
+  const ph=S.physical||{};
+  let h=sHdr('09','Routing','route');
+  h+='<div class="card"><div class="card-title">Routing Statistics</div><div class="metrics">';
+  h+=mc('Wires',ph.num_wires||0)+mc('Vias',ph.num_vias||0)+mc('Layers',ph.num_layers||0)+mc('Wirelength',(ph.wirelength||0).toFixed(0));
+  h+='</div></div>';
+  if(ph.wires&&ph.wires.length){
+    h+='<div class="card"><div class="card-title">3D Layer View</div>'+mkCanvas('c-route',700,500)+'</div>';
+    el.innerHTML=h;setTimeout(()=>drawIsoRouting(document.getElementById('c-route'),ph),10);
+  }else el.innerHTML=h;
 };
 
-RENDERERS.post_route = function(el) {
-  var pr = STATE.post_route || {};
-  var html = stageHdr('10','Post-Route Optimization','post_route_opt');
-  html += '<div class="card"><div class="card-title">Results</div><div class="metric-grid">';
-  html += mc('WNS Before',(pr.wns_before||0).toFixed(3))+mc('WNS After',(pr.wns_after||0).toFixed(3),(pr.wns_after||0)>=0?'good':'bad');
-  html += mc('Gates Resized',pr.gates_resized||0)+mc('Vt Swapped',pr.cells_vt_swapped||0);
-  html += mc('Buffers',pr.buffers_inserted||0)+mc('Hold Buffers',pr.hold_buffers_inserted||0);
-  html += '</div></div>';
-  html += '<div class="card"><div class="card-title">Before vs After</div>'+makeCanvas('c-popt',500,200)+'</div>';
-  el.innerHTML = html;
-  drawBarComp(document.getElementById('c-popt'),[{l:'WNS',b:pr.wns_before||0,a:pr.wns_after||0},{l:'TNS',b:pr.tns_before||0,a:pr.tns_after||0}]);
+// ── POST ROUTE ──
+R.post_route=function(el){
+  const pr=S.post_route||{};
+  let h=sHdr('10','Post-Route Optimization','post_route_opt');
+  h+='<div class="card"><div class="card-title">Results</div><div class="metrics">';
+  h+=mc('WNS Before',(pr.wns_before||0).toFixed(3))+mc('WNS After',(pr.wns_after||0).toFixed(3),(pr.wns_after||0)>=0?'good':'bad');
+  h+=mc('Resized',pr.gates_resized||0)+mc('Vt Swapped',pr.cells_vt_swapped||0);
+  h+=mc('Buffers',pr.buffers_inserted||0)+mc('Hold Fix',pr.hold_buffers_inserted||0);
+  h+='</div></div>';
+  h+='<div class="card"><div class="card-title">Before → After</div>'+mkCanvas('c-popt',500,220)+'</div>';
+  el.innerHTML=h;
+  setTimeout(()=>drawBarComp(document.getElementById('c-popt'),[{l:'WNS',b:pr.wns_before||0,a:pr.wns_after||0},{l:'TNS',b:pr.tns_before||0,a:pr.tns_after||0}]),10);
 };
 
-RENDERERS.chip = function(el) {
-  var c = STATE.chip || {};
-  var html = stageHdr('11','Chip Assembly','chip_assemble');
-  html += '<div class="card"><div class="card-title">Package</div><div class="metric-grid">';
-  html += mc('Die Size',(c.chip_width||0).toFixed(0)+' × '+(c.chip_height||0).toFixed(0));
-  html += mc('Area (mm²)',(c.chip_area_mm2||0).toFixed(3));
-  html += mc('Total Pads',c.total_pads||0)+mc('Signal Pads',c.signal_pads||0);
-  html += mc('Power Pads',c.power_pads||0)+mc('Bumps',c.total_bumps||0);
-  html += '</div></div>';
-  el.innerHTML = html;
+// ── CHIP ASSEMBLY ──
+R.chip=function(el){
+  const c=S.chip||{};
+  let h=sHdr('11','Chip Assembly','chip_assemble');
+  h+='<div class="card"><div class="card-title">Package</div><div class="metrics">';
+  h+=mc('Die Size',(c.chip_width||0).toFixed(0)+' × '+(c.chip_height||0).toFixed(0));
+  h+=mc('Area (mm²)',(c.chip_area_mm2||0).toFixed(3));
+  h+=mc('Total Pads',c.total_pads||0)+mc('Signal',c.signal_pads||0);
+  h+=mc('Power',c.power_pads||0)+mc('Bumps',c.total_bumps||0);
+  h+='</div></div>';el.innerHTML=h;
 };
 
-RENDERERS.sta = function(el) {
-  var t = STATE.timing || {};
-  var html = stageHdr('12','Static Timing Analysis','sta');
-  html += '<div class="card"><div class="card-title">Timing</div><div class="metric-grid">';
-  html += mc('WNS (ns)',(t.wns||0).toFixed(3),(t.wns||0)>=0?'good':'bad');
-  html += mc('TNS (ns)',(t.tns||0).toFixed(3),(t.tns||0)>=0?'good':'warn');
-  html += mc('Violations',t.num_violations||0,(t.num_violations||0)===0?'good':'bad');
-  html += mc('Endpoints',t.num_endpoints||0)+mc('Clock (ns)',(t.clock_period_ns||0).toFixed(2));
-  html += '</div></div>';
-  if (t.critical_path && t.critical_path.length) {
-    html += '<div class="card"><div class="card-title">Critical Path</div><table class="data-table"><thead><tr><th>Gate</th><th>Arrival</th><th>Required</th><th>Slack</th></tr></thead><tbody>';
-    for (var pp of t.critical_path) {
-      var c = pp.slack>=0?'var(--green)':'var(--red)';
-      html += '<tr><td>'+pp.gate+'</td><td>'+pp.arrival.toFixed(3)+'</td><td>'+pp.required.toFixed(3)+'</td><td style="color:'+c+'">'+pp.slack.toFixed(3)+'</td></tr>';
+// ── STA ──
+R.sta=function(el){
+  const t=S.timing||{};
+  let h=sHdr('12','Static Timing Analysis','sta');
+  h+='<div class="card"><div class="card-title">Timing Summary</div><div class="metrics">';
+  h+=mc('WNS',(t.wns||0).toFixed(3)+' ns',(t.wns||0)>=0?'good':'bad');
+  h+=mc('TNS',(t.tns||0).toFixed(3)+' ns',(t.tns||0)>=0?'good':'warn');
+  h+=mc('Violations',t.num_violations||0,(t.num_violations||0)===0?'good':'bad');
+  h+=mc('Endpoints',t.num_endpoints||0)+mc('Clock',(t.clock_period_ns||0).toFixed(2)+' ns');
+  h+='</div></div>';
+  if(t.critical_path&&t.critical_path.length){
+    h+='<div class="card"><div class="card-title">Critical Path</div><table class="dt"><thead><tr><th>Gate</th><th>Arrival</th><th>Required</th><th>Slack</th></tr></thead><tbody>';
+    for(const p of t.critical_path){
+      const c=p.slack>=0?'var(--green)':'var(--red)';
+      h+='<tr><td>'+p.gate+'</td><td>'+p.arrival.toFixed(3)+'</td><td>'+p.required.toFixed(3)+'</td><td style="color:'+c+';font-weight:600">'+p.slack.toFixed(3)+'</td></tr>';
     }
-    html += '</tbody></table></div>';
+    h+='</tbody></table></div>';
   }
-  el.innerHTML = html;
+  el.innerHTML=h;
 };
 
-RENDERERS.power = function(el) {
-  var p = STATE.power || {};
-  var html = stageHdr('13','Power Analysis','power');
-  html += '<div class="card"><div class="card-title">Power Breakdown</div><div class="metric-grid">';
-  html += mc('Total (mW)',(p.total_mw||0).toFixed(3));
-  html += mc('Dynamic',(p.dynamic_mw||0).toFixed(3))+mc('Leakage',(p.leakage_mw||0).toFixed(3));
-  html += mc('Switching',(p.switching_mw||0).toFixed(3))+mc('Internal',(p.internal_mw||0).toFixed(3));
-  html += mc('Clock',(p.clock_mw||0).toFixed(3))+mc('Glitch',(p.glitch_mw||0).toFixed(3));
-  html += '</div></div>';
-  el.innerHTML = html;
+// ── POWER ──
+R.power=function(el){
+  const p=S.power||{};
+  let h=sHdr('13','Power Analysis','power');
+  h+='<div class="card"><div class="card-title">Power Breakdown</div><div class="metrics">';
+  h+=mc('Total',(p.total_mw||0).toFixed(3)+' mW');
+  h+=mc('Dynamic',(p.dynamic_mw||0).toFixed(3))+mc('Leakage',(p.leakage_mw||0).toFixed(3));
+  h+=mc('Switching',(p.switching_mw||0).toFixed(3))+mc('Internal',(p.internal_mw||0).toFixed(3));
+  h+=mc('Clock',(p.clock_mw||0).toFixed(3))+mc('Glitch',(p.glitch_mw||0).toFixed(3));
+  h+='</div></div>';
+  h+='<div class="card"><div class="card-title">Breakdown</div>'+mkCanvas('c-pow',400,260)+'</div>';
+  el.innerHTML=h;
+  setTimeout(()=>{
+    const slices=[
+      {l:'Dynamic',v:p.dynamic_mw||0,c:['#38bdf8','#818cf8']},
+      {l:'Leakage',v:p.leakage_mw||0,c:['#f472b6','#a78bfa']},
+      {l:'Clock',v:p.clock_mw||0,c:['#34d399','#38bdf8']},
+      {l:'Glitch',v:p.glitch_mw||0,c:['#fbbf24','#f87171']},
+    ];
+    drawDonut(document.getElementById('c-pow'),slices);
+  },10);
 };
 
-RENDERERS.drc = function(el) {
-  var d = STATE.drc || {};
-  var html = stageHdr('14','Design Rule Check','drc');
-  html += '<div class="card"><div class="card-title">DRC</div><div class="metric-grid">';
-  html += mc('Rules',d.total_rules||0)+mc('Violations',d.violations||0,(d.violations||0)===0?'good':'bad');
-  html += mc('Errors',d.errors||0,(d.errors||0)===0?'good':'bad')+mc('Warnings',d.warnings||0);
-  html += '</div></div>';
-  if (d.details && d.details.length) {
-    html += '<div class="card"><div class="card-title">Violations</div><table class="data-table"><thead><tr><th>Rule</th><th>Message</th><th>Location</th></tr></thead><tbody>';
-    for (var v of d.details.slice(0,30)) html += '<tr><td>'+v.rule+'</td><td>'+v.message+'</td><td>('+v.x.toFixed(1)+','+v.y.toFixed(1)+')</td></tr>';
-    html += '</tbody></table></div>';
+// ── DRC ──
+R.drc=function(el){
+  const d=S.drc||{};
+  let h=sHdr('14','Design Rule Check','drc');
+  h+='<div class="card"><div class="card-title">DRC Summary</div><div class="metrics">';
+  h+=mc('Rules',d.total_rules||0)+mc('Violations',d.violations||0,!(d.violations||0)?'good':'bad');
+  h+=mc('Errors',d.errors||0,!(d.errors||0)?'good':'bad')+mc('Warnings',d.warnings||0);
+  h+='</div></div>';
+  if(d.details&&d.details.length){
+    h+='<div class="card"><div class="card-title">Violations</div><table class="dt"><thead><tr><th>Rule</th><th>Message</th><th>Location</th></tr></thead><tbody>';
+    for(const v of d.details.slice(0,30))h+='<tr><td style="color:var(--red)">'+v.rule+'</td><td>'+v.message+'</td><td>('+v.x.toFixed(1)+','+v.y.toFixed(1)+')</td></tr>';
+    h+='</tbody></table></div>';
   }
-  el.innerHTML = html;
+  el.innerHTML=h;
 };
 
-RENDERERS.lvs = function(el) {
-  var l = STATE.lvs || {};
-  var html = stageHdr('15','Layout vs Schematic','lvs');
-  html += '<div class="card"><div class="card-title">LVS</div><div class="metric-grid">';
-  html += mc('Match',l.match?'PASS':'FAIL',l.match?'good':'bad');
-  html += mc('Schematic',l.schematic_cells||0)+mc('Layout',l.layout_cells||0);
-  html += mc('Matched',l.matched_cells||0,'good')+mc('Net Mismatches',l.net_mismatches||0,(l.net_mismatches||0)===0?'good':'bad');
-  html += '</div></div>';
-  el.innerHTML = html;
+// ── LVS ──
+R.lvs=function(el){
+  const l=S.lvs||{};
+  let h=sHdr('15','Layout vs Schematic','lvs');
+  h+='<div class="card" style="text-align:center;padding:40px">';
+  h+=l.match?'<div class="pass-badge" style="font-size:32px">✓ LVS CLEAN</div>':'<div class="fail-badge" style="font-size:32px">✗ MISMATCH</div>';
+  h+='<div class="metrics" style="justify-content:center;margin-top:20px">';
+  h+=mc('Schematic',l.schematic_cells||0)+mc('Layout',l.layout_cells||0)+mc('Matched',l.matched_cells||0,'good')+mc('Net Mismatch',l.net_mismatches||0,!(l.net_mismatches||0)?'good':'bad');
+  h+='</div></div>';el.innerHTML=h;
 };
 
-RENDERERS.mcmm = function(el) {
-  var m = STATE.mcmm || {};
-  var html = stageHdr('16','Multi-Corner Multi-Mode','mcmm');
-  html += '<div class="card"><div class="card-title">MCMM Analysis</div><div class="metric-grid">';
-  html += mc('Corners',m.corners||0)+mc('Modes',m.modes||0)+mc('Scenarios',m.scenarios||0);
-  html += mc('Setup WNS',(m.worst_setup_wns||0).toFixed(3),(m.worst_setup_wns||0)>=0?'good':'bad');
-  html += mc('Hold WNS',(m.worst_hold_wns||0).toFixed(3),(m.worst_hold_wns||0)>=0?'good':'bad');
-  html += mc('Setup Viol.',m.total_setup_violations||0,(m.total_setup_violations||0)===0?'good':'bad');
-  html += mc('Hold Viol.',m.total_hold_violations||0,(m.total_hold_violations||0)===0?'good':'bad');
-  html += mc('Max Power',(m.max_power_mw||0).toFixed(2));
-  html += '</div></div>';
-  el.innerHTML = html;
+// ── MCMM ──
+R.mcmm=function(el){
+  const m=S.mcmm||{};
+  let h=sHdr('16','Multi-Corner Multi-Mode','mcmm');
+  h+='<div class="card"><div class="card-title">MCMM Analysis</div><div class="metrics">';
+  h+=mc('Corners',m.corners||0)+mc('Modes',m.modes||0)+mc('Scenarios',m.scenarios||0);
+  h+=mc('Setup WNS',(m.worst_setup_wns||0).toFixed(3),(m.worst_setup_wns||0)>=0?'good':'bad');
+  h+=mc('Hold WNS',(m.worst_hold_wns||0).toFixed(3),(m.worst_hold_wns||0)>=0?'good':'bad');
+  h+=mc('Max Power',(m.max_power_mw||0).toFixed(2)+' mW');
+  h+='</div></div>';el.innerHTML=h;
 };
 
-RENDERERS.ssta = function(el) {
-  var s = STATE.ssta || {};
-  var html = stageHdr('17','Statistical STA & Yield','ssta');
-  html += '<div class="card"><div class="card-title">Yield Analysis</div><div class="metric-grid">';
-  html += mc('Yield',((s.yield_estimate||0)*100).toFixed(1)+'%',(s.yield_estimate||0)>0.95?'good':'warn');
-  html += mc('MC Samples',s.num_samples_run||0)+mc('Time (ms)',(s.time_ms||0).toFixed(1));
-  html += '</div></div>';
-  if (s.sigma_to_yield && Object.keys(s.sigma_to_yield).length) {
-    html += '<div class="card"><div class="card-title">Yield vs Sigma</div>'+makeCanvas('c-ssta',500,250)+'</div>';
-    el.innerHTML = html;
-    drawYieldCurve(document.getElementById('c-ssta'), s.sigma_to_yield);
-  } else el.innerHTML = html;
+// ── SSTA ──
+R.ssta=function(el){
+  const s=S.ssta||{};
+  let h=sHdr('17','Statistical STA & Yield','ssta');
+  h+='<div class="card"><div class="card-title">Yield Analysis</div><div class="metrics">';
+  h+=mc('Yield',((s.yield_estimate||0)*100).toFixed(1)+'%',(s.yield_estimate||0)>0.95?'good':'warn');
+  h+=mc('MC Samples',s.num_samples_run||0)+mc('Time',(s.time_ms||0).toFixed(1)+' ms');
+  h+='</div></div>';
+  if(s.sigma_to_yield&&Object.keys(s.sigma_to_yield).length){
+    h+='<div class="card"><div class="card-title">Yield Curve</div>'+mkCanvas('c-ssta',600,280)+'</div>';
+    el.innerHTML=h;setTimeout(()=>drawYieldCurve(document.getElementById('c-ssta'),s.sigma_to_yield),10);
+  }else el.innerHTML=h;
 };
 
-RENDERERS.ir_drop = function(el) {
-  var ir = STATE.ir_drop || {};
-  var html = stageHdr('18','IR Drop Analysis','ir_drop');
-  html += '<div class="card"><div class="card-title">Summary</div><div class="metric-grid">';
-  html += mc('Worst (mV)',(ir.worst_drop_mv||0).toFixed(2),(ir.worst_drop_mv||0)<50?'good':'bad');
-  html += mc('Avg (mV)',(ir.avg_drop_mv||0).toFixed(2));
-  html += mc('Hotspots',ir.num_hotspots||0,(ir.num_hotspots||0)===0?'good':'warn');
-  html += mc('Critical',ir.num_critical||0,(ir.num_critical||0)===0?'good':'bad');
-  html += '</div></div>';
-  if (ir.drop_map && ir.drop_map.length) {
-    html += '<div class="card"><div class="card-title">IR Drop Heatmap</div>'+makeCanvas('c-ir',500,500)+'</div>';
-    el.innerHTML = html;
-    drawHeatmap(document.getElementById('c-ir'), ir.drop_map, 'IR Drop (mV)');
-  } else el.innerHTML = html;
+// ── IR DROP ──
+R.ir_drop=function(el){
+  const ir=S.ir_drop||{};
+  let h=sHdr('18','IR Drop Analysis','ir_drop');
+  h+='<div class="card"><div class="card-title">Summary</div><div class="metrics">';
+  h+=mc('Worst',(ir.worst_drop_mv||0).toFixed(2)+' mV',(ir.worst_drop_mv||0)<50?'good':'bad');
+  h+=mc('Average',(ir.avg_drop_mv||0).toFixed(2)+' mV');
+  h+=mc('Hotspots',ir.num_hotspots||0,!(ir.num_hotspots||0)?'good':'warn');
+  h+=mc('Critical',ir.num_critical||0,!(ir.num_critical||0)?'good':'bad');
+  h+='</div></div>';
+  if(ir.drop_map&&ir.drop_map.length){
+    h+='<div class="card"><div class="card-title">IR Drop — 3D Surface</div>'+mkCanvas('c-ir',600,450)+'</div>';
+    el.innerHTML=h;setTimeout(()=>draw3DSurface(document.getElementById('c-ir'),ir.drop_map,'IR Drop (mV)'),10);
+  }else el.innerHTML=h;
 };
 
-RENDERERS.pdn = function(el) {
-  var p = STATE.pdn || {};
-  var html = stageHdr('19','PDN Impedance','pdn');
-  html += '<div class="card"><div class="card-title">PDN</div><div class="metric-grid">';
-  html += mc('Worst Z (mΩ)',(p.worst_impedance_mohm||0).toFixed(2));
-  html += mc('@ Freq (MHz)',(p.worst_impedance_freq_mhz||0).toFixed(1));
-  html += mc('Target (mΩ)',(p.target_impedance_mohm||0).toFixed(2));
-  html += mc('Violations',p.target_violations||0,(p.target_violations||0)===0?'good':'bad');
-  html += mc('Resonances',p.num_resonances||0);
-  html += '</div></div>';
-  if (p.impedance_profile && p.impedance_profile.length) {
-    html += '<div class="card"><div class="card-title">Impedance vs Frequency</div>'+makeCanvas('c-pdn',600,250)+'</div>';
-    el.innerHTML = html;
-    drawImpedancePlot(document.getElementById('c-pdn'), p);
-  } else el.innerHTML = html;
+// ── PDN ──
+R.pdn=function(el){
+  const p=S.pdn||{};
+  let h=sHdr('19','PDN Impedance','pdn');
+  h+='<div class="card"><div class="card-title">PDN Summary</div><div class="metrics">';
+  h+=mc('Worst Z',(p.worst_impedance_mohm||0).toFixed(2)+' mΩ');
+  h+=mc('@ Freq',(p.worst_impedance_freq_mhz||0).toFixed(1)+' MHz');
+  h+=mc('Target',(p.target_impedance_mohm||0).toFixed(2)+' mΩ');
+  h+=mc('Violations',p.target_violations||0,!(p.target_violations||0)?'good':'bad');
+  h+='</div></div>';
+  if(p.impedance_profile&&p.impedance_profile.length){
+    h+='<div class="card"><div class="card-title">Impedance Profile</div>'+mkCanvas('c-pdn',600,280)+'</div>';
+    el.innerHTML=h;setTimeout(()=>drawImpedance(document.getElementById('c-pdn'),p),10);
+  }else el.innerHTML=h;
 };
 
-RENDERERS.si = function(el) {
-  var s = STATE.signal_integrity || {};
-  var html = stageHdr('20','Signal Integrity','si');
-  html += '<div class="card"><div class="card-title">SI Analysis</div><div class="metric-grid">';
-  html += mc('Nets',s.nets_analyzed||0)+mc('Victims',s.victims||0,(s.victims||0)===0?'good':'warn');
-  html += mc('Glitch Risks',s.glitch_risks||0,(s.glitch_risks||0)===0?'good':'bad');
-  html += mc('Worst Noise (mV)',(s.worst_noise_mv||0).toFixed(2));
-  html += mc('Worst Delay (ps)',(s.worst_delay_ps||0).toFixed(2));
-  html += '</div></div>';
-  el.innerHTML = html;
+// ── SI ──
+R.si=function(el){
+  const s=S.signal_integrity||{};
+  let h=sHdr('20','Signal Integrity','si');
+  h+='<div class="card"><div class="card-title">SI Analysis</div><div class="metrics">';
+  h+=mc('Nets',s.nets_analyzed||0)+mc('Victims',s.victims||0,!(s.victims||0)?'good':'warn');
+  h+=mc('Glitch',s.glitch_risks||0,!(s.glitch_risks||0)?'good':'bad');
+  h+=mc('Worst Noise',(s.worst_noise_mv||0).toFixed(2)+' mV');
+  h+=mc('Worst Delay',(s.worst_delay_ps||0).toFixed(2)+' ps');
+  h+='</div></div>';el.innerHTML=h;
 };
 
-RENDERERS.thermal = function(el) {
-  var t = STATE.thermal || {};
-  var html = stageHdr('21','Thermal Analysis','thermal');
-  html += '<div class="card"><div class="card-title">Thermal</div><div class="metric-grid">';
-  html += mc('Max (°C)',(t.max_temperature||0).toFixed(1),(t.max_temperature||0)<85?'good':'bad');
-  html += mc('Min (°C)',(t.min_temperature||0).toFixed(1));
-  html += mc('Avg (°C)',(t.avg_temperature||0).toFixed(1));
-  html += mc('Gradient',(t.thermal_gradient||0).toFixed(1));
-  html += mc('Hotspots',t.num_hotspots||0,(t.num_hotspots||0)===0?'good':'warn');
-  html += '</div></div>';
-  if (t.temperature_map && t.temperature_map.length && t.grid_nx > 0) {
-    html += '<div class="card"><div class="card-title">Temperature Heatmap</div>'+makeCanvas('c-therm',500,500)+'</div>';
-    el.innerHTML = html;
-    var nx=t.grid_nx, ny=t.grid_ny, map2d=[];
-    for (var x=0;x<nx;x++) { var row=[]; for (var y=0;y<ny;y++) row.push(t.temperature_map[x*ny+y]||0); map2d.push(row); }
-    drawHeatmap(document.getElementById('c-therm'), map2d, 'Temperature (°C)');
-  } else el.innerHTML = html;
+// ── THERMAL ──
+R.thermal=function(el){
+  const t=S.thermal||{};
+  let h=sHdr('21','Thermal Analysis','thermal');
+  h+='<div class="card"><div class="card-title">Temperature</div><div class="metrics">';
+  h+=mc('Max',(t.max_temperature||0).toFixed(1)+'°C',(t.max_temperature||0)<85?'good':'bad');
+  h+=mc('Min',(t.min_temperature||0).toFixed(1)+'°C')+mc('Avg',(t.avg_temperature||0).toFixed(1)+'°C');
+  h+=mc('Gradient',(t.thermal_gradient||0).toFixed(1));
+  h+=mc('Hotspots',t.num_hotspots||0,!(t.num_hotspots||0)?'good':'warn');
+  h+='</div></div>';
+  if(t.temperature_map&&t.temperature_map.length&&t.grid_nx>0){
+    h+='<div class="card"><div class="card-title">Thermal — 3D Surface</div>'+mkCanvas('c-therm',600,450)+'</div>';
+    el.innerHTML=h;
+    setTimeout(()=>{
+      const nx=t.grid_nx,ny=t.grid_ny,m=[];
+      for(let x=0;x<nx;x++){const r=[];for(let y=0;y<ny;y++)r.push(t.temperature_map[x*ny+y]||0);m.push(r);}
+      draw3DSurface(document.getElementById('c-therm'),m,'Temperature (°C)');
+    },10);
+  }else el.innerHTML=h;
 };
 
-RENDERERS.em = function(el) {
-  var e = STATE.em || {};
-  var html = stageHdr('22','Electromigration','em');
-  html += '<div class="card"><div class="card-title">EM Results</div><div class="metric-grid">';
-  html += mc('Status',e.pass?'PASS':'FAIL',e.pass?'good':'bad');
-  html += mc('Nets Checked',e.total_nets_checked||0);
-  html += mc('Signal Viol.',e.signal_violations||0,(e.signal_violations||0)===0?'good':'bad');
-  html += mc('Power Viol.',e.power_violations||0,(e.power_violations||0)===0?'good':'bad');
-  html += mc('Via Viol.',e.via_violations||0,(e.via_violations||0)===0?'good':'bad');
-  var mttf = (e.worst_mttf_years||0) > 1e8 ? '∞' : (e.worst_mttf_years||0).toFixed(1);
-  html += mc('Worst MTTF (yrs)',mttf);
-  html += '</div></div>';
-  el.innerHTML = html;
+// ── EM ──
+R.em=function(el){
+  const e=S.em||{};
+  let h=sHdr('22','Electromigration','em');
+  h+='<div class="card" style="text-align:center;padding:30px">';
+  h+=e.pass?'<div class="pass-badge" style="font-size:28px">✓ EM PASS</div>':'<div class="fail-badge" style="font-size:28px">✗ EM FAIL</div>';
+  h+='</div>';
+  h+='<div class="card"><div class="card-title">Details</div><div class="metrics">';
+  h+=mc('Nets Checked',e.total_nets_checked||0);
+  h+=mc('Signal Viol.',e.signal_violations||0,!(e.signal_violations||0)?'good':'bad');
+  h+=mc('Power Viol.',e.power_violations||0,!(e.power_violations||0)?'good':'bad');
+  h+=mc('Via Viol.',e.via_violations||0,!(e.via_violations||0)?'good':'bad');
+  const mttf=(e.worst_mttf_years||0)>1e8?'∞':(e.worst_mttf_years||0).toFixed(1);
+  h+=mc('Worst MTTF',mttf+' yr');
+  h+='</div></div>';el.innerHTML=h;
 };
 
-RENDERERS.noise = function(el) {
-  var n = STATE.noise || {};
-  var html = stageHdr('23','Noise / SSN','noise');
-  html += '<div class="card"><div class="card-title">Noise</div><div class="metric-grid">';
-  html += mc('Peak (mV)',(n.peak_noise_mv||0).toFixed(2));
-  html += mc('RMS (mV)',(n.rms_noise_mv||0).toFixed(2));
-  html += mc('PSI-J (ps)',(n.psij_ps||0).toFixed(2));
-  html += mc('Margin (mV)',(n.noise_margin_mv||0).toFixed(1));
-  html += mc('Violations',n.noise_violations||0,(n.noise_violations||0)===0?'good':'bad');
-  html += '</div></div>';
-  el.innerHTML = html;
+// ── NOISE ──
+R.noise=function(el){
+  const n=S.noise||{};
+  let h=sHdr('23','Noise / SSN','noise');
+  h+='<div class="card"><div class="card-title">Noise Analysis</div><div class="metrics">';
+  h+=mc('Peak',(n.peak_noise_mv||0).toFixed(2)+' mV')+mc('RMS',(n.rms_noise_mv||0).toFixed(2)+' mV');
+  h+=mc('PSI-J',(n.psij_ps||0).toFixed(2)+' ps')+mc('Margin',(n.noise_margin_mv||0).toFixed(1)+' mV');
+  h+=mc('Violations',n.noise_violations||0,!(n.noise_violations||0)?'good':'bad');
+  h+='</div></div>';el.innerHTML=h;
 };
 
-RENDERERS.ml = function(el) {
-  var m = STATE.ml || {};
-  var html = stageHdr('24','ML Optimization','ai_tune');
-  html += '<div class="card"><div class="card-title">ML-Driven PnR Tuning</div><div class="metric-grid">';
-  html += mc('Predicted WNS',(m.predicted_wns||0).toFixed(3));
-  html += mc('Predicted Congestion',(m.predicted_congestion||0).toFixed(3));
-  html += mc('BayesOpt Iters',m.bayesopt_iterations||0)+mc('RL Episodes',m.rl_episodes||0);
-  html += mc('MLP Loss',(m.mlp_loss||0).toFixed(4));
-  html += mc('BayesOpt Best',(m.bayesopt_best||0).toFixed(4));
-  html += mc('RL Best',(m.rl_best_reward||0).toFixed(4));
-  html += mc('Time (ms)',(m.total_time_ms||0).toFixed(1));
-  html += '</div></div>';
-  el.innerHTML = html;
+// ── ML ──
+R.ml=function(el){
+  const m=S.ml||{};
+  let h=sHdr('24','ML Optimization','ai_tune');
+  h+='<div class="card"><div class="card-title">ML-Driven PnR Tuning</div><div class="metrics">';
+  h+=mc('Pred. WNS',(m.predicted_wns||0).toFixed(3))+mc('Pred. Congestion',(m.predicted_congestion||0).toFixed(3));
+  h+=mc('BayesOpt',m.bayesopt_iterations||0)+mc('RL Episodes',m.rl_episodes||0);
+  h+=mc('MLP Loss',(m.mlp_loss||0).toFixed(4))+mc('Best Reward',(m.rl_best_reward||0).toFixed(4));
+  h+=mc('Time',(m.total_time_ms||0).toFixed(1)+' ms');
+  h+='</div></div>';el.innerHTML=h;
 };
 
-RENDERERS.adv_formal = function(el) {
-  var af = STATE.adv_formal || {};
-  var html = stageHdr('25','Advanced Formal','adv_formal');
-  html += '<div class="card"><div class="card-title">IC3 / LTL / CEGAR</div><div class="metric-grid">';
-  var sts = ['PROVEN','REFUTED','UNKNOWN'];
-  var ic3=af.ic3||{}, ltl=af.ltl||{}, ceg=af.cegar||{};
-  html += mc('IC3',sts[ic3.status||2]||'—')+mc('IC3 Frames',ic3.frames||0)+mc('IC3 Clauses',ic3.clauses||0);
-  html += mc('LTL',['HOLDS','VIOLATED','UNKNOWN'][ltl.status||2]||'—')+mc('LTL Bound',ltl.bound||0);
-  html += mc('CEGAR',sts[ceg.status||2]||'—')+mc('CEGAR Iters',ceg.iterations||0);
-  html += mc('Total (ms)',(af.total_time_ms||0).toFixed(1));
-  html += '</div></div>';
-  el.innerHTML = html;
+// ── ADV FORMAL ──
+R.adv_formal=function(el){
+  const af=S.adv_formal||{};
+  let h=sHdr('25','Advanced Formal','adv_formal');
+  const sts=['PROVEN','REFUTED','UNKNOWN'];
+  const ic3=af.ic3||{},ltl=af.ltl||{},ceg=af.cegar||{};
+  h+='<div class="card"><div class="card-title">IC3 / LTL / CEGAR</div><div class="metrics">';
+  h+=mc('IC3',sts[ic3.status||2]||'—')+mc('Frames',ic3.frames||0)+mc('Clauses',ic3.clauses||0);
+  h+=mc('LTL',['HOLDS','VIOLATED','UNKNOWN'][ltl.status||2]||'—')+mc('Bound',ltl.bound||0);
+  h+=mc('CEGAR',sts[ceg.status||2]||'—')+mc('Iterations',ceg.iterations||0);
+  h+=mc('Time',(af.total_time_ms||0).toFixed(1)+' ms');
+  h+='</div></div>';el.innerHTML=h;
 };
 
-RENDERERS.gdsii = function(el) {
-  var html = stageHdr('26','GDSII Export','write_gds out.gds');
-  html += '<div class="card"><div class="card-title">Export</div><p style="color:var(--text-secondary)">Click Run to generate GDSII binary.</p></div>';
-  el.innerHTML = html;
+// ── GDSII ──
+R.gdsii=function(el){
+  let h=sHdr('26','GDSII Export','write_gds out.gds');
+  h+='<div class="card" style="text-align:center;padding:40px"><p style="color:var(--text-muted);font-size:14px">Click ▶ Run to generate GDSII binary output.</p></div>';
+  el.innerHTML=h;
 };
 
-// CANVAS DRAWING FUNCTIONS
+/* ═══════════════════════════════════════════════════════
+   CANVAS DRAWING — HIGH DPI
+   ═══════════════════════════════════════════════════════ */
 
-function drawRtlGraph(canvas, nl) {
-  var ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
-  ctx.fillStyle = '#0d1117'; ctx.fillRect(0,0,W,H);
-  var gates = nl.gates || [];
-  if (!gates.length) return;
-  var N = Math.min(gates.length, 60);
-  var cols = Math.ceil(Math.sqrt(N*1.5)), rows = Math.ceil(N/cols);
-  var cw = W/(cols+1), ch = H/(rows+1);
-  var colors = {AND:'#58a6ff',OR:'#3fb950',NOT:'#f85149',XOR:'#bc8cff',NAND:'#d29922',NOR:'#39d2c0',DFF:'#f778ba',BUF:'#8b949e',INPUT:'#3fb950',OUTPUT:'#f85149',MUX:'#d29922'};
-  for (var i = 0; i < N; i++) {
-    var g = gates[i], col = i%cols, row = Math.floor(i/cols);
-    var x = (col+0.5)*cw+20, y = (row+0.5)*ch+20;
-    var color = colors[g.type]||'#58a6ff';
-    ctx.fillStyle = color+'22'; ctx.strokeStyle = color; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.roundRect(x-24,y-14,48,28,4); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = color; ctx.font = '9px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(g.type, x, y);
+// ── Radial Gauge ──
+function drawGauge(canvasId,pct,colors,radius){
+  const canvas=document.getElementById(canvasId);if(!canvas)return;
+  const W=canvas.parentElement.clientWidth||100,H=canvas.parentElement.clientHeight||100;
+  const ctx=hiDpiCanvas(canvas,W,H);
+  const cx=W/2,cy=H/2,r=radius||Math.min(W,H)/2-8,lw=6;
+  pct=Math.max(0,Math.min(1,pct));
+  // Track
+  ctx.beginPath();ctx.arc(cx,cy,r,-Math.PI*0.75,Math.PI*0.75);
+  ctx.strokeStyle='rgba(148,163,184,0.08)';ctx.lineWidth=lw;ctx.lineCap='round';ctx.stroke();
+  // Value arc
+  const startA=-Math.PI*0.75,endA=startA+(Math.PI*1.5)*pct;
+  const grad=ctx.createLinearGradient(cx-r,cy,cx+r,cy);
+  grad.addColorStop(0,colors[0]);grad.addColorStop(1,colors[1]);
+  ctx.beginPath();ctx.arc(cx,cy,r,startA,endA);
+  ctx.strokeStyle=grad;ctx.lineWidth=lw;ctx.lineCap='round';ctx.stroke();
+  // Glow
+  ctx.beginPath();ctx.arc(cx,cy,r,startA,endA);
+  ctx.strokeStyle=colors[0]+'33';ctx.lineWidth=lw+6;ctx.lineCap='round';ctx.stroke();
+}
+
+// ── RTL Node Graph ──
+function drawRtlGraph(canvas,nl){
+  const W=700,H=380,ctx=hiDpiCanvas(canvas,W,H);
+  ctx.fillStyle=getComputedStyle(document.body).getPropertyValue('--bg-deep');ctx.fillRect(0,0,W,H);
+  const gates=nl.gates||[];if(!gates.length)return;
+  const N=Math.min(gates.length,80);
+  const cols=Math.ceil(Math.sqrt(N*1.8)),rows=Math.ceil(N/cols);
+  const cw=W/(cols+1),ch=H/(rows+1);
+  const palette={AND:'#38bdf8',OR:'#34d399',NOT:'#f87171',XOR:'#a78bfa',NAND:'#fbbf24',NOR:'#22d3ee',DFF:'#f472b6',BUF:'#94a3b8',INPUT:'#34d399',OUTPUT:'#f87171',MUX:'#fbbf24'};
+  // Connections
+  ctx.strokeStyle='rgba(56,189,248,0.08)';ctx.lineWidth=1;
+  for(let i=1;i<N;i++){
+    const c0=((i-1)%cols),r0=Math.floor((i-1)/cols);
+    const c1=(i%cols),r1=Math.floor(i/cols);
+    ctx.beginPath();
+    ctx.moveTo((c0+0.5)*cw+20,(r0+0.5)*ch+20);
+    ctx.lineTo((c1+0.5)*cw+20,(r1+0.5)*ch+20);
+    ctx.stroke();
+  }
+  // Nodes
+  for(let i=0;i<N;i++){
+    const g=gates[i],col=i%cols,row=Math.floor(i/cols);
+    const x=(col+0.5)*cw+20,y=(row+0.5)*ch+20;
+    const color=palette[g.type]||'#38bdf8';
+    // Shadow
+    ctx.shadowColor=color+'44';ctx.shadowBlur=12;
+    // Node
+    const grad=ctx.createRadialGradient(x,y,0,x,y,20);
+    grad.addColorStop(0,color+'44');grad.addColorStop(1,color+'08');
+    ctx.fillStyle=grad;ctx.beginPath();ctx.arc(x,y,16,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle=color+'88';ctx.lineWidth=1;ctx.stroke();
+    ctx.shadowBlur=0;
+    // Label
+    ctx.fillStyle=color;ctx.font='500 8px Inter';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(g.type,x,y);
   }
 }
 
-function drawWaveform(canvas, sim) {
-  var ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
-  ctx.fillStyle = '#0d1117'; ctx.fillRect(0,0,W,H);
-  var sigs = sim.signals||[], times = sim.times||[];
-  if (!sigs.length || !times.length) return;
-  var nw = 80, pw = W-nw-20, sh = 24;
-  var tMin = times[0], tMax = times[times.length-1]||1, tS = pw/((tMax-tMin)||1);
-  for (var si = 0; si < sigs.length; si++) {
-    var sig = sigs[si], by = 20+si*(sh+6);
-    ctx.fillStyle = '#8b949e'; ctx.font = '10px monospace'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    ctx.fillText(sig.name.slice(0,10), nw-8, by+sh/2);
-    ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 1.5; ctx.beginPath();
-    for (var t = 0; t < sig.values.length && t < times.length; t++) {
-      var x = nw+(times[t]-tMin)*tS, y = sig.values[t]?by+2:by+sh-2;
-      if (t===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+// ── Waveform ──
+function drawWaveform(canvas,sim){
+  const sigs=sim.signals||[],times=sim.times||[];
+  if(!sigs.length||!times.length)return;
+  const W=700,H=Math.max(200,sigs.length*28+40),ctx=hiDpiCanvas(canvas,W,H);
+  ctx.fillStyle='#06080f';ctx.fillRect(0,0,W,H);
+  const nw=90,pw=W-nw-20,sh=20;
+  const tMin=times[0],tMax=times[times.length-1]||1,tS=pw/((tMax-tMin)||1);
+  for(let si=0;si<sigs.length;si++){
+    const sig=sigs[si],by=20+si*(sh+8);
+    ctx.fillStyle='#475569';ctx.font='500 10px JetBrains Mono';ctx.textAlign='right';ctx.textBaseline='middle';
+    ctx.fillText(sig.name.slice(0,12),nw-10,by+sh/2);
+    // Gradient fill under waveform
+    const grad=ctx.createLinearGradient(0,by,0,by+sh);
+    grad.addColorStop(0,'rgba(56,189,248,0.15)');grad.addColorStop(1,'rgba(56,189,248,0)');
+    ctx.beginPath();
+    for(let t=0;t<sig.values.length&&t<times.length;t++){
+      const x=nw+(times[t]-tMin)*tS,y=sig.values[t]?by+2:by+sh-2;
+      if(t===0){ctx.moveTo(x,by+sh);}
+      ctx.lineTo(x,y);
+    }
+    ctx.lineTo(nw+(times[Math.min(sig.values.length,times.length)-1]-tMin)*tS,by+sh);ctx.closePath();
+    ctx.fillStyle=grad;ctx.fill();
+    // Line
+    ctx.strokeStyle='#38bdf8';ctx.lineWidth=1.5;ctx.beginPath();
+    for(let t=0;t<sig.values.length&&t<times.length;t++){
+      const x=nw+(times[t]-tMin)*tS,y=sig.values[t]?by+2:by+sh-2;
+      if(t===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
     }
     ctx.stroke();
   }
 }
 
-function drawPlacement(canvas, phys) {
-  var ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
-  ctx.fillStyle = '#0d1117'; ctx.fillRect(0,0,W,H);
-  var dw = (phys.die||{}).w||200, dh = (phys.die||{}).h||200;
-  var scale = Math.min((W-40)/dw,(H-40)/dh), ox = 20, oy = 20;
-  ctx.strokeStyle = '#30363d'; ctx.lineWidth = 2; ctx.strokeRect(ox,oy,dw*scale,dh*scale);
-  for (var c of (phys.cells||[])) {
-    var x=ox+c.x*scale, y=oy+c.y*scale, w=(c.w||2)*scale, ht=(c.h||10)*scale;
-    ctx.fillStyle = '#58a6ff33'; ctx.strokeStyle = '#58a6ff88'; ctx.lineWidth = 0.5;
-    ctx.fillRect(x,y,w,ht); ctx.strokeRect(x,y,w,ht);
+// ── Isometric Chip / Placement 3D ──
+function drawIsoChip(canvas,ph){
+  const W=700,H=500,ctx=hiDpiCanvas(canvas,W,H);
+  ctx.fillStyle='#06080f';ctx.fillRect(0,0,W,H);
+  const dw=(ph.die||{}).w||200,dh=(ph.die||{}).h||200;
+  const sc=Math.min(300/dw,250/dh);
+  const cos30=Math.cos(Math.PI/6),sin30=Math.sin(Math.PI/6);
+  const ox=W/2,oy=H*0.65;
+  function iso(x,y,z){return[ox+(x-y)*cos30, oy+(x+y)*sin30-z];}
+  // Die platform
+  const dp=[iso(0,0,0),iso(dw*sc,0,0),iso(dw*sc,dh*sc,0),iso(0,dh*sc,0)];
+  // Side faces for 3D depth
+  const depth=8;
+  const dpB=[iso(0,0,-depth),iso(dw*sc,0,-depth),iso(dw*sc,dh*sc,-depth),iso(0,dh*sc,-depth)];
+  // Right face
+  ctx.fillStyle='rgba(56,189,248,0.04)';
+  ctx.beginPath();ctx.moveTo(...dp[1]);ctx.lineTo(...dp[2]);ctx.lineTo(...dpB[2]);ctx.lineTo(...dpB[1]);ctx.closePath();ctx.fill();
+  // Front face
+  ctx.fillStyle='rgba(56,189,248,0.03)';
+  ctx.beginPath();ctx.moveTo(...dp[2]);ctx.lineTo(...dp[3]);ctx.lineTo(...dpB[3]);ctx.lineTo(...dpB[2]);ctx.closePath();ctx.fill();
+  // Top face
+  const topGrad=ctx.createLinearGradient(dp[0][0],dp[0][1],dp[2][0],dp[2][1]);
+  topGrad.addColorStop(0,'rgba(15,20,36,0.9)');topGrad.addColorStop(1,'rgba(15,20,36,0.7)');
+  ctx.fillStyle=topGrad;
+  ctx.beginPath();ctx.moveTo(...dp[0]);ctx.lineTo(...dp[1]);ctx.lineTo(...dp[2]);ctx.lineTo(...dp[3]);ctx.closePath();ctx.fill();
+  ctx.strokeStyle='rgba(56,189,248,0.2)';ctx.lineWidth=1;ctx.stroke();
+  // Grid lines
+  ctx.strokeStyle='rgba(56,189,248,0.05)';ctx.lineWidth=0.5;
+  for(let i=1;i<10;i++){
+    const f=i/10;
+    const a=iso(f*dw*sc,0,0),b=iso(f*dw*sc,dh*sc,0);
+    ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke();
+    const c=iso(0,f*dh*sc,0),d=iso(dw*sc,f*dh*sc,0);
+    ctx.beginPath();ctx.moveTo(...c);ctx.lineTo(...d);ctx.stroke();
+  }
+  // Cells as 3D blocks
+  const cells=ph.cells||[];
+  const layerColors=['#38bdf8','#34d399','#a78bfa','#f472b6','#fbbf24','#22d3ee'];
+  for(const c of cells){
+    const cx=c.x*sc,cy=c.y*sc,cw=(c.w||2)*sc,ch=(c.h||10)*sc,cz=6;
+    const color=layerColors[(c.layer||0)%layerColors.length];
+    // Top
+    const t0=iso(cx,cy,cz),t1=iso(cx+cw,cy,cz),t2=iso(cx+cw,cy+ch,cz),t3=iso(cx,cy+ch,cz);
+    ctx.fillStyle=color+'55';
+    ctx.beginPath();ctx.moveTo(...t0);ctx.lineTo(...t1);ctx.lineTo(...t2);ctx.lineTo(...t3);ctx.closePath();ctx.fill();
+    ctx.strokeStyle=color+'88';ctx.lineWidth=0.5;ctx.stroke();
+    // Right face
+    const b1=iso(cx+cw,cy,0),b2=iso(cx+cw,cy+ch,0);
+    ctx.fillStyle=color+'33';
+    ctx.beginPath();ctx.moveTo(...t1);ctx.lineTo(...t2);ctx.lineTo(...b2);ctx.lineTo(...b1);ctx.closePath();ctx.fill();
+    // Front face
+    const b3=iso(cx,cy+ch,0);
+    ctx.fillStyle=color+'22';
+    ctx.beginPath();ctx.moveTo(...t2);ctx.lineTo(...t3);ctx.lineTo(...b3);ctx.lineTo(...b2);ctx.closePath();ctx.fill();
+  }
+  // Wires
+  for(const w of (ph.wires||[]).slice(0,300)){
+    const lc=layerColors[(w.layer||0)%layerColors.length];
+    const z=4+(w.layer||0)*3;
+    const a=iso(w.x1*sc,w.y1*sc,z),b=iso(w.x2*sc,w.y2*sc,z);
+    ctx.strokeStyle=lc+'44';ctx.lineWidth=0.8;
+    ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke();
   }
 }
 
-function drawRouting(canvas, phys) {
-  var ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
-  ctx.fillStyle = '#0d1117'; ctx.fillRect(0,0,W,H);
-  var dw = (phys.die||{}).w||200, dh = (phys.die||{}).h||200;
-  var scale = Math.min((W-40)/dw,(H-40)/dh), ox = 20, oy = 20;
-  ctx.strokeStyle = '#30363d'; ctx.lineWidth = 2; ctx.strokeRect(ox,oy,dw*scale,dh*scale);
-  var lc = ['#58a6ff','#3fb950','#f85149','#bc8cff','#d29922','#39d2c0','#f778ba','#8b949e'];
-  for (var w of (phys.wires||[])) {
-    ctx.strokeStyle = (lc[w.layer%lc.length])+'88';
-    ctx.lineWidth = Math.max(0.5,(w.width||1)*scale*0.5);
-    ctx.beginPath(); ctx.moveTo(ox+w.x1*scale,oy+w.y1*scale); ctx.lineTo(ox+w.x2*scale,oy+w.y2*scale); ctx.stroke();
+// ── Isometric Routing 3D ──
+function drawIsoRouting(canvas,ph){
+  const W=700,H=500,ctx=hiDpiCanvas(canvas,W,H);
+  ctx.fillStyle='#06080f';ctx.fillRect(0,0,W,H);
+  const dw=(ph.die||{}).w||200,dh=(ph.die||{}).h||200;
+  const sc=Math.min(280/dw,230/dh);
+  const cos30=Math.cos(Math.PI/6),sin30=Math.sin(Math.PI/6);
+  const ox=W/2,oy=H*0.7;
+  function iso(x,y,z){return[ox+(x-y)*cos30,oy+(x+y)*sin30-z];}
+  const nLayers=ph.num_layers||3;
+  const layerColors=['#38bdf8','#34d399','#a78bfa','#f472b6','#fbbf24','#22d3ee','#f87171','#94a3b8'];
+  const layerH=30;
+  // Draw layer planes (bottom to top)
+  for(let l=0;l<nLayers;l++){
+    const z=l*layerH;
+    const p=[iso(0,0,z),iso(dw*sc,0,z),iso(dw*sc,dh*sc,z),iso(0,dh*sc,z)];
+    const lc=layerColors[l%layerColors.length];
+    ctx.fillStyle=lc+'0a';ctx.strokeStyle=lc+'22';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(...p[0]);ctx.lineTo(...p[1]);ctx.lineTo(...p[2]);ctx.lineTo(...p[3]);ctx.closePath();ctx.fill();ctx.stroke();
+    // Label
+    ctx.fillStyle=lc+'88';ctx.font='600 10px Inter';ctx.textAlign='right';
+    const lbl=iso(-10,dh*sc/2,z);ctx.fillText('M'+(l+1),lbl[0],lbl[1]);
+  }
+  // Wires
+  for(const w of (ph.wires||[]).slice(0,500)){
+    const l=w.layer||0;const z=l*layerH;
+    const lc=layerColors[l%layerColors.length];
+    const a=iso(w.x1*sc,w.y1*sc,z),b=iso(w.x2*sc,w.y2*sc,z);
+    ctx.strokeStyle=lc+'66';ctx.lineWidth=1.2;
+    ctx.shadowColor=lc+'33';ctx.shadowBlur=4;
+    ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke();
+    ctx.shadowBlur=0;
+  }
+  // Vias
+  for(const v of (ph.vias||[]).slice(0,200)){
+    const z0=Math.min(v.lower_layer,v.upper_layer)*layerH;
+    const z1=Math.max(v.lower_layer,v.upper_layer)*layerH;
+    const a=iso(v.x*sc,v.y*sc,z0),b=iso(v.x*sc,v.y*sc,z1);
+    ctx.strokeStyle='#fbbf2444';ctx.lineWidth=1;ctx.setLineDash([2,2]);
+    ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke();ctx.setLineDash([]);
   }
 }
 
-function drawBarComp(canvas, items) {
-  var ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
-  ctx.fillStyle = '#0d1117'; ctx.fillRect(0,0,W,H);
-  var ml=60,mr=20,mt=25,mb=40, pw=W-ml-mr, ph=H-mt-mb;
-  var n = items.length, gw = pw/n, bw = gw*0.3;
-  var mx = Math.max.apply(null, items.map(function(i){return Math.max(Math.abs(i.b),Math.abs(i.a));})) || 1;
-  for (var i = 0; i < n; i++) {
-    var cx = ml+(i+0.5)*gw;
-    ctx.fillStyle = '#f8514966'; ctx.fillRect(cx-bw-2,H-mb-(Math.abs(items[i].b)/mx)*ph,bw,(Math.abs(items[i].b)/mx)*ph);
-    ctx.fillStyle = '#3fb95066'; ctx.fillRect(cx+2,H-mb-(Math.abs(items[i].a)/mx)*ph,bw,(Math.abs(items[i].a)/mx)*ph);
-    ctx.fillStyle = '#8b949e'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText(items[i].l, cx, H-mb+15);
+// ── 3D Surface Heatmap ──
+function draw3DSurface(canvas,map2d,title){
+  const W=600,H=450,ctx=hiDpiCanvas(canvas,W,H);
+  ctx.fillStyle='#06080f';ctx.fillRect(0,0,W,H);
+  if(!map2d.length||!map2d[0].length)return;
+  const ny=map2d.length,nx=map2d[0].length;
+  let minV=Infinity,maxV=-Infinity;
+  for(const row of map2d)for(const v of row){if(v<minV)minV=v;if(v>maxV)maxV=v;}
+  const range=maxV-minV||1;
+  const cos30=Math.cos(Math.PI/6),sin30=Math.sin(Math.PI/6);
+  const cellW=280/nx,cellH=200/ny,zScale=80;
+  const ox=W/2+20,oy=H*0.3;
+  function iso(x,y,z){return[ox+(x-y)*cos30,oy+(x+y)*sin30-z];}
+  function heatColor(t){
+    if(t<0.25)return`rgb(${Math.floor(t*4*100)},${Math.floor(t*4*200+55)},255)`;
+    if(t<0.5)return`rgb(${Math.floor((t-0.25)*4*155+100)},255,${Math.floor(255-(t-0.25)*4*255)})`;
+    if(t<0.75)return`rgb(255,${Math.floor(255-(t-0.5)*4*255)},0)`;
+    return`rgb(255,${Math.floor((t-0.75)*4*100)},${Math.floor((t-0.75)*4*100)})`;
   }
-  ctx.fillStyle='#f8514966';ctx.fillRect(ml,5,10,10);ctx.fillStyle='#8b949e';ctx.font='10px sans-serif';ctx.textAlign='left';ctx.fillText('Before',ml+14,14);
-  ctx.fillStyle='#3fb95066';ctx.fillRect(ml+60,5,10,10);ctx.fillStyle='#8b949e';ctx.fillText('After',ml+74,14);
+  // Draw from back to front for correct depth order
+  for(let y=0;y<ny-1;y++){
+    for(let x=0;x<nx-1;x++){
+      const t00=(map2d[y][x]-minV)/range;
+      const t10=(map2d[y][x+1]-minV)/range;
+      const t01=(map2d[y+1][x]-minV)/range;
+      const t11=(map2d[y+1][x+1]-minV)/range;
+      const p0=iso(x*cellW,y*cellH,t00*zScale);
+      const p1=iso((x+1)*cellW,y*cellH,t10*zScale);
+      const p2=iso((x+1)*cellW,(y+1)*cellH,t11*zScale);
+      const p3=iso(x*cellW,(y+1)*cellH,t01*zScale);
+      const avg=(t00+t10+t01+t11)/4;
+      ctx.fillStyle=heatColor(avg);
+      ctx.globalAlpha=0.7;
+      ctx.beginPath();ctx.moveTo(...p0);ctx.lineTo(...p1);ctx.lineTo(...p2);ctx.lineTo(...p3);ctx.closePath();ctx.fill();
+      ctx.globalAlpha=1;
+      ctx.strokeStyle=heatColor(avg);ctx.globalAlpha=0.3;ctx.lineWidth=0.5;ctx.stroke();ctx.globalAlpha=1;
+    }
+  }
+  // Title
+  ctx.fillStyle='#94a3b8';ctx.font='600 11px Inter';ctx.textAlign='center';
+  ctx.fillText(title||'',W/2,20);
+  // Legend
+  const lx=W-60,ly=40,lh=120;
+  for(let i=0;i<lh;i++){
+    ctx.fillStyle=heatColor(1-i/lh);ctx.fillRect(lx,ly+i,12,2);
+  }
+  ctx.fillStyle='#94a3b8';ctx.font='10px Inter';ctx.textAlign='left';
+  ctx.fillText(maxV.toFixed(1),lx+16,ly+6);ctx.fillText(minV.toFixed(1),lx+16,ly+lh);
 }
 
-function drawYieldCurve(canvas, sy) {
-  var ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
-  ctx.fillStyle = '#0d1117'; ctx.fillRect(0,0,W,H);
-  var entries = Object.entries(sy).map(function(e){return [parseFloat(e[0]),e[1]];}).sort(function(a,b){return a[0]-b[0];});
-  if (!entries.length) return;
-  var m={l:50,r:20,t:20,b:40}, pw=W-m.l-m.r, ph=H-m.t-m.b;
-  var xMin=entries[0][0], xMax=entries[entries.length-1][0], xR=xMax-xMin||1;
-  ctx.strokeStyle='#30363d';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(m.l,m.t);ctx.lineTo(m.l,H-m.b);ctx.lineTo(W-m.r,H-m.b);ctx.stroke();
-  ctx.strokeStyle='#3fb950';ctx.lineWidth=2;ctx.beginPath();
-  for (var i=0;i<entries.length;i++) {
-    var x=m.l+((entries[i][0]-xMin)/xR)*pw, y=m.t+(1-entries[i][1]/100)*ph;
-    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+// ── Bar Comparison ──
+function drawBarComp(canvas,items){
+  const W=500,H=220,ctx=hiDpiCanvas(canvas,W,H);
+  ctx.fillStyle='#06080f';ctx.fillRect(0,0,W,H);
+  const ml=60,mr=20,mt=30,mb=40,pw=W-ml-mr,ph=H-mt-mb;
+  const n=items.length,gw=pw/n,bw=gw*0.25;
+  const mx=Math.max(...items.map(i=>Math.max(Math.abs(i.b),Math.abs(i.a))))||1;
+  for(let i=0;i<n;i++){
+    const cx=ml+(i+0.5)*gw;
+    const bh=(Math.abs(items[i].b)/mx)*ph,ah=(Math.abs(items[i].a)/mx)*ph;
+    // Before bar
+    const g1=ctx.createLinearGradient(0,H-mb-bh,0,H-mb);
+    g1.addColorStop(0,'#f8717188');g1.addColorStop(1,'#f8717122');
+    ctx.fillStyle=g1;ctx.beginPath();
+    roundRect(ctx,cx-bw-4,H-mb-bh,bw,bh,4);ctx.fill();
+    // After bar
+    const g2=ctx.createLinearGradient(0,H-mb-ah,0,H-mb);
+    g2.addColorStop(0,'#34d39988');g2.addColorStop(1,'#34d39922');
+    ctx.fillStyle=g2;ctx.beginPath();
+    roundRect(ctx,cx+4,H-mb-ah,bw,ah,4);ctx.fill();
+    ctx.fillStyle='#94a3b8';ctx.font='500 11px Inter';ctx.textAlign='center';
+    ctx.fillText(items[i].l,cx,H-mb+20);
   }
+  // Legend
+  ctx.fillStyle='#f8717188';ctx.fillRect(ml,10,10,10);
+  ctx.fillStyle='#94a3b8';ctx.font='10px Inter';ctx.textAlign='left';ctx.fillText('Before',ml+14,19);
+  ctx.fillStyle='#34d39988';ctx.fillRect(ml+70,10,10,10);ctx.fillStyle='#94a3b8';ctx.fillText('After',ml+84,19);
+}
+function roundRect(ctx,x,y,w,h,r){ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);ctx.lineTo(x+w,y+h);ctx.lineTo(x,y+h);ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);}
+
+// ── Donut Chart ──
+function drawDonut(canvas,slices){
+  const W=400,H=260,ctx=hiDpiCanvas(canvas,W,H);
+  ctx.fillStyle='#06080f';ctx.fillRect(0,0,W,H);
+  const cx=160,cy=H/2,r=80,lw=24;
+  const total=slices.reduce((s,d)=>s+d.v,0)||1;
+  let startA=-Math.PI/2;
+  for(const sl of slices){
+    const sweep=(sl.v/total)*Math.PI*2;
+    if(sweep<0.001)continue;
+    const grad=ctx.createLinearGradient(cx-r,cy-r,cx+r,cy+r);
+    grad.addColorStop(0,sl.c[0]);grad.addColorStop(1,sl.c[1]);
+    ctx.beginPath();ctx.arc(cx,cy,r,startA,startA+sweep);
+    ctx.strokeStyle=grad;ctx.lineWidth=lw;ctx.lineCap='butt';ctx.stroke();
+    // Glow
+    ctx.beginPath();ctx.arc(cx,cy,r,startA,startA+sweep);
+    ctx.strokeStyle=sl.c[0]+'22';ctx.lineWidth=lw+10;ctx.stroke();
+    startA+=sweep;
+  }
+  // Center text
+  ctx.fillStyle='#f1f5f9';ctx.font='700 18px Inter';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(total.toFixed(1),cx,cy-6);
+  ctx.fillStyle='#475569';ctx.font='500 10px Inter';ctx.fillText('mW',cx,cy+10);
+  // Legend
+  let ly=40;
+  for(const sl of slices){
+    const grad=ctx.createLinearGradient(280,ly,292,ly);
+    grad.addColorStop(0,sl.c[0]);grad.addColorStop(1,sl.c[1]);
+    ctx.fillStyle=grad;ctx.fillRect(280,ly,12,12);ctx.beginPath();
+    ctx.fillStyle='#94a3b8';ctx.font='12px Inter';ctx.textAlign='left';
+    ctx.fillText(sl.l+' — '+sl.v.toFixed(2),300,ly+10);
+    ly+=24;
+  }
+}
+
+// ── Yield Curve ──
+function drawYieldCurve(canvas,sy){
+  const W=600,H=280,ctx=hiDpiCanvas(canvas,W,H);
+  ctx.fillStyle='#06080f';ctx.fillRect(0,0,W,H);
+  const entries=Object.entries(sy).map(e=>[parseFloat(e[0]),e[1]]).sort((a,b)=>a[0]-b[0]);
+  if(!entries.length)return;
+  const m={l:50,r:20,t:20,b:40},pw=W-m.l-m.r,ph=H-m.t-m.b;
+  const xMin=entries[0][0],xMax=entries[entries.length-1][0],xR=xMax-xMin||1;
+  // Grid
+  ctx.strokeStyle='rgba(148,163,184,0.06)';ctx.lineWidth=1;
+  for(let i=0;i<=4;i++){const y=m.t+ph*(i/4);ctx.beginPath();ctx.moveTo(m.l,y);ctx.lineTo(W-m.r,y);ctx.stroke();}
+  // Fill
+  const grad=ctx.createLinearGradient(0,m.t,0,H-m.b);
+  grad.addColorStop(0,'rgba(52,211,153,0.15)');grad.addColorStop(1,'rgba(52,211,153,0)');
+  ctx.beginPath();ctx.moveTo(m.l,H-m.b);
+  for(const e of entries)ctx.lineTo(m.l+((e[0]-xMin)/xR)*pw,m.t+(1-e[1]/100)*ph);
+  ctx.lineTo(m.l+pw,H-m.b);ctx.closePath();ctx.fillStyle=grad;ctx.fill();
+  // Line
+  const lineGrad=ctx.createLinearGradient(m.l,0,W-m.r,0);
+  lineGrad.addColorStop(0,'#34d399');lineGrad.addColorStop(1,'#38bdf8');
+  ctx.strokeStyle=lineGrad;ctx.lineWidth=2.5;ctx.beginPath();
+  for(let i=0;i<entries.length;i++){const x=m.l+((entries[i][0]-xMin)/xR)*pw,y=m.t+(1-entries[i][1]/100)*ph;if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
   ctx.stroke();
-  for (var e of entries) { var x=m.l+((e[0]-xMin)/xR)*pw,y=m.t+(1-e[1]/100)*ph; ctx.fillStyle='#3fb950';ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill(); }
-  ctx.fillStyle='#8b949e';ctx.font='10px sans-serif';ctx.textAlign='center';ctx.fillText('Sigma',W/2,H-5);
+  // Points
+  for(const e of entries){const x=m.l+((e[0]-xMin)/xR)*pw,y=m.t+(1-e[1]/100)*ph;
+    ctx.fillStyle='#34d399';ctx.shadowColor='rgba(52,211,153,0.4)';ctx.shadowBlur=8;
+    ctx.beginPath();ctx.arc(x,y,3.5,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
+  }
+  ctx.fillStyle='#475569';ctx.font='500 10px Inter';ctx.textAlign='center';ctx.fillText('Sigma (σ)',W/2,H-8);
+};
+
+// ── Impedance Plot ──
+function drawImpedance(canvas,pdn){
+  const W=600,H=280,ctx=hiDpiCanvas(canvas,W,H);
+  ctx.fillStyle='#06080f';ctx.fillRect(0,0,W,H);
+  const pts=pdn.impedance_profile;if(!pts.length)return;
+  const m={l:60,r:20,t:20,b:40},pw=W-m.l-m.r,ph=H-m.t-m.b;
+  const maxZ=Math.max(...pts.map(p=>p.impedance_mohm),pdn.target_impedance_mohm||1);
+  // Grid
+  ctx.strokeStyle='rgba(148,163,184,0.06)';ctx.lineWidth=1;
+  for(let i=0;i<=4;i++){const y=m.t+ph*(i/4);ctx.beginPath();ctx.moveTo(m.l,y);ctx.lineTo(W-m.r,y);ctx.stroke();}
+  // Target line
+  if(pdn.target_impedance_mohm>0){
+    const ty=m.t+(1-pdn.target_impedance_mohm/maxZ)*ph;
+    ctx.strokeStyle='#f8717144';ctx.lineWidth=1;ctx.setLineDash([6,4]);
+    ctx.beginPath();ctx.moveTo(m.l,ty);ctx.lineTo(W-m.r,ty);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle='#f87171';ctx.font='10px Inter';ctx.textAlign='right';ctx.fillText('Target',W-m.r-4,ty-6);
+  }
+  // Fill
+  const grad=ctx.createLinearGradient(0,m.t,0,H-m.b);
+  grad.addColorStop(0,'rgba(56,189,248,0.12)');grad.addColorStop(1,'rgba(56,189,248,0)');
+  ctx.beginPath();ctx.moveTo(m.l,H-m.b);
+  for(let i=0;i<pts.length;i++){const x=m.l+(i/(pts.length-1||1))*pw,y=m.t+(1-pts[i].impedance_mohm/maxZ)*ph;ctx.lineTo(x,y);}
+  ctx.lineTo(m.l+pw,H-m.b);ctx.closePath();ctx.fillStyle=grad;ctx.fill();
+  // Line
+  ctx.strokeStyle='#38bdf8';ctx.lineWidth=2;ctx.shadowColor='rgba(56,189,248,0.3)';ctx.shadowBlur=6;ctx.beginPath();
+  for(let i=0;i<pts.length;i++){const x=m.l+(i/(pts.length-1||1))*pw,y=m.t+(1-pts[i].impedance_mohm/maxZ)*ph;if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
+  ctx.stroke();ctx.shadowBlur=0;
 }
 
-function drawHeatmap(canvas, map2d, title) {
-  var ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
-  ctx.fillStyle = '#0d1117'; ctx.fillRect(0,0,W,H);
-  if (!map2d.length || !map2d[0].length) return;
-  var ny=map2d.length, nx=map2d[0].length, mg=30;
-  var cw=(W-2*mg)/nx, ch=(H-2*mg)/ny;
-  var minV=Infinity, maxV=-Infinity;
-  for (var row of map2d) for (var v of row) { if(v<minV)minV=v; if(v>maxV)maxV=v; }
-  var range = maxV-minV||1;
-  for (var y=0;y<ny;y++) for (var x=0;x<nx;x++) {
-    var t=(map2d[y][x]-minV)/range;
-    var r=Math.floor(t*255), b=Math.floor((1-t)*255), g=Math.floor((t<0.5?t*2:(1-t)*2)*200);
-    ctx.fillStyle='rgb('+r+','+g+','+b+')';
-    ctx.fillRect(mg+x*cw, mg+y*ch, cw+1, ch+1);
-  }
-  ctx.fillStyle='#8b949e';ctx.font='11px sans-serif';ctx.textAlign='center';
-  ctx.fillText(title||'',W/2,18);
-  ctx.fillText('Min: '+minV.toFixed(1),mg+40,H-8);
-  ctx.fillText('Max: '+maxV.toFixed(1),W-mg-40,H-8);
-}
-
-function drawImpedancePlot(canvas, pdn) {
-  var ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
-  ctx.fillStyle = '#0d1117'; ctx.fillRect(0,0,W,H);
-  var pts = pdn.impedance_profile;
-  if (!pts.length) return;
-  var m={l:60,r:20,t:20,b:40}, pw=W-m.l-m.r, ph=H-m.t-m.b;
-  var maxZ = Math.max.apply(null,pts.map(function(p){return p.impedance_mohm;}));
-  maxZ = Math.max(maxZ, pdn.target_impedance_mohm||1);
-  ctx.strokeStyle='#30363d';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(m.l,m.t);ctx.lineTo(m.l,H-m.b);ctx.lineTo(W-m.r,H-m.b);ctx.stroke();
-  if (pdn.target_impedance_mohm > 0) {
-    var ty = m.t+(1-pdn.target_impedance_mohm/maxZ)*ph;
-    ctx.strokeStyle='#f8514966';ctx.lineWidth=1;ctx.setLineDash([5,3]);ctx.beginPath();ctx.moveTo(m.l,ty);ctx.lineTo(W-m.r,ty);ctx.stroke();ctx.setLineDash([]);
-    ctx.fillStyle='#f85149';ctx.font='10px sans-serif';ctx.fillText('Target',W-m.r-35,ty-5);
-  }
-  ctx.strokeStyle='#58a6ff';ctx.lineWidth=2;ctx.beginPath();
-  for (var i=0;i<pts.length;i++) {
-    var x=m.l+(i/(pts.length-1||1))*pw, y=m.t+(1-pts[i].impedance_mohm/maxZ)*ph;
-    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
-  }
-  ctx.stroke();
-}
-
-// Init
-buildSidebar();
-renderStage();
-refreshState();
+/* ═══════════════════════════════════════════════════════
+   INIT
+   ═══════════════════════════════════════════════════════ */
+buildSidebar();render();refreshState();
 </script>
 </body>
 </html>
