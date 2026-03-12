@@ -1,0 +1,828 @@
+================================================================================
+SILICONFORGE — Complete RTL-to-GDSII Flow Summary
+================================================================================
+Codebase: 81 headers, 79 source files, 44 test suites
+Source: 43,874 LOC | Tests: 16,514 LOC | 2,059 CHECK assertions | 163 test functions
+Status: 44/44 CTest PASS (Release + ASAN clean)
+================================================================================
+
+
+STAGE 1 — RTL Input & Parsing (frontend/, 5,173 LOC)
+================================================================================
+
+Verilog Parser (VerilogParser)
+- Full IEEE-1364 structural + behavioral Verilog
+- Lexer: 14 token types (IDENT, NUMBER, STRING, LBRACE, etc.)
+- Structural: module/endmodule, wire/reg, assign, gate primitives
+  (and, or, nand, nor, xor, xnor, not, buf)
+- Behavioral: always blocks, if/else, case/casex, for/while loops,
+  indexed part-select, tri-state, generate
+- Multi-module hierarchy support via ModuleDef structs
+- Output: VerilogParseResult → populates Netlist (nets, gates, FFs)
+
+SDC Parser (SdcParser)
+- SdcClock: name, period, waveform, source
+- SdcInputDelay / SdcOutputDelay: clock-relative I/O timing
+- SdcException: FALSE_PATH, MULTICYCLE_PATH, MAX_DELAY, MIN_DELAY
+- Full SdcConstraints struct for downstream STA
+
+SVA Parser (SvaParser)
+- SvaOp: ALWAYS, EVENTUALLY, UNTIL, NEXT, AND, OR, NOT, IMPLY, SEQ, REPEAT
+- SvaProperty → SvaNode tree for formal verification
+
+UPF Parser (UpfParser)
+- IEEE 1801 Unified Power Format
+- PowerDomain, SupplyNet, SupplyPort
+- IsolationStrategy: CLAMP_0, CLAMP_1, LATCH, AND, OR isolation types
+- LevelShifter: HL/LH shifting with threshold voltages
+- RetentionStrategy: save/restore with EDGE/LEVEL conditions
+- PowerStateTable, PowerState for DVFS
+- UpfChecker: semantic validation
+
+
+STAGE 2 — Core Data Structures (core/, 3,729 LOC)
+================================================================================
+
+Netlist (Netlist)
+- GateType enum: AND, OR, NAND, NOR, XOR, XNOR, NOT, BUF, DFF, MUX,
+  CONST0, CONST1, TRI, LATCH + tech-mapped types (INV, AOI21, OAI21,
+  HA, FA, DFFR, MUX2, BUF_X1..X4, CLK_BUF, TGATE, etc.)
+- Net: name, driver, fanouts vector
+- Gate: name, type, inputs[], outputs[], area, delay
+
+AIG Graph (AigGraph)
+- And-Inverter Graph representation
+- AigNode: left, right literals (2-bit complemented edges)
+- AigLatch: input, init, next-state
+- API: add_input(), mk_and(), mk_not(), add_output(), add_latch()
+
+Liberty Parser (LibertyLibrary)
+- LibertyPin: direction, capacitance, function, clock flag
+- LibertyTiming: related_pin, timing_sense (POSITIVE/NEGATIVE/NON_UNATE),
+  timing_type
+- NldmTable: 7x7 delay/slew lookup (index1=input_slew, index2=output_cap)
+- LibertyCell: name, area, leakage_power, pins, timing arcs
+
+LEF Parser (LefParser)
+- Full LEF 5.8 support
+- LefLayer: ROUTING/CUT/MASTERSLICE, pitch, width, spacing, direction H/V,
+  resistance/capacitance per unit
+- LefVia, LefViaRule: via definitions with cut layers
+- LefMacro: CORE/PAD/BLOCK/ENDCAP/RING, pins with PORT geometry, OBS layers
+- LefSite: CORE/PAD/IO with symmetry
+- LefSpacing: min spacing rules per layer pair
+
+DEF Parser (DefParser) — Design Exchange Format import
+
+Design Database (DesignDatabase)
+- DesignState with stage tracking:
+  EMPTY → LOADED → SYNTHESIZED → PLACED → ROUTED → VERIFIED
+- DesignDbStats: gate/net/FF/area/WNS/TNS tracking
+
+Hierarchy Manager (HierarchyManager)
+- DesignModule: multi-module hierarchy traversal
+- HierarchyResult: flattened module tree
+
+Die-to-Die / Chiplet (PackageDesign)
+- TsvParasitics: resistance, capacitance, inductance per TSV
+- TsvTechParams: diameter (5um), pitch (10um), keep-out zone,
+  min/max aspect ratio
+- MicroBump: location, pitch (40um), diameter, current limit
+- InterposerTrace: RDL routing with capacitance/resistance
+- InterposerConfig: layer count, trace width/spacing, dielectric constant
+- D2DLink: inter-die connections with protocol (UCIe, BoW, custom)
+- PowerTSV, PowerGrid3D: 3D power delivery
+- YieldModel: per-die yield, stacking yield, known-good-die testing
+- DieInstance: die placement with rotation/flipping
+- ChipletReport: die count, total TSVs, bump count, power, signal/ground ratio
+
+
+STAGE 3 — Behavioral Synthesis (synth/, 4,271 LOC)
+================================================================================
+
+Behavioral Synthesizer (BehavioralSynthesizer)
+- AstNodeType: 20+ types (ASSIGN, IF, CASE, FOR, WHILE, BINARY_OP,
+  UNARY_OP, CONCAT, PART_SELECT, FUNCTION_CALL, etc.)
+- AstNode tree with recursive parsing
+- BlockState: tracking variable assignments through control flow
+- StructuralSynthesizer: AST → structural gate netlist lowering
+
+FSM Extractor (FsmExtractor)
+- StateMachine: states, transitions, state register
+- FsmEncoding: BINARY, ONE_HOT, GRAY, JOHNSON, CUSTOM
+
+Resource Sharing (ResourceSharer)
+- CDFG mutually-exclusive resource sharing
+- ResourceOp: tracks shared functional units
+
+
+STAGE 4 — Logic Optimization (synth/ + sat/, 4,773 LOC)
+================================================================================
+
+AIG Optimizer (AigOptimizer)
+- 5 optimization passes: sweep(), rewrite(), refactor(), balance(), sat_sweep()
+- Cut struct: 4-input cut enumeration for technology mapping
+- OptStats: AND nodes before/after, depth before/after
+- Rewrite: truth-table-based cut rewriting with NPN4 classification
+- Refactor: MFFC-based refactoring for area reduction
+- Balance: depth-optimal tree restructuring
+
+Technology Mapper (TechMapper)
+- CellMatch: cell_id, area, delay, truth table matching
+- MapStats: cells, area, depth after mapping
+- 35-cell default standard cell library (45nm-class)
+- 4-input LUT truth table matching (uint16_t = 16-bit)
+
+Retiming Engine (RetimingEngine)
+- Algorithm: Leiserson-Saxe with binary search (~12 iterations, <0.1%)
+- Bellman-Ford constraint solving on W/D matrices
+- BFS path enumeration with delay pruning
+- RetimingConfig: max_iterations, clock_period, hold_margin, setup_margin
+- MulticyclePath: multi-cycle path constraints
+- RetimingResult: dff_before/after, moved, inserted, removed, wns_before/after
+- Structural DFF insertion/removal in netlist
+- Clock gating preservation during retiming
+
+Clock Gating (ClockGatingEngine)
+- ClockGatingResult: ICG cells inserted, power savings estimate
+- IcgCell: enable signal, gated FFs, power reduction
+- FfGroup: FF clustering for shared clock gating
+
+Multi-Vt Optimization (MultiVtOptimizer)
+- VtType: SVT, LVT, HVT
+- MultiVtConfig: leakage_weight, timing_weight, area_weight
+- CellAssignment: per-cell Vt assignment with leakage/delay trade-off
+
+ECO Engine (EcoEngine)
+- EcoChange::Type: ADD_GATE, REMOVE_GATE, REPLACE_GATE, REWIRE, SIZE_CHANGE
+- EcoResult: changes applied, timing impact
+
+CDCL SAT Solver (CdclSolver)
+- Conflict-Driven Clause Learning with watched literals
+- LBool: UNDEF, TRUE, FALSE (3-value logic)
+- Clause struct with watched literal optimization
+- Stats: conflicts, decisions, propagations
+- Assumption handling with proper backtrack levels
+- Used by: BMC, LEC, IC3, CEGAR, SAT sweep
+
+
+STAGE 5 — DFT Insertion (dft/, 1,822 LOC)
+================================================================================
+
+Scan Insertion (ScanInserter)
+- ScanConfig: max_chain_length, chain_count, compression_ratio
+- ScanResult: chains, chain_length, scan_cells, coverage estimate
+- MUX-D scan cell insertion
+
+PODEM ATPG (PodemAtpg)
+- Algorithm: Path-Oriented Decision Making
+- Fault: stuck-at-0, stuck-at-1 per net
+- DLogic: 5-value logic (ZERO, ONE, X, D, DBAR)
+- PodemStatus: SUCCESS, FAILURE, BACKTRACK
+- AtpgResult: patterns, coverage, faults detected/undetectable
+- FaultCoverage: fault count, detected, coverage percentage
+
+Fault Simulator (FaultSimulator)
+- FaultSimResult: faults simulated, detected, coverage
+- Parallel pattern fault simulation
+
+JTAG/BIST (JtagController, LbistController, MbistController)
+- IEEE 1149.1 TAP Controller: 16-state FSM
+  (Test-Logic-Reset → Run-Test-Idle → DR/IR scan paths)
+- TapState: all 16 states with static transition lookup
+- JtagInstruction: BYPASS, EXTEST, SAMPLE, INTEST, IDCODE, USERCODE,
+  CLAMP, HIGHZ
+- BoundaryScanRegister: BC_1/BC_2/BC_4/BC_7 cell types with
+  capture/shift/update
+
+LFSR: Galois LFSR with maximal-length polynomials (8/16/20/24/32-bit)
+MISR: Multiple Input Signature Register for response compaction
+
+Logic BIST (LbistController):
+- LFSR pattern generation → circuit → MISR compression
+- LbistConfig: pattern_count, seed, lfsr_width
+
+Memory BIST (MbistController):
+- MarchAlgorithm: MARCH_C_MINUS, MARCH_X, MARCH_Y, CHECKERBOARD
+- MbistConfig: algorithm, address_width, data_width, retention_test
+
+BsdlGenerator: IEEE 1149.1 BSDL text output
+DftIntegrator: full DFT orchestration (scan → JTAG → LBIST → MBIST)
+
+
+STAGE 6 — Formal Verification (formal/, 2,288 LOC)
+================================================================================
+
+Bounded Model Checking (BmcEngine)
+- BmcResult: properties checked, counterexample depth, SAT/UNSAT
+- Configurable unrolling depth (default 20)
+
+Logic Equivalence Checking (LecEngine)
+- LecResult: key_points verified, sim vectors, mismatches
+- Mismatch struct with detailed output comparison
+- Simulation + SAT-based verification
+
+Equivalence Checker (EquivChecker)
+- EquivResult: equivalent flag, counterexample
+
+SVA Engine (SvaEngine)
+- SystemVerilog Assertion evaluation on simulation traces
+
+K-Induction (KInduction)
+- KIndResult::Status: PROVEN, FAILED, UNKNOWN
+- Base case + inductive step verification
+
+Advanced Formal (Phase 44):
+
+  IC3/PDR Engine (Ic3Engine)
+  - Algorithm: Property-Directed Reachability (IC3)
+  - Ic3Config: max_frames, timeout_ms, verbose
+  - Ic3Result::Status: PROVEN, REFUTED, UNKNOWN
+  - ProofObligation: frame, cube, depth for backward reachability
+  - Clause generalization and frame propagation
+
+  LTL Model Checker (LtlChecker)
+  - LtlOp: ATOM, NOT, AND, OR, IMPLY, GLOBALLY, FINALLY, NEXT,
+    UNTIL, RELEASE, WEAK_UNTIL
+  - LtlFormula: recursive tree structure
+  - LtlResult::Status: HOLDS, VIOLATED, UNKNOWN with counterexample trace
+  - Buchi automaton construction → product with design → emptiness check
+
+  CEGAR Engine (CegarEngine)
+  - Algorithm: Counterexample-Guided Abstraction Refinement
+  - CegarConfig: max_refinements, initial_abstract_pct, refinement_step
+  - CegarResult::Status: PROVEN, REFUTED, UNKNOWN
+  - Concrete-model-first check for unsafe circuits (bug fix)
+
+  Craig Interpolation (CraigInterpolator)
+  - InterpolationResult: interpolant formula, iterations
+  - VarClassification: A-local, B-local, shared variables
+  - McMillan-style interpolation from UNSAT proofs
+
+
+STAGE 7 — Floorplanning (pnr/, 6,265 LOC)
+================================================================================
+
+Floorplanner (Floorplanner)
+- Macro: name, width, height, fixed flag
+- FloorplanResult: die_width, die_height, utilization, macros placed
+- Connection: weighted connectivity for macro placement
+- Die area initialization with cell count estimation
+
+
+STAGE 8 — Placement (pnr/)
+================================================================================
+
+Analytical Placer (AnalyticalPlacer)
+- Algorithm: SimPL (Simple and Effective Placement)
+- Bound2Bound (B2B) net model → sparse linear system
+- Conjugate Gradient (CG) solver for global placement
+- Abacus legalization (row-based)
+- ConstraintType: FENCE, GUIDE, BLOCKAGE
+- PlacementConstraint: region-based with cell list
+- CellPadding: per-cell spacing requirements
+- CongestionBin: grid-based congestion estimation
+- DensityBin: density-driven spreading
+- B2BEdge: i, j, wx, wy weighted edges
+
+Timing-Driven Placement (Phase 9):
+- STA integration during placement iterations
+- Criticality function: (1 - slack/|WNS|)^exp (Kong 2002)
+- timing_weight (default 5.0), criticality_exp (default 3.0)
+- timing_update_interval: STA every N outer iterations (default 3)
+
+Industrial Placement (Phase 22):
+- Congestion-aware bin analysis
+- Placement constraint enforcement (fence/guide/blockage)
+- PlaceResult: HPWL, utilization, wns, tns, critical_nets, congestion metrics
+
+
+STAGE 9 — Clock Tree Synthesis (pnr/)
+================================================================================
+
+CTS Engine (CtsEngine)
+- Algorithm: H-tree balanced buffer insertion
+- ClkBufType: name, delay, load_cap, drive_strength
+- CtsResult: skew, buffers, wirelength, sinks, max_latency, levels
+- ClockDomain: period, source, sink FFs
+- ClockGroup::Relationship: SYNCHRONOUS, ASYNCHRONOUS, EXCLUSIVE
+
+Industrial CTS (Phase 43):
+- HtreeConfig: levels, target_skew, buffer_type
+- ClkShieldConfig: shield_width, shield_spacing, ground_shield
+- SlewConfig: max_transition, buffer_threshold
+- EcoCtsRequest / EcoCtsResult: post-CTS ECO modifications
+- DerivedClockResult: divider/multiplier clock handling
+- Multi-clock domain support
+- Shield wire insertion for clock integrity
+- Slew-targeted buffering
+
+
+STAGE 10 — Global Routing (pnr/)
+================================================================================
+
+Global Router (GlobalRouter)
+- Algorithm: A* pathfinding on GCell grid with congestion-weighted edges
+- GCell: capacity, demand, overflow per grid tile
+- AStarNode: cost function with congestion penalty
+- SteinerPoint: Steiner tree decomposition for multi-pin nets
+- Rip-up and reroute with configurable iterations
+
+Industrial Routing (Phase 25):
+- RouterConfig: timing_weight, criticality_exponent, via_cost,
+  antenna_ratio, layer_promotion
+- NetTimingInfo: per-net slack, criticality, clock/critical flags
+- Timing-driven net ordering (critical nets routed FIRST)
+- Slack-weighted A* cost: edge_cost = base x f(criticality)
+- Greedy heuristic for critical nets (heuristic_weight=1.5 when crit>0.7)
+- Layer promotion: critical nets → upper metal (lower RC)
+- Antenna area tracking: wire_area/gate_area ratio
+- RouteResult: total_vias, total_wires, critical_net_wirelength,
+  antenna_violations, wires/vias_per_layer
+
+
+STAGE 11 — Detailed Routing (pnr/)
+================================================================================
+
+Detailed Router v2 (DetailedRouterV2)
+- Track-based routing with conflict resolution
+- Track: layer, coordinate, segments
+- TrackSeg: start, end, net_id
+- GridNode: multi-layer grid for pathfinding
+- Via minimization pass: re-routes nets with >2 vias
+- Per-net antenna check after routing
+- Per-layer wire/via distribution metrics
+- Configurable reroute iterations (default 8)
+
+
+STAGE 12 — Post-Route Optimization (pnr/)
+================================================================================
+
+Post-Route Optimizer (PostRouteOptimizer)
+- VtType: ULVT, LVT, SVT, HVT
+- PostRouteConfig: feature enables, thresholds, Vt delay/leakage models
+
+6 Industrial Optimization Passes (Phase 21):
+1. Vt Swap (vt_swap_for_timing):
+   HVT→SVT→LVT→ULVT based on path slack severity
+2. High-Fanout Cloning (clone_high_fanout):
+   clone drivers on critical paths
+3. Buffer Insertion (insert_buffers_for_slew):
+   fix slew/load violations
+4. Hold Fix (fix_hold_violations):
+   delay buffer insertion
+5. Useful Skew (useful_skew_optimization):
+   CTS adjustment (opt-in, off by default)
+6. Leakage Recovery (leakage_recovery):
+   swap non-critical LVT/ULVT back to HVT
+
+- PostRouteResult: cells_vt_swapped, buffers_inserted, cells_cloned,
+  hold_buffers, useful_skew_adjustments, leakage_before/after, area_change_pct
+- STA-driven iterative convergence loop (max 5 iterations, slack threshold 0)
+
+
+STAGE 13 — Static Timing Analysis (timing/, 6,818 LOC)
+================================================================================
+
+STA Engine (StaEngine)
+- Forward propagation: arrival times (AT) through topological order
+- Backward propagation: required arrival times (RAT) from outputs
+- TimingArc: from_pin, to_pin, delay, setup/hold
+- PinTiming: arrival_early/late, required_early/late, slack
+- TimingPath: startpoint, endpoint, path_delay, slack, depth, gates
+
+OCV/AOCV (Phase 6):
+- OcvMode: NONE, OCV, AOCV, POCV
+- CornerDerate: cell_late, cell_early, wire_late, wire_early,
+  clock_late, clock_early
+- AocvTable: late/early_variation (default 10%),
+  depth-dependent derating via sqrt(N) rule
+- Gate depths via BFS from PIs/DFF outputs
+
+Industrial STA (Phase 20):
+
+  CPPR (Common Path Pessimism Removal):
+  - CpprConfig: enabled flag
+  - credit = common_delay x |late_derate - early_derate|
+  - Setup: adds credit to slack; Hold: subtracts credit
+  - Reference: DAC'21 Huang et al.
+
+  POCV (Parametric On-Chip Variation):
+  - PocvTable: default_sigma_pct (5%), n_sigma (3.0),
+    per-cell sigma overrides
+  - RSS path sigma: sqrt(sum(sigma_i^2))
+  - Final derate = mean +/- N_sigma x path_sigma
+
+  PBA (Path-Based Analysis):
+  - Re-evaluates critical paths with actual slew propagation
+  - Path-specific delays vs graph-wide worst-case
+  - Reports GBA and PBA results
+
+  Crosstalk Delta-Delay:
+  - CrosstalkConfig: coupling_cap, miller_factor, distance_threshold
+  - Delta = Cc x Miller_factor / slew
+  - Reference: Devgan, ICCAD 1997
+
+StaResult: wns, tns, paths, cppr_total_credit, pba_wns/tns,
+  max_crosstalk_delta, feature flags
+
+
+STAGE 14 — MCMM Analysis (timing/)
+================================================================================
+
+MCMM Analyzer (McmmAnalyzer)
+- PvtCorner: Process (FAST/TYPICAL/SLOW), voltage, temperature,
+  CornerDerate, OCV mode, POCV/CPPR per corner
+- FunctionalMode: clock_period, setup/hold uncertainty,
+  switching activity, SignoffType
+- SignoffType: SETUP, HOLD, LEAKAGE, DYNAMIC_POWER, TRANSITION, ALL
+- 7 standard foundry corners:
+  ss_125, ss_m40, sf_125, tt_25, fs_m40, ff_m40, ff_125
+
+Industrial MCMM (Phase 24):
+- ScenarioConstraint: per-scenario overrides
+- McmmConfig: scenario pruning, POCV/CPPR per corner,
+  sensitivity analysis, path limits
+- SignoffSummary: per-category worst scenario/WNS/TNS/violations
+- Dominated scenario pruning
+- Sensitivity analysis: dWNS/dV and dWNS/dT via perturbation
+- McmmResult: active/pruned/cppr/pocv counts, signoff summaries,
+  NxM scenario sweep
+
+
+STAGE 15 — SSTA (timing/)
+================================================================================
+
+SSTA Engine (SstaEngine)
+- Algorithm: Monte Carlo statistical timing
+  (configurable samples, default 500)
+- SstaConfig: num_samples, n_sigma, global/local variation %,
+  spatial correlation length, seed, confidence level
+- ProcessVariation: gate_length, vth, tox, wire_width, wire_thickness
+  sigma %, global/local fraction split (default 60%/40%)
+- StatisticalDelay: mean, sigma, min, max,
+  percentiles (1/5/10/25/50/75/90/95/99)
+- Per-sample variation: delay = nominal x (1 + global_var + local_var)
+- Spatial correlation: exponential decay exp(-dist/corr_length)
+- Correlated local variations via nearest-neighbor blending
+- WNS/TNS distribution, yield at 1-sigma through 6-sigma levels
+- compute_yield(target_period): MC yield at specific clock target
+- sensitivity_analysis(): per-parameter impact
+  (global, local, gate_length, vth, wire_width)
+- Reference: Blaauw et al., IEEE TCAD 2008
+
+
+STAGE 16 — Power Analysis (timing/)
+================================================================================
+
+Power Analyzer (PowerAnalyzer)
+- PowerResult: dynamic, leakage, total power (mW)
+- CellPower: per-cell switching, internal, leakage breakdown
+- Switching activity-based dynamic power estimation
+
+
+STAGE 17 — IR Drop Analysis (timing/)
+================================================================================
+
+IR Drop Analyzer (IrDropAnalyzer)
+- Algorithm: Gauss-Seidel iterative sparse solver
+  (convergence threshold 1e-6)
+- IrDropConfig: grid_resolution, VDD, max_iterations,
+  pad_pattern (CORNERS/PERIMETER/RING/CUSTOM)
+- PowerPad: configurable locations with per-pad resistance, VDD/VSS types
+- Multi-source power grid with user-defined pad placement
+- Dynamic IR drop: toggle-rate-based current estimation
+- Timing derating: IR-drop → voltage → delay impact factor
+- IrDropHotSpot: severity (WARNING/CRITICAL)
+- IrDropResult: worst_drop_mv, avg_drop_mv, drop_map, hotspots,
+  signoff pass/fail, convergence info
+
+
+STAGE 18 — PDN Analysis (timing/)
+================================================================================
+
+PDN Analyzer (PdnAnalyzer)
+- PdnStripe: HORIZONTAL/VERTICAL direction, layer, width, pitch, offset
+- DecapModel: explicit + intrinsic capacitance, ESR, ESL
+- BumpPad: POWER/GROUND/SIGNAL types with location
+- ViaArray: rows, cols, via_size, resistance, current_limit
+- PdnConfig: target impedance, frequency range (1MHz-10GHz), decap modeling
+- ImpedancePoint: frequency vs impedance profile
+- Resonance: SERIES/PARALLEL type, frequency, impedance, Q factor
+- PdnResult: impedance profile, resonance frequencies,
+  decap effectiveness, via resistance, EM violations,
+  target impedance pass/fail
+
+
+STAGE 19 — Signal Integrity (timing/)
+================================================================================
+
+Signal Integrity Analyzer (SignalIntegrityAnalyzer)
+- SiConfig: coupling_distance, miller_factor, noise_margin, timing_window
+- AggressorVictim: detailed pair analysis with timing window overlap
+- Miller factor-aware coupling: Cc_eff = Cc x (1 +/- Miller)
+- Transient coupling: timing-window overlap detection
+- SSN (Simultaneous Switching Noise): multi-aggressor superposition
+- Glitch propagation: width/amplitude through gate chains
+- SiResult: coupling pairs, SSN events, glitch paths,
+  noise margin violations
+
+
+STAGE 20 — Thermal Analysis (timing/)
+================================================================================
+
+Thermal Analyzer (ThermalAnalyzer)
+- ThermalMaterial: silicon, copper, oxide, ILD, package, TIM —
+  conductivity, specific_heat, density
+- ThermalCell: power density, temperature per cell
+- PackageThermalModel: theta_ja, theta_jc, theta_jb, t_ambient,
+  airflow, heatsink_r
+- DvfsConfig / DvfsState: DVFS states with voltage/frequency/power
+- ThermalSensor: location, threshold, hysteresis
+- ThermalConfig: grid resolution, max iterations, convergence,
+  materials, package model
+- Hotspot: location, temperature, severity
+- ThermalResult: max/avg/min temperature, hotspots,
+  DVFS recommendations, power map, thermal map
+
+
+STAGE 21 — Electromigration (timing/)
+================================================================================
+
+EM Analyzer (EmAnalyzer)
+- EmLayerRule: max current density (DC/RMS/peak), min_width,
+  temperature derating
+- EmConfig: technology rules per layer, temperature, lifetime_years,
+  confidence_level
+- EmViolation::Type: DC_DENSITY, RMS_DENSITY, PEAK_DENSITY,
+  VIA_CURRENT, LIFETIME
+- EmViolation::Severity: ERROR, WARNING, INFO
+- EmWireSizing: recommended width/via fixes
+- EmResult: violations, worst current density, lifetime estimate,
+  wire sizing recommendations
+
+
+STAGE 22 — Noise Analysis (timing/)
+================================================================================
+
+Noise Analyzer (NoiseAnalyzer)
+- NoiseConfig: frequency range, coupling model, power supply noise,
+  substrate coupling
+- SsnResult: peak noise, affected nets, timing impact
+- FreqPoint: frequency-domain noise spectrum
+- NoiseResult::NetNoise: per-net peak noise, coupling sources,
+  noise margin
+- Supply noise, substrate coupling, and signal noise analysis
+
+
+STAGE 23 — DRC (verify/, 3,290 LOC)
+================================================================================
+
+DRC Engine (DrcEngine)
+- 26 DrcRule::Type values: WIDTH, SPACING, ENCLOSURE, OVERLAP, AREA,
+  DENSITY, ANTENNA, VIA_SPACING, METAL_FILL, WIDE_WIRE_SPACING,
+  END_OF_LINE_SPACING, PARALLEL_RUN_LENGTH_SPACING, etc.
+- External Rule Decks (Phase 8): load_rules_from_file() —
+  JSON loader with lightweight tokenizer
+- write_rules_to_file(): export rules to JSON (round-tripping)
+- Supports // and /* */ comments in JSON
+
+Advanced DRC (Phase 38):
+- EM-aware width rules: current density-based minimum width
+- Multi-patterning color assignment checks
+- Stress voiding detection
+- ESD spacing rules
+- Guard ring latchup detection
+- Reliability-driven minimum width (lifetime-aware)
+- Temperature-dependent spacing rules
+
+
+STAGE 24 — LVS (verify/)
+================================================================================
+
+LVS Engine — Layout vs. Schematic comparison
+- Net-by-net connectivity verification
+- Device parameter checking
+
+
+STAGE 25 — Additional Verification (verify/)
+================================================================================
+
+CDC Analyzer — Clock Domain Crossing detection
+Antenna Checker — Antenna ratio verification
+OPC Engine — Optical Proximity Correction
+Reliability Checker — Long-term reliability analysis
+
+
+STAGE 26 — Simulation (sim/, 330 LOC)
+================================================================================
+
+Event Simulator (EventSimulator)
+- TestVector: stimulus patterns
+- SimTrace: signal-level waveform capture
+- Event-driven 4-value simulation (0, 1, X, Z via Logic4)
+
+
+STAGE 27 — Lint (lint/, 848 LOC)
+================================================================================
+
+Lint Engine (LintEngine)
+- 30+ rules across 8 LintCategory types:
+  CONNECTIVITY, CLOCK, TIMING, NAMING, STRUCTURE, REDUNDANCY, POWER, DFT
+- LintViolation::Severity: INFO, WARNING, ERROR
+- LintConfig: per-category enable/disable, configurable thresholds
+- LintSummary: aggregation by rule and category
+
+
+STAGE 28 — HLS (hls/, 756 LOC)
+================================================================================
+
+C Parser (CParser)
+- Recursive descent parser: if/else, for/while loops
+- Expression parser: all arithmetic + comparison + shift + bitwise ops
+- HlsOp: 20+ operations (ADD, SUB, MUL, DIV, MOD, AND, OR, XOR,
+  SHL, SHR, CMP_*, etc.)
+- DfgNode: Data Flow Graph nodes
+- CfgBlock: Control Flow Graph blocks
+
+HLS Scheduler (HlsScheduler)
+- ScheduleAlgo: ASAP, ALAP, LIST (resource-constrained), FORCE_DIRECTED
+- Mobility-based scheduling
+
+HLS Resource Allocator (HlsResourceAllocator)
+- Algorithm: Left-edge binding
+
+HLS Pipeliner (HlsPipeliner)
+- Pipeline stage generation with register insertion
+
+HLS Synthesizer (HlsSynthesizer)
+- HlsResult: area, latency, throughput, pipeline stages, resources,
+  II (initiation interval)
+
+
+STAGE 29 — Memory Compiler (macro/, 846 LOC)
+================================================================================
+
+Memory Compiler (MemoryCompiler)
+- MemoryConfig::Type: SRAM_1P, SRAM_2P, REGISTER_FILE, ROM
+- Column multiplexing: 1x/2x/4x/8x with timing impact
+- Banking: up to N banks with independent enables (5% routing overhead)
+- ECC SECDED: Hamming code calculation (~15% area overhead)
+- ProcessCorner: TT, FF, SS, SF, FS with temperature + voltage scaling
+- Redundancy: spare rows and columns
+- Power management: power gating, retention mode
+- MBIST wrapper generation
+- MemoryTiming: tCKH, tCKL, tAS, tAH, tDS, tDH, tWES, tWEH, tCD, tOE
+- Multi-port Verilog for SRAM_2P
+- MemoryResult: area, timing, power, Verilog output, characterization report
+
+
+STAGE 30 — ML Optimization (ml/, 1,230 LOC)
+================================================================================
+
+Multi-Layer Perceptron (MLP)
+- Activation: RELU, SIGMOID, TANH, LINEAR
+- DenseLayer: weights, biases, activation, input/output size
+- MlpConfig: layer_sizes, learning_rate, epochs, batch_size
+- TrainResult: final_loss, epochs, convergence
+
+Gaussian Process (GaussianProcess)
+- GpConfig: length_scale, sigma_f, sigma_n (noise)
+- Prediction: mean + variance (uncertainty quantification)
+- RBF kernel: k(x,x') = sigma^2 x exp(-||x-x'||^2 / 2l^2)
+
+Bayesian Optimizer (BayesianOptimizer)
+- BayesOptConfig: max_iterations, exploration_weight (UCB), bounds
+- BayesOptResult: best_params, best_value, iterations, history
+- Upper Confidence Bound (UCB) acquisition function
+- GP surrogate model → iterative parameter optimization
+
+
+STAGE 31 — Chip Assembly (pnr/)
+================================================================================
+
+Chip Assembler (ChipAssembler)
+- IoPad::Type: SIGNAL, POWER_VDD, POWER_VSS, ANALOG, NC
+- IoPad::Side: NORTH, SOUTH, EAST, WEST
+- ChipConfig: die_size, core_area, io_ring_width, seal_ring, pad_pitch
+- ChipResult: total_pads, signal/power/ground pads, bump_count,
+  seal_ring_area, area_mm2
+
+
+STAGE 32 — GDSII Export (pnr/)
+================================================================================
+
+GDSII Writer (GdsiiWriter)
+- Binary GDSII Stream format output
+- Cell hierarchy, boundary/path/sref records
+- Layer mapping from physical design
+
+
+STAGE 33 — TCL Shell (shell/, 1,602 LOC)
+================================================================================
+
+TCL Interpreter (TclInterp)
+- Arrays: set/get/names/size/exists/unset, $arr(key) substitution
+- List ops: lappend, lsort, lsearch, lrange, lreplace, lmap
+- String ops: join, split, append, concat, format, index, range,
+  first, last, repeat, replace, is, match, trimleft, trimright
+- Regex: regexp, regsub (std::regex)
+- Control: catch with error capture, switch, break/continue in loops
+- Namespace: eval, current, exists, global, upvar, unset
+- Procs: Proc struct with args + body
+
+SiliconForge Shell (SfShell)
+- 30+ commands: read_verilog, synthesize, place, route, sta, drc, lvs,
+  lec, simulate, power, cts, run_all, mcmm, ssta, ir_drop, pdn, si,
+  thermal, em, noise, post_route_opt, chip_assemble, adv_formal,
+  export_state, write_gds, quit
+
+
+STAGE 34 — Flow Engine (flow/, 2,265 LOC)
+================================================================================
+
+SiliconForge Engine (SiliconForge class)
+- Orchestrates entire RTL-to-GDSII flow
+- 24+ run_*() methods for each analysis stage
+- write_full_json(): exports full design state (26 sections) for Web UI
+- reset(): full state cleanup
+- Stores all intermediate results as member variables
+
+
+STAGE 35 — Web Studio UI (studio/, 1,858 LOC)
+================================================================================
+
+- Three.js r128 WebGL 3D rendering
+- 26 stage panels with visualizations
+- Isometric 3D chip view, stacked routing layers, surface heatmaps
+- Cell names visible on zoom (LOD text sprites)
+- Interactive orbit controls (drag/zoom/pan/touch)
+- Semiconductor-standard layer colors
+  (M1=blue, M2=magenta, M3=green, M4=gold)
+- Dark glassmorphism theme, radial gauges, gradient charts
+- Embedded terminal console
+- Python HTTP bridge (app.py, 334 LOC) via PTY to C++ engine
+
+
+================================================================================
+TEST INFRASTRUCTURE
+================================================================================
+
+Phase  | Tests | Focus
+-------|-------|----------------------------------------------
+1-14   | 116   | Core flow (netlist, AIG, synth, place, route,
+       |       | STA, DRC, LEC, sim, formal, DFT, power)
+15     | 14    | STA OCV/AOCV
+16     | 13    | MCMM arbitrary corners
+17     | 18    | DRC external rule decks
+18     | 15    | PnR industrial
+19     | 10    | E2E integration
+20     | 18    | STA industrial (CPPR/POCV/PBA/xtalk)
+21     | 18    | Post-route optimizer industrial
+22     | —     | Placer industrial
+23     | —     | Retiming industrial
+24     | 18    | MCMM industrial
+25     | 18    | Router industrial
+26     | 24    | Lint engine
+27     | 32    | TCL shell
+28     | 19    | HLS
+29     | 26    | JTAG/BIST
+30     | 21    | Memory compiler
+35     | 22    | IR drop
+36     | 18    | PDN
+37     | 20    | Signal integrity
+38     | 20    | DRC advanced
+39     | 22    | SSTA
+40     | —     | Chiplet/multi-die
+41     | —     | Thermal
+42     | —     | ML optimization
+43     | —     | Advanced CTS
+44     | —     | Advanced formal (IC3/CEGAR/LTL)
+
+ASAN Bug Fixes: 4 memory bugs found and fixed
+- sta.cpp heap-overflow in wire_delay()
+- c_parser.cpp use-after-free in parse_block()
+- cdcl_solver.cpp assumption backtrack handling
+- cts.cpp shield wire vector reallocation
+
+
+================================================================================
+ACADEMIC REFERENCES
+================================================================================
+
+- Leiserson & Saxe, "Retiming Synchronous Circuitry", Algorithmica 1991
+- Cong & Ding, FlowMap tech mapping, IEEE TCAD 1994
+- Mishchenko, DAG-aware AIG rewriting, DAC 2006
+- Kong, Timing-driven placement criticality, 2002
+- Devgan, Crosstalk delta-delay, ICCAD 1997
+- Blaauw et al., Statistical Timing Analysis, IEEE TCAD 2008
+- Huang et al., CPPR, DAC 2021
+- Synopsys POCV Application Note (LVF format)
+- Pan, Hold-time aware retiming, DAC 1999
+- Benini & De Micheli, Clock gating, 1998
+- Sirichotiyakul, Multi-Vt optimization, DAC 1999
+- Katti, Pak et al., TSV physics modeling, 2010-2011
+
+================================================================================
+END OF SUMMARY
+================================================================================
