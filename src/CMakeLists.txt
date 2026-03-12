@@ -37,6 +37,7 @@ add_library(siliconforge_lib STATIC
     formal/k_induction.cpp
     formal/lec.cpp
     formal/sva_engine.cpp
+    formal/advanced_formal.cpp
 
     # ── Simulation ────────────────────────────────────────────────────
     sim/simulator.cpp
@@ -81,6 +82,7 @@ add_library(siliconforge_lib STATIC
     timing/signal_integrity.cpp
     timing/electromigration.cpp
     timing/mcmm.cpp
+    timing/thermal.cpp
 
     # ── Physical Verification ─────────────────────────────────────────
     verify/drc.cpp
@@ -93,6 +95,7 @@ add_library(siliconforge_lib STATIC
     # ── ML Models ─────────────────────────────────────────────────────
     ml/congestion_model.cpp
     ml/timing_model.cpp
+    ml/ml_opt.cpp
 
     # ── Visualization ─────────────────────────────────────────────────
     viz/dashboard.cpp

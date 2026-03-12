@@ -61,8 +61,30 @@ int CdclSolver::add_clause_internal(std::vector<int> lits, bool learned) {
 
     auto& cl = clauses_[ci].lits;
     if (cl.size() >= 2) {
+        // Ensure watched literals are not already-false when possible.
+        // Move non-false literals to the first two positions so that the
+        // two-watched-literal scheme can fire correctly during propagation.
+        for (int w = 0; w < 2; w++) {
+            if (val(cl[w]) == LBool::FALSE) {
+                for (size_t j = w + 1; j < cl.size(); j++) {
+                    if (val(cl[j]) != LBool::FALSE) {
+                        std::swap(cl[w], cl[j]);
+                        break;
+                    }
+                }
+            }
+        }
         watches_[cl[0]].push_back(ci);
         watches_[cl[1]].push_back(ci);
+
+        // After reordering, check if clause is effectively unit or conflict
+        if (val(cl[0]) == LBool::FALSE) {
+            // All literals are false — conflict at current level
+            ok_ = false;
+        } else if (val(cl[1]) == LBool::FALSE && val(cl[0]) == LBool::UNDEF) {
+            // Only cl[0] is unassigned — clause is unit, propagate
+            assign_lit(cl[0], ci);
+        }
     } else if (cl.size() == 1) {
         if (val(cl[0]) == LBool::FALSE) {
             ok_ = false; // Conflict at level 0
@@ -244,17 +266,27 @@ SatResult CdclSolver::solve(const std::vector<CnfLit>& assumptions) {
         if (confl >= 0) return SatResult::UNSAT;
     }
 
-    // Apply assumptions
+    // Apply assumptions as decisions at the earliest decision levels.
+    // Track the assumption boundary so we can detect when conflict analysis
+    // forces backtracking past it (MiniSat-style assumption handling).
+    int assumption_level = decision_level(); // level before assumptions (usually 0)
     for (auto lit : assumptions) {
         int il = to_ilit(lit);
-        if (val(il) == LBool::FALSE) return SatResult::UNSAT;
+        if (val(il) == LBool::FALSE) {
+            backtrack(assumption_level);
+            return SatResult::UNSAT;
+        }
         if (val(il) == LBool::UNDEF) {
             trail_lim_.push_back((int)trail_.size());
             assign_lit(il, -1);
             int confl = propagate();
-            if (confl >= 0) return SatResult::UNSAT;
+            if (confl >= 0) {
+                backtrack(assumption_level);
+                return SatResult::UNSAT;
+            }
         }
     }
+    int search_root = decision_level(); // level after all assumptions applied
 
     int restart_limit = 100;
     int conflicts_since_restart = 0;
@@ -264,11 +296,24 @@ SatResult CdclSolver::solve(const std::vector<CnfLit>& assumptions) {
         if (confl >= 0) {
             stats_.conflicts++;
             conflicts_since_restart++;
-            if (decision_level() == 0) return SatResult::UNSAT;
+            if (decision_level() <= assumption_level) {
+                backtrack(assumption_level);
+                return SatResult::UNSAT;
+            }
 
             std::vector<int> learnt;
             int bt_level;
             analyze(confl, learnt, bt_level);
+
+            // If conflict analysis requires backtracking into or below
+            // assumption levels, the formula is UNSAT under these assumptions.
+            if (bt_level < search_root) {
+                backtrack(assumption_level);
+                // Still add the learned clause — it's a valid consequence
+                add_clause_internal(std::move(learnt), true);
+                return SatResult::UNSAT;
+            }
+
             backtrack(bt_level);
             int ci = add_clause_internal(std::move(learnt), true);
             if (ci >= 0 && clauses_[ci].lits.size() == 1) {
@@ -278,10 +323,10 @@ SatResult CdclSolver::solve(const std::vector<CnfLit>& assumptions) {
             }
             decay_activity();
 
-            // Restart check
+            // Restart check — don't backtrack past assumption levels
             if (conflicts_since_restart >= restart_limit) {
                 stats_.restarts++;
-                backtrack(0);
+                backtrack(search_root);
                 conflicts_since_restart = 0;
                 restart_limit = (int)(restart_limit * 1.5);
             }

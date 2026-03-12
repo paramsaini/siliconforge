@@ -574,4 +574,478 @@ void CtsEngine::generate_multi_cts_report(MultiCtsResult& result,
     result.report = os.str();
 }
 
+// ===========================================================================
+//  Phase 43: H-tree Topology
+// ===========================================================================
+
+int CtsEngine::htree_branch(const Point& center, double span_x, double span_y,
+                             int level, int max_levels, bool horizontal,
+                             const std::vector<int>& nearby_sinks) {
+    TreeNode node;
+    node.position = center;
+    int id = (int)tree_.size();
+    tree_.push_back(node);
+
+    if (level >= max_levels || nearby_sinks.size() <= 1) {
+        // Leaf of H-tree — connect to nearest sink if any
+        if (!nearby_sinks.empty()) {
+            tree_[id].cell_id = nearby_sinks[0]; // link to sink
+        }
+        return id;
+    }
+
+    // Split sinks into two halves based on branching direction
+    std::vector<int> left_sinks, right_sinks;
+    for (int sid : nearby_sinks) {
+        if (horizontal) {
+            if (tree_[sid].position.x < center.x) left_sinks.push_back(sid);
+            else right_sinks.push_back(sid);
+        } else {
+            if (tree_[sid].position.y < center.y) left_sinks.push_back(sid);
+            else right_sinks.push_back(sid);
+        }
+    }
+    // Ensure at least one sink per branch if we have sinks
+    if (left_sinks.empty() && !right_sinks.empty()) {
+        left_sinks.push_back(right_sinks.back());
+        right_sinks.pop_back();
+    } else if (right_sinks.empty() && !left_sinks.empty()) {
+        right_sinks.push_back(left_sinks.back());
+        left_sinks.pop_back();
+    }
+
+    double half_x = span_x / 2;
+    double half_y = span_y / 2;
+    Point left_center, right_center;
+
+    if (horizontal) {
+        left_center  = Point(center.x - half_x, center.y);
+        right_center = Point(center.x + half_x, center.y);
+    } else {
+        left_center  = Point(center.x, center.y - half_y);
+        right_center = Point(center.x, center.y + half_y);
+    }
+
+    int left_id  = htree_branch(left_center, half_x, half_y, level + 1,
+                                 max_levels, !horizontal, left_sinks);
+    int right_id = htree_branch(right_center, half_x, half_y, level + 1,
+                                 max_levels, !horizontal, right_sinks);
+
+    tree_[id].left = left_id;
+    tree_[id].right = right_id;
+    return id;
+}
+
+CtsResult CtsEngine::build_htree(const Point& source,
+                                  const std::vector<int>& sink_cells,
+                                  const HtreeConfig& cfg) {
+    auto t0 = std::chrono::high_resolution_clock::now();
+    CtsResult result;
+
+    if (sink_cells.empty()) {
+        result.message = "No sinks for H-tree";
+        return result;
+    }
+
+    tree_.clear();
+    clock_wire_count_ = 0;
+
+    // Create leaf nodes for sinks
+    std::vector<int> sink_nodes;
+    for (int cid : sink_cells) {
+        TreeNode node;
+        if (cid >= 0 && cid < (int)pd_.cells.size()) {
+            node.position = Point(
+                pd_.cells[cid].position.x + pd_.cells[cid].width / 2,
+                pd_.cells[cid].position.y + pd_.cells[cid].height / 2
+            );
+        }
+        node.cell_id = cid;
+        int id = (int)tree_.size();
+        tree_.push_back(node);
+        sink_nodes.push_back(id);
+    }
+
+    // Compute bounding box of sinks
+    double xmin = 1e18, xmax = -1e18, ymin = 1e18, ymax = -1e18;
+    for (int sid : sink_nodes) {
+        xmin = std::min(xmin, tree_[sid].position.x);
+        xmax = std::max(xmax, tree_[sid].position.x);
+        ymin = std::min(ymin, tree_[sid].position.y);
+        ymax = std::max(ymax, tree_[sid].position.y);
+    }
+
+    double span_x = (xmax - xmin) / 2;
+    double span_y = (ymax - ymin) / 2;
+    Point center((xmin + xmax) / 2, (ymin + ymax) / 2);
+
+    // Build H-tree recursively with alternating X/Y branching
+    int root = htree_branch(center, span_x, span_y, 0, cfg.levels,
+                            cfg.alternate_xy, sink_nodes);
+
+    // Place root at source
+    tree_[root].position = source;
+
+    // Create wire segments
+    std::function<void(int)> create_wires = [&](int node) {
+        auto& n = tree_[node];
+        if (n.left >= 0) {
+            pd_.wires.push_back({0, n.position, tree_[n.left].position, cfg.wire_width_um});
+            clock_wire_count_++;
+            create_wires(n.left);
+        }
+        if (n.right >= 0) {
+            pd_.wires.push_back({0, n.position, tree_[n.right].position, cfg.wire_width_um});
+            clock_wire_count_++;
+            create_wires(n.right);
+        }
+    };
+    create_wires(root);
+
+    // Insert buffers at branch points
+    init_buffer_library();
+    int buffers = 0;
+    for (size_t i = sink_nodes.size(); i < tree_.size(); ++i) {
+        if ((int)i != root && tree_[i].left >= 0) {
+            double subtree_cap = compute_subtree_cap((int)i);
+            auto buf = select_buffer(subtree_cap, 0);
+            pd_.add_cell("htree_buf_" + std::to_string(i), buf.name, buf.area, pd_.row_height);
+            pd_.cells.back().position = tree_[i].position;
+            pd_.cells.back().placed = true;
+            buffers++;
+        }
+    }
+
+    // Compute metrics
+    double total_wl = 0, max_delay = 0, min_delay = 1e18;
+    for (auto sid : sink_nodes) {
+        double d = tree_[sid].position.dist(source);
+        total_wl += d;
+        double delay = d * 0.001;
+        max_delay = std::max(max_delay, delay);
+        min_delay = std::min(min_delay, delay);
+    }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    result.skew = max_delay - min_delay;
+    result.wirelength = total_wl;
+    result.buffers_inserted = buffers;
+    result.max_latency_ps = max_delay;
+    result.min_latency_ps = min_delay;
+    result.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    result.message = "H-tree (" + std::to_string(cfg.levels) + " levels) — skew: " +
+                     std::to_string(result.skew) + "ps, " +
+                     std::to_string(buffers) + " buffers";
+    return result;
+}
+
+// ===========================================================================
+//  Phase 43: Clock Shielding
+// ===========================================================================
+
+int CtsEngine::apply_clock_shielding(const ClkShieldConfig& cfg) {
+    int shields_added = 0;
+
+    // Shield all clock wires in the tree
+    size_t wire_start = pd_.wires.size();
+    // We shield the wires that were added during CTS (tracked by clock_wire_count_)
+    // For safety, iterate all wires and shield the recent clock ones
+    if (clock_wire_count_ <= 0) return 0;
+
+    size_t first_clock_wire = pd_.wires.size() - std::min((size_t)clock_wire_count_, pd_.wires.size());
+
+    // Collect shield wires separately to avoid invalidating references during iteration
+    std::vector<WireSegment> shield_wires;
+    for (size_t wi = first_clock_wire; wi < wire_start; ++wi) {
+        auto& w = pd_.wires[wi];
+        // Add VDD shield wire (parallel, offset by spacing+width)
+        if (cfg.shield_vdd) {
+            double offset = cfg.shield_spacing_um + cfg.shield_width_um / 2;
+            Point s0(w.start.x, w.start.y + offset);
+            Point s1(w.end.x, w.end.y + offset);
+            shield_wires.push_back({0, s0, s1, cfg.shield_width_um});
+            shields_added++;
+        }
+        // Add GND shield wire (opposite side)
+        if (cfg.shield_gnd) {
+            double offset = -(cfg.shield_spacing_um + cfg.shield_width_um / 2);
+            Point s0(w.start.x, w.start.y + offset);
+            Point s1(w.end.x, w.end.y + offset);
+            shield_wires.push_back({0, s0, s1, cfg.shield_width_um});
+            shields_added++;
+        }
+    }
+    for (auto& sw : shield_wires) pd_.wires.push_back(std::move(sw));
+
+    // Mark tree nodes as shielded
+    for (auto& n : tree_) n.shielded = true;
+
+    return shields_added;
+}
+
+double CtsEngine::coupling_reduction_factor(const ClkShieldConfig& cfg) const {
+    // Shielding reduces coupling capacitance significantly
+    if (cfg.coupling_cap_ff_per_um <= 0) return 1.0;
+    return cfg.shielded_cap_ff_per_um / cfg.coupling_cap_ff_per_um;
+}
+
+// ===========================================================================
+//  Phase 43: Slew-Driven Optimization
+// ===========================================================================
+
+double CtsEngine::propagate_slew(int node, const SlewConfig& cfg) {
+    if (node < 0 || node >= (int)tree_.size()) return 0;
+    auto& n = tree_[node];
+
+    if (n.left < 0 && n.right < 0) {
+        // Leaf: slew from buffer output (assume ideal)
+        n.slew = 20.0; // 20ps ideal buffer output slew
+        return n.slew;
+    }
+
+    double worst_child_slew = 0;
+    if (n.left >= 0) {
+        double child_slew = propagate_slew(n.left, cfg);
+        double wl = n.position.dist(tree_[n.left].position);
+        worst_child_slew = std::max(worst_child_slew,
+                                     child_slew + wl * cfg.slew_per_wire_ps_per_um);
+    }
+    if (n.right >= 0) {
+        double child_slew = propagate_slew(n.right, cfg);
+        double wl = n.position.dist(tree_[n.right].position);
+        worst_child_slew = std::max(worst_child_slew,
+                                     child_slew + wl * cfg.slew_per_wire_ps_per_um);
+    }
+
+    // Add load-dependent slew degradation
+    double subtree_cap = compute_subtree_cap(node);
+    n.slew = worst_child_slew + subtree_cap * cfg.slew_per_load_ps_per_ff;
+    return n.slew;
+}
+
+double CtsEngine::compute_slew_at_node(int node, const SlewConfig& cfg) const {
+    if (node < 0 || node >= (int)tree_.size()) return 0;
+    return tree_[node].slew;
+}
+
+CtsResult CtsEngine::build_slew_driven_tree(const Point& source,
+                                              const std::vector<int>& sink_cells,
+                                              const SlewConfig& cfg) {
+    auto t0 = std::chrono::high_resolution_clock::now();
+
+    // Step 1: Build base DME tree
+    CtsResult result = build_clock_tree(source, sink_cells);
+    if (sink_cells.empty()) return result;
+
+    init_buffer_library();
+
+    // Step 2: Bottom-up slew propagation
+    int root = tree_.empty() ? -1 : (int)tree_.size() - 1;
+    if (root >= 0) propagate_slew(root, cfg);
+
+    // Step 3: Insert additional buffers where slew exceeds max
+    int extra_bufs = 0;
+    for (size_t i = 0; i < tree_.size(); ++i) {
+        if (tree_[i].slew > cfg.max_slew_ps && tree_[i].left >= 0) {
+            // Need stronger buffer or additional buffer stage
+            double load = compute_subtree_cap((int)i);
+            // Try strongest buffer first
+            auto buf = buf_lib_.back();
+            double new_transition = 0.69 * buf.drive_strength * load * 1e-3;
+            if (new_transition < cfg.max_slew_ps) {
+                pd_.add_cell("slew_buf_" + std::to_string(i), buf.name,
+                             buf.area, pd_.row_height);
+                pd_.cells.back().position = tree_[i].position;
+                pd_.cells.back().placed = true;
+                tree_[i].slew = new_transition;
+                extra_bufs++;
+            }
+        }
+    }
+
+    // Step 4: Re-propagate slew after buffer insertion
+    if (root >= 0) propagate_slew(root, cfg);
+
+    // Compute worst slew
+    double worst_slew = 0;
+    for (const auto& n : tree_) worst_slew = std::max(worst_slew, n.slew);
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    result.buffers_inserted += extra_bufs;
+    result.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    result.message = "Slew-driven tree — skew: " + std::to_string(result.skew) +
+                     "ps, worst_slew: " + std::to_string(worst_slew) +
+                     "ps, " + std::to_string(result.buffers_inserted) + " buffers";
+    return result;
+}
+
+// ===========================================================================
+//  Phase 43: Incremental ECO CTS
+// ===========================================================================
+
+int CtsEngine::find_nearest_tree_node(const Point& p, bool internal_only) const {
+    int best = -1;
+    double best_dist = 1e18;
+    for (int i = 0; i < (int)tree_.size(); i++) {
+        if (internal_only && tree_[i].cell_id >= 0) continue; // skip leaves
+        double d = tree_[i].position.dist(p);
+        if (d < best_dist) {
+            best_dist = d;
+            best = i;
+        }
+    }
+    return best;
+}
+
+EcoCtsResult CtsEngine::apply_eco(const EcoCtsRequest& req, const CtsConfig& cts_cfg) {
+    EcoCtsResult result;
+
+    // Find the domain
+    const ClockDomain* domain = nullptr;
+    for (const auto& d : cts_cfg.domains) {
+        if (d.name == req.domain_name) { domain = &d; break; }
+    }
+    if (!domain) {
+        result.message = "ECO: domain '" + req.domain_name + "' not found";
+        return result;
+    }
+
+    init_buffer_library();
+
+    // Record skew before ECO
+    double max_d = 0, min_d = 1e18;
+    for (const auto& n : tree_) {
+        if (n.cell_id >= 0) {
+            double d = n.position.dist(domain->source) * 0.001;
+            max_d = std::max(max_d, d);
+            min_d = std::min(min_d, d);
+        }
+    }
+    result.skew_before = (max_d > min_d) ? max_d - min_d : 0;
+
+    // Remove sinks
+    for (int cid : req.remove_sinks) {
+        for (auto& n : tree_) {
+            if (n.cell_id == cid) {
+                n.cell_id = -2; // mark as removed
+                result.sinks_removed++;
+                break;
+            }
+        }
+    }
+
+    // Add sinks — attach each to nearest internal node
+    for (int cid : req.add_sinks) {
+        if (cid < 0 || cid >= (int)pd_.cells.size()) continue;
+
+        TreeNode leaf;
+        leaf.position = Point(
+            pd_.cells[cid].position.x + pd_.cells[cid].width / 2,
+            pd_.cells[cid].position.y + pd_.cells[cid].height / 2
+        );
+        leaf.cell_id = cid;
+        int leaf_id = (int)tree_.size();
+        tree_.push_back(leaf);
+
+        // Find nearest internal/branch node
+        int nearest = find_nearest_tree_node(leaf.position, true);
+        if (nearest >= 0) {
+            // Create a new Steiner point to splice in
+            TreeNode steiner;
+            steiner.position = Point(
+                (tree_[nearest].position.x + leaf.position.x) / 2,
+                (tree_[nearest].position.y + leaf.position.y) / 2
+            );
+            steiner.left = leaf_id;
+
+            // Steal one child from nearest
+            if (tree_[nearest].right >= 0) {
+                steiner.right = tree_[nearest].right;
+                tree_[nearest].right = (int)tree_.size();
+            } else if (tree_[nearest].left >= 0) {
+                steiner.right = tree_[nearest].left;
+                tree_[nearest].left = (int)tree_.size();
+            } else {
+                tree_[nearest].left = leaf_id;
+                result.sinks_added++;
+                continue;
+            }
+            tree_.push_back(steiner);
+
+            // Insert buffer at new splice point
+            auto buf = select_buffer(5.0, leaf.position.dist(tree_[nearest].position));
+            pd_.add_cell("eco_buf_" + std::to_string(leaf_id), buf.name,
+                         buf.area, pd_.row_height);
+            pd_.cells.back().position = steiner.position;
+            pd_.cells.back().placed = true;
+            result.buffers_added++;
+
+            // Add wire
+            pd_.wires.push_back({0, steiner.position, leaf.position, 0.1});
+        }
+        result.sinks_added++;
+    }
+
+    // Recompute skew after ECO
+    max_d = 0; min_d = 1e18;
+    for (const auto& n : tree_) {
+        if (n.cell_id >= 0) { // skip removed (-2) and internal (-1)
+            double d = n.position.dist(domain->source) * 0.001;
+            max_d = std::max(max_d, d);
+            min_d = std::min(min_d, d);
+        }
+    }
+    result.skew_after = (max_d > min_d) ? max_d - min_d : 0;
+
+    result.message = "ECO: +" + std::to_string(result.sinks_added) +
+                     " -" + std::to_string(result.sinks_removed) +
+                     " sinks, skew " + std::to_string(result.skew_before) +
+                     " → " + std::to_string(result.skew_after) + "ps";
+    return result;
+}
+
+// ===========================================================================
+//  Phase 43: Derived/Generated Clocks
+// ===========================================================================
+
+DerivedClockResult CtsEngine::build_derived_clock(const ClockDomain& derived,
+                                                    const ClockDomain& parent) {
+    DerivedClockResult result;
+    result.name = derived.name;
+
+    // Compute effective period from division ratio
+    result.effective_period_ps = parent.period_ps * derived.divide_by;
+
+    // Cumulative jitter: parent uncertainty + derived uncertainty
+    // Jitter adds in RSS (root-sum-square)
+    result.cumulative_uncertainty_ps = std::sqrt(
+        parent.uncertainty_ps * parent.uncertainty_ps +
+        derived.uncertainty_ps * derived.uncertainty_ps
+    );
+
+    // Phase shift for divided clocks (half-cycle of parent per division)
+    if (derived.divide_by > 1) {
+        result.phase_shift_ps = parent.period_ps / 2.0;
+    }
+
+    // Insert clock divider cell at parent source location
+    if (derived.divide_by > 1) {
+        std::string div_name = "clkdiv_" + derived.name + "_div" +
+                               std::to_string(derived.divide_by);
+        pd_.add_cell(div_name, "CLKDIV", 4.0, pd_.row_height);
+        pd_.cells.back().position = parent.source;
+        pd_.cells.back().placed = true;
+        result.divider_cells_inserted = 1;
+    }
+
+    // Build CTS for the derived domain's sinks
+    result.tree_result = build_clock_tree(derived.source, derived.sink_cells);
+    result.tree_result.message = "Derived clock '" + derived.name +
+                                  "' (÷" + std::to_string(derived.divide_by) +
+                                  " from " + parent.name + "): " +
+                                  result.tree_result.message;
+
+    return result;
+}
+
 } // namespace sf

@@ -1,1 +1,0 @@
-/usr/bin/c++ -w -O3 -DNDEBUG CMakeFiles/siliconforge.dir/main.cpp.o -o siliconforge  libsiliconforge_lib.a 
