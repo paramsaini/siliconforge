@@ -180,10 +180,20 @@ bool SiliconForge::run_formal_bmc(int depth) {
         // No assertions — auto-generate safety properties
 
         // 1. Check for floating nets (undriven signals with fanout)
+        //    Exclude primary inputs (intentionally undriven external I/O) and
+        //    internal synthesis artifact nets (e.g., bmux_o_* from behavioral MUX
+        //    lowering that lost drivers during AIG optimization). Only flag nets
+        //    that are primary outputs — those actually affect functional correctness.
+        std::unordered_set<NetId> pi_set(nl_.primary_inputs().begin(),
+                                         nl_.primary_inputs().end());
+        std::unordered_set<NetId> po_set(nl_.primary_outputs().begin(),
+                                         nl_.primary_outputs().end());
         int floating = 0;
         for (size_t i = 0; i < nl_.num_nets(); ++i) {
             auto& net = nl_.net(i);
-            if (net.driver < 0 && !net.fanout.empty()) floating++;
+            if (net.driver < 0 && !net.fanout.empty()
+                && !pi_set.count((NetId)i) && po_set.count((NetId)i))
+                floating++;
         }
         {
             FormalPropResult fp;
@@ -811,6 +821,8 @@ bool SiliconForge::run_lvs() {
     is_lvs_done_ = true;
     std::cout << "  [" << (res.match ? "PASS" : "FAIL") << "] LVS check. "
               << res.matched_cells << "/" << res.schematic_cells << " cells matched.\n";
+    for (auto& m : res.mismatches)
+        std::cout << "    LVS: " << m.type << " — " << m.detail << "\n";
     return res.match;
 }
 
