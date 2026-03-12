@@ -241,6 +241,13 @@ body{
   position:relative;
 }
 .viz canvas{display:block;width:100%;}
+.scene-3d{width:100%;height:500px;border-radius:var(--radius-sm);overflow:hidden;border:1px solid var(--border);position:relative;cursor:grab;background:#06080f;}
+.scene-3d:active{cursor:grabbing;}
+.scene-3d canvas{display:block;}
+.layer-legend{position:absolute;top:10px;right:10px;background:rgba(6,8,15,0.85);backdrop-filter:blur(8px);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:11px;z-index:10;}
+.layer-legend-item{display:flex;align-items:center;gap:7px;margin:4px 0;color:var(--text-secondary);}
+.layer-legend-item .swatch{width:14px;height:6px;border-radius:2px;}
+.scene-hint{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);font-size:10px;color:var(--text-muted);pointer-events:none;opacity:0.5;background:rgba(6,8,15,0.6);padding:2px 10px;border-radius:10px;}
 
 /* ─── TERMINAL ─── */
 .terminal{
@@ -309,6 +316,7 @@ body{
   </div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 /* ═══════════════════════════════════════════════════════
    STATE & CONFIG
@@ -317,6 +325,8 @@ let S = {};
 let curStage = 'dashboard';
 let designFile = 'test_design.v';
 const DPR = window.devicePixelRatio || 1;
+let _3dScenes = [];
+function cleanup3D(){for(const s of _3dScenes){if(s.animId)cancelAnimationFrame(s.animId);if(s.renderer){s.renderer.dispose();s.renderer.forceContextLoss();}}_3dScenes=[];}
 
 const GROUPS = [
   {name:'Overview', items:[{id:'dashboard',label:'Dashboard'}]},
@@ -453,6 +463,7 @@ function hiDpiCanvas(canvas,w,h){
    RENDER DISPATCH
    ═══════════════════════════════════════════════════════ */
 function render(){
+  cleanup3D();
   const el=document.getElementById('stage-view');
   const fn=R[curStage];
   if(fn){el.innerHTML='';fn(el);}
@@ -496,7 +507,10 @@ R.dashboard=function(el){
 
   // 3D chip overview
   if(ph.cells&&ph.cells.length){
-    h+='<div class="card"><div class="card-title">Chip Overview — Isometric</div>'+mkCanvas('c-iso',700,450)+'</div>';
+    h+='<div class="card"><div class="card-title">Chip Overview — 3D Interactive</div>';
+    h+='<div class="scene-3d" id="dash-3d" style="height:400px">';
+    h+='<div class="scene-hint">Drag to rotate • Scroll to zoom</div>';
+    h+='</div></div>';
   }
   el.innerHTML=h;
 
@@ -505,8 +519,8 @@ R.dashboard=function(el){
     drawGauge('g-progress',done/all.length,['#38bdf8','#818cf8']);
     drawGauge('g-yield',yield_v/100,['#34d399','#38bdf8']);
     drawGauge('g-drc',drc_v===0?1:Math.max(0,1-drc_v/50),drc_v===0?['#34d399','#38bdf8']:['#f87171','#fbbf24']);
-    if(ph.cells&&ph.cells.length)drawIsoChip(document.getElementById('c-iso'),ph);
-  },10);
+    if(ph.cells&&ph.cells.length)build3DPlacement(document.getElementById('dash-3d'),ph);
+  },30);
 };
 
 // ── RTL ──
@@ -597,8 +611,12 @@ R.placement=function(el){
   h+=mc('Cells',ph.num_cells||0)+mc('Utilization',((ph.utilization||0)*100).toFixed(1)+'%');
   h+='</div></div>';
   if(ph.cells&&ph.cells.length){
-    h+='<div class="card"><div class="card-title">3D Cell View</div>'+mkCanvas('c-place',700,500)+'</div>';
-    el.innerHTML=h;setTimeout(()=>drawIsoChip(document.getElementById('c-place'),ph),10);
+    h+='<div class="card"><div class="card-title">3D Chip View — Interactive</div>';
+    h+='<div class="scene-3d" id="place-3d">';
+    h+='<div class="scene-hint">Drag to rotate • Scroll to zoom</div>';
+    h+='</div></div>';
+    el.innerHTML=h;
+    setTimeout(()=>build3DPlacement(document.getElementById('place-3d'),ph),30);
   }else el.innerHTML=h;
 };
 
@@ -621,8 +639,13 @@ R.routing=function(el){
   h+=mc('Wires',ph.num_wires||0)+mc('Vias',ph.num_vias||0)+mc('Layers',ph.num_layers||0)+mc('Wirelength',(ph.wirelength||0).toFixed(0));
   h+='</div></div>';
   if(ph.wires&&ph.wires.length){
-    h+='<div class="card"><div class="card-title">3D Layer View</div>'+mkCanvas('c-route',700,500)+'</div>';
-    el.innerHTML=h;setTimeout(()=>drawIsoRouting(document.getElementById('c-route'),ph),10);
+    h+='<div class="card"><div class="card-title">3D Metal Layer Stack — Interactive</div>';
+    h+='<div class="scene-3d" id="route-3d">';
+    h+='<div class="layer-legend" id="route-legend"></div>';
+    h+='<div class="scene-hint">Drag to rotate • Scroll to zoom</div>';
+    h+='</div></div>';
+    el.innerHTML=h;
+    setTimeout(()=>build3DRouting(document.getElementById('route-3d'),ph),30);
   }else el.innerHTML=h;
 };
 
@@ -1252,6 +1275,313 @@ function drawImpedance(canvas,pdn){
   ctx.strokeStyle='#38bdf8';ctx.lineWidth=2;ctx.shadowColor='rgba(56,189,248,0.3)';ctx.shadowBlur=6;ctx.beginPath();
   for(let i=0;i<pts.length;i++){const x=m.l+(i/(pts.length-1||1))*pw,y=m.t+(1-pts[i].impedance_mohm/maxZ)*ph;if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
   ctx.stroke();ctx.shadowBlur=0;
+}
+
+/* ═══════════════════════════════════════════════════════
+   THREE.JS 3D — PLACEMENT & ROUTING
+   ═══════════════════════════════════════════════════════ */
+const SEMI_LAYER_COLORS=[0x4169e1,0xc71585,0x228b22,0xdaa520,0xff6347,0x00ced1,0x9370db,0x20b2aa];
+const SEMI_LAYER_NAMES=['M1','M2','M3','M4','M5','M6','M7','M8'];
+const CELL_PALETTE=[0x38bdf8,0x34d399,0xa78bfa,0xf472b6,0xfbbf24,0x22d3ee,0x818cf8,0xf97316];
+
+function create3DScene(container,opts){
+  opts=opts||{};
+  const w=container.clientWidth||700, h=container.clientHeight||500;
+  const scene=new THREE.Scene();
+  scene.background=new THREE.Color(0x06080f);
+  scene.fog=new THREE.FogExp2(0x06080f,opts.fog||0.0015);
+
+  const camera=new THREE.PerspectiveCamera(40,w/h,0.1,10000);
+  const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});
+  renderer.setSize(w,h);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+  renderer.shadowMap.enabled=true;
+  renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+  container.insertBefore(renderer.domElement,container.firstChild);
+
+  // Lights
+  scene.add(new THREE.AmbientLight(0x404060,0.5));
+  const dir=new THREE.DirectionalLight(0xffffff,0.7);
+  dir.position.set(200,400,300);dir.castShadow=true;
+  dir.shadow.mapSize.width=1024;dir.shadow.mapSize.height=1024;
+  scene.add(dir);
+  const fill=new THREE.DirectionalLight(0x38bdf8,0.15);
+  fill.position.set(-200,100,-200);scene.add(fill);
+  const point=new THREE.PointLight(0x818cf8,0.2,800);
+  point.position.set(0,300,0);scene.add(point);
+
+  // Orbit controls (manual)
+  let drag=false,prev={x:0,y:0},btn=0;
+  let theta=opts.theta||Math.PI/4, phi=opts.phi||Math.PI/3.5;
+  let radius=opts.radius||300;
+  const center=new THREE.Vector3(opts.cx||0,opts.cy||0,opts.cz||0);
+
+  container.addEventListener('mousedown',e=>{drag=true;btn=e.button;prev={x:e.clientX,y:e.clientY};e.preventDefault();});
+  container.addEventListener('contextmenu',e=>e.preventDefault());
+  container.addEventListener('mousemove',e=>{
+    if(!drag)return;
+    const dx=e.clientX-prev.x, dy=e.clientY-prev.y;
+    if(btn===0){
+      theta-=dx*0.005; phi=Math.max(0.05,Math.min(Math.PI/2-0.05,phi-dy*0.005));
+    }else if(btn===2){
+      const panX=-dx*0.3, panZ=dy*0.3;
+      center.x+=panX*Math.cos(theta)+panZ*Math.sin(theta);
+      center.z+=panX*Math.sin(theta)-panZ*Math.cos(theta);
+    }
+    prev={x:e.clientX,y:e.clientY};
+  });
+  container.addEventListener('mouseup',()=>drag=false);
+  container.addEventListener('mouseleave',()=>drag=false);
+  container.addEventListener('wheel',e=>{e.preventDefault();radius*=1+e.deltaY*0.0012;radius=Math.max(30,Math.min(3000,radius));},{passive:false});
+
+  // Touch support
+  let touchDist=0;
+  container.addEventListener('touchstart',e=>{
+    if(e.touches.length===1){drag=true;prev={x:e.touches[0].clientX,y:e.touches[0].clientY};}
+    if(e.touches.length===2){touchDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);}
+  },{passive:true});
+  container.addEventListener('touchmove',e=>{
+    if(e.touches.length===1&&drag){
+      const dx=e.touches[0].clientX-prev.x, dy=e.touches[0].clientY-prev.y;
+      theta-=dx*0.005;phi=Math.max(0.05,Math.min(Math.PI/2-0.05,phi-dy*0.005));
+      prev={x:e.touches[0].clientX,y:e.touches[0].clientY};
+    }
+    if(e.touches.length===2){
+      const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+      radius*=touchDist/Math.max(d,1);radius=Math.max(30,Math.min(3000,radius));touchDist=d;
+    }
+  },{passive:true});
+  container.addEventListener('touchend',()=>drag=false);
+
+  const ctx={scene,camera,renderer,animId:null};
+  function animate(){
+    ctx.animId=requestAnimationFrame(animate);
+    camera.position.set(
+      center.x+radius*Math.sin(phi)*Math.cos(theta),
+      center.y+radius*Math.cos(phi),
+      center.z+radius*Math.sin(phi)*Math.sin(theta)
+    );
+    camera.lookAt(center);
+    renderer.render(scene,camera);
+  }
+  animate();
+  _3dScenes.push(ctx);
+
+  // Resize
+  const ro=new ResizeObserver(()=>{
+    const nw=container.clientWidth, nh=container.clientHeight;
+    if(nw>0&&nh>0){camera.aspect=nw/nh;camera.updateProjectionMatrix();renderer.setSize(nw,nh);}
+  });
+  ro.observe(container);
+
+  return ctx;
+}
+
+function build3DPlacement(container,ph){
+  if(!container||typeof THREE==='undefined')return;
+  const dw=(ph.die||{}).w||200, dh=(ph.die||{}).h||200;
+  const sc=200/Math.max(dw,dh);
+  const ox=-dw*sc/2, oz=-dh*sc/2;
+  const R=Math.max(dw,dh)*sc;
+
+  const ctx=create3DScene(container,{radius:R*1.4,phi:Math.PI/3.5,theta:Math.PI/4,fog:0.0008,cy:10});
+  const scene=ctx.scene;
+
+  // Die substrate slab
+  const dieGeo=new THREE.BoxGeometry(dw*sc,3,dh*sc);
+  const dieMat=new THREE.MeshPhongMaterial({color:0x0c1020,specular:0x222244,shininess:40});
+  const die=new THREE.Mesh(dieGeo,dieMat);
+  die.position.set(0,-1.5,0);die.receiveShadow=true;
+  scene.add(die);
+
+  // Substrate grid
+  const gridGeo=new THREE.PlaneGeometry(dw*sc,dh*sc);
+  const gridMat=new THREE.MeshBasicMaterial({color:0x1a2040,wireframe:true,transparent:true,opacity:0.15});
+  const grid=new THREE.Mesh(gridGeo,gridMat);
+  grid.rotation.x=-Math.PI/2;grid.position.y=0.05;
+  scene.add(grid);
+
+  // Fine grid lines
+  const gridHelper=new THREE.GridHelper(Math.max(dw,dh)*sc,Math.min(40,Math.max(10,Math.round(dw/5))),0x1e3a5f,0x0f1a3a);
+  gridHelper.position.y=0.1;
+  scene.add(gridHelper);
+
+  // Die edge glow
+  const edgeGeo=new THREE.EdgesGeometry(dieGeo);
+  const edgeMat=new THREE.LineBasicMaterial({color:0x38bdf8,transparent:true,opacity:0.3});
+  scene.add(new THREE.LineSegments(edgeGeo,edgeMat));
+
+  // Cells as 3D blocks with subtle height variation
+  const cells=ph.cells||[];
+  const instGeos={};
+  for(const c of cells){
+    const cw=Math.max((c.w||2)*sc,0.5);
+    const cd=Math.max((c.h||10)*sc,0.5);
+    const ch=2+Math.random()*3;
+    const ci=(c.layer||Math.floor(Math.random()*6))%CELL_PALETTE.length;
+    const color=CELL_PALETTE[ci];
+
+    const geo=new THREE.BoxGeometry(cw,ch,cd);
+    const mat=new THREE.MeshPhongMaterial({
+      color:color,transparent:true,opacity:0.72,
+      emissive:color,emissiveIntensity:0.12,
+      specular:0xffffff,shininess:60,
+    });
+    const mesh=new THREE.Mesh(geo,mat);
+    mesh.position.set(ox+c.x*sc+cw/2,ch/2,oz+c.y*sc+cd/2);
+    mesh.castShadow=true;
+    scene.add(mesh);
+
+    // Cell top glow line
+    const topEdge=new THREE.EdgesGeometry(geo);
+    const topMat=new THREE.LineBasicMaterial({color:color,transparent:true,opacity:0.25});
+    const topLine=new THREE.LineSegments(topEdge,topMat);
+    topLine.position.copy(mesh.position);
+    scene.add(topLine);
+  }
+
+  // Wires on top of cells (limited for perf)
+  const wires=(ph.wires||[]).slice(0,800);
+  for(const w of wires){
+    const l=w.layer||0;
+    const lc=SEMI_LAYER_COLORS[l%SEMI_LAYER_COLORS.length];
+    const y=6+(l)*4;
+    const x1=ox+w.x1*sc, z1=oz+w.y1*sc, x2=ox+w.x2*sc, z2=oz+w.y2*sc;
+    const len=Math.sqrt((x2-x1)**2+(z2-z1)**2);
+    if(len<0.01)continue;
+
+    const wGeo=new THREE.BoxGeometry(len,0.5,0.4);
+    const wMat=new THREE.MeshPhongMaterial({
+      color:lc,transparent:true,opacity:0.45,
+      emissive:lc,emissiveIntensity:0.15,
+    });
+    const wMesh=new THREE.Mesh(wGeo,wMat);
+    wMesh.position.set((x1+x2)/2,y,(z1+z2)/2);
+    wMesh.rotation.y=Math.atan2(z2-z1,x2-x1);
+    scene.add(wMesh);
+  }
+}
+
+function build3DRouting(container,ph){
+  if(!container||typeof THREE==='undefined')return;
+  const dw=(ph.die||{}).w||200, dh=(ph.die||{}).h||200;
+  const nLayers=Math.max(ph.num_layers||3,1);
+  const sc=200/Math.max(dw,dh);
+  const ox=-dw*sc/2, oz=-dh*sc/2;
+  const layerSpacing=18;
+  const R=Math.max(dw,dh)*sc;
+
+  const ctx=create3DScene(container,{
+    radius:R*2,phi:Math.PI/3,theta:Math.PI/5,fog:0.0006,
+    cy:nLayers*layerSpacing/2
+  });
+  const scene=ctx.scene;
+
+  // Build legend
+  const legend=document.getElementById('route-legend');
+  if(legend){
+    let lh='';
+    for(let l=0;l<nLayers;l++){
+      const c=SEMI_LAYER_COLORS[l%SEMI_LAYER_COLORS.length];
+      const hex='#'+c.toString(16).padStart(6,'0');
+      lh+='<div class="layer-legend-item"><span class="swatch" style="background:'+hex+'"></span>'+SEMI_LAYER_NAMES[l]+'</div>';
+    }
+    lh+='<div class="layer-legend-item"><span class="swatch" style="background:#fff"></span>Via</div>';
+    legend.innerHTML=lh;
+  }
+
+  // Substrate
+  const subGeo=new THREE.BoxGeometry(dw*sc,2,dh*sc);
+  const subMat=new THREE.MeshPhongMaterial({color:0x0a0e1a,specular:0x111133,shininess:30});
+  const sub=new THREE.Mesh(subGeo,subMat);
+  sub.position.set(0,-2,0);sub.receiveShadow=true;
+  scene.add(sub);
+
+  // Layer planes
+  for(let l=0;l<nLayers;l++){
+    const y=l*layerSpacing;
+    const color=SEMI_LAYER_COLORS[l%SEMI_LAYER_COLORS.length];
+
+    // Semi-transparent layer sheet
+    const pGeo=new THREE.PlaneGeometry(dw*sc,dh*sc);
+    const pMat=new THREE.MeshPhongMaterial({
+      color:color,transparent:true,opacity:0.04,
+      side:THREE.DoubleSide,emissive:color,emissiveIntensity:0.03,
+    });
+    const plane=new THREE.Mesh(pGeo,pMat);
+    plane.rotation.x=-Math.PI/2;plane.position.y=y;
+    scene.add(plane);
+
+    // Layer border
+    const bGeo=new THREE.EdgesGeometry(pGeo);
+    const bMat=new THREE.LineBasicMaterial({color:color,transparent:true,opacity:0.18});
+    const border=new THREE.LineSegments(bGeo,bMat);
+    border.rotation.x=-Math.PI/2;border.position.y=y;
+    scene.add(border);
+
+    // Layer label — small text sprite
+    const canvas=document.createElement('canvas');
+    canvas.width=128;canvas.height=48;
+    const c2=canvas.getContext('2d');
+    c2.fillStyle='transparent';c2.fillRect(0,0,128,48);
+    c2.font='bold 28px Inter,sans-serif';
+    c2.fillStyle='#'+color.toString(16).padStart(6,'0');
+    c2.textAlign='center';c2.textBaseline='middle';
+    c2.fillText(SEMI_LAYER_NAMES[l]||('M'+(l+1)),64,24);
+    const tex=new THREE.CanvasTexture(canvas);
+    const spriteMat=new THREE.SpriteMaterial({map:tex,transparent:true,opacity:0.7});
+    const sprite=new THREE.Sprite(spriteMat);
+    sprite.scale.set(16,6,1);
+    sprite.position.set(-dw*sc/2-12,y,0);
+    scene.add(sprite);
+  }
+
+  // Wires as 3D metal traces
+  const wires=(ph.wires||[]).slice(0,1500);
+  for(const w of wires){
+    const l=w.layer||0;
+    const y=l*layerSpacing;
+    const lc=SEMI_LAYER_COLORS[l%SEMI_LAYER_COLORS.length];
+    const x1=ox+w.x1*sc, z1=oz+w.y1*sc;
+    const x2=ox+w.x2*sc, z2=oz+w.y2*sc;
+    const len=Math.sqrt((x2-x1)**2+(z2-z1)**2);
+    if(len<0.01)continue;
+
+    // Wire thickness varies by layer (lower=thinner, higher=thicker)
+    const thick=0.4+l*0.15;
+    const wireH=0.6+l*0.1;
+    const wGeo=new THREE.BoxGeometry(len,wireH,thick);
+    const wMat=new THREE.MeshPhongMaterial({
+      color:lc,transparent:true,opacity:0.6+l*0.05,
+      emissive:lc,emissiveIntensity:0.18,
+      specular:0xffffff,shininess:80,
+    });
+    const wMesh=new THREE.Mesh(wGeo,wMat);
+    wMesh.position.set((x1+x2)/2,y+wireH/2,(z1+z2)/2);
+    wMesh.rotation.y=Math.atan2(z2-z1,x2-x1);
+    wMesh.castShadow=true;
+    scene.add(wMesh);
+  }
+
+  // Vias as glowing cylinders
+  const vias=(ph.vias||[]).slice(0,800);
+  for(const v of vias){
+    const lo=Math.min(v.lower_layer||0,v.upper_layer||0);
+    const hi=Math.max(v.lower_layer||0,v.upper_layer||0);
+    const y0=lo*layerSpacing;
+    const y1=hi*layerSpacing;
+    const vH=Math.max(y1-y0,1);
+
+    const vGeo=new THREE.CylinderGeometry(0.35,0.35,vH,8);
+    const vMat=new THREE.MeshPhongMaterial({
+      color:0xffffff,transparent:true,opacity:0.35,
+      emissive:0xaaccff,emissiveIntensity:0.15,
+      specular:0xffffff,shininess:100,
+    });
+    const via=new THREE.Mesh(vGeo,vMat);
+    via.position.set(ox+(v.x||0)*sc,(y0+y1)/2,oz+(v.y||0)*sc);
+    scene.add(via);
+  }
 }
 
 /* ═══════════════════════════════════════════════════════
