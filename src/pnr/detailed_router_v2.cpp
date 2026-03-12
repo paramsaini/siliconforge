@@ -1,5 +1,5 @@
 // SiliconForge — Detailed Router v2 (Track-Based A* + Rip-up/Reroute)
-// Track grid construction, A* maze routing, rip-up/reroute for DRC-clean routing.
+// Industrial: timing-driven net ordering, via minimization, antenna tracking.
 #include "pnr/detailed_router_v2.hpp"
 #include <iostream>
 #include <thread>
@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <queue>
 #include <numeric>
+#include <chrono>
 
 namespace sf {
 
@@ -390,35 +391,107 @@ bool DetailedRouterV2::route_net(PhysNet& net, int net_idx,
     return all_ok;
 }
 
-// ── Main routing entry point ─────────────────────────────────────────
-void DetailedRouterV2::route(int num_threads) {
+// ============================================================================
+// Industrial: net criticality accessor
+// ============================================================================
+double DetailedRouterV2::get_criticality(int net_id) const {
+    auto it = net_timing_.find(net_id);
+    if (it == net_timing_.end()) return 0.0;
+    return it->second.criticality;
+}
+
+// ============================================================================
+// Industrial: count vias for a net
+// ============================================================================
+int DetailedRouterV2::count_net_vias(const std::vector<Via>& vias) const {
+    return (int)vias.size();
+}
+
+// ============================================================================
+// Industrial: antenna ratio check per net
+// ============================================================================
+AntennaViolation DetailedRouterV2::check_antenna(
+    int net_id, const std::vector<WireSegment>& wires) const
+{
+    AntennaViolation av;
+    av.net_id = net_id;
+    av.net_name = net_id >= 0 && net_id < (int)pd_.nets.size() ? pd_.nets[net_id].name : "";
+    double wire_area = 0;
+    for (auto& w : wires) {
+        wire_area += w.start.dist(w.end) * w.width;
+    }
+    double gate_area = 0;
+    if (net_id >= 0 && net_id < (int)pd_.nets.size()) {
+        for (auto ci : pd_.nets[net_id].cell_ids) {
+            if (ci >= 0 && ci < (int)pd_.cells.size())
+                gate_area += pd_.cells[ci].width * 0.05;
+        }
+    }
+    av.wire_area = wire_area;
+    av.gate_area = gate_area;
+    av.ratio = gate_area > 0 ? wire_area / gate_area : 0;
+    av.max_ratio = config_.max_antenna_ratio;
+    av.layer = -1;
+    if (av.ratio > config_.max_antenna_ratio)
+        av.fix_suggestion = "Insert diode or break wire";
+    return av;
+}
+
+// ── Main routing entry point (industrial: returns RouteResult) ───────
+RouteResult DetailedRouterV2::route(int num_threads) {
+    auto t0 = std::chrono::high_resolution_clock::now();
+    RouteResult result;
+
     if (num_layers_ <= 0) num_layers_ = compute_num_layers();
 
-    std::cout << "DetailedRouterV2: Starting multi-threaded routing with "
-              << num_threads << " threads, " << num_layers_ << " metal layers.\n";
+    std::cout << "DetailedRouterV2: Starting routing with "
+              << num_layers_ << " metal layers.\n";
 
     setup_layers();
     build_track_grid();
     occupancy_.clear();
 
-    // Sort nets by HPWL (shorter nets first for better routability)
+    // Industrial: timing-driven net ordering (critical nets first)
     std::vector<int> net_order(pd_.nets.size());
     std::iota(net_order.begin(), net_order.end(), 0);
-    std::sort(net_order.begin(), net_order.end(), [&](int a, int b) {
-        auto hpwl = [&](int ni) {
-            auto& net = pd_.nets[ni];
-            if (net.cell_ids.size() < 2) return 0.0;
-            double xlo=1e18,xhi=-1e18,ylo=1e18,yhi=-1e18;
-            for (auto ci : net.cell_ids) {
-                xlo = std::min(xlo, pd_.cells[ci].position.x);
-                xhi = std::max(xhi, pd_.cells[ci].position.x);
-                ylo = std::min(ylo, pd_.cells[ci].position.y);
-                yhi = std::max(yhi, pd_.cells[ci].position.y);
-            }
-            return (xhi-xlo) + (yhi-ylo);
-        };
-        return hpwl(a) < hpwl(b);
-    });
+
+    if (config_.enable_timing_driven && !net_timing_.empty()) {
+        std::sort(net_order.begin(), net_order.end(), [&](int a, int b) {
+            double ca = get_criticality(a);
+            double cb = get_criticality(b);
+            if (std::abs(ca - cb) > 0.01) return ca > cb;
+            // Tiebreak: shorter HPWL first
+            auto hpwl = [&](int ni) {
+                auto& net = pd_.nets[ni];
+                if (net.cell_ids.size() < 2) return 0.0;
+                double xlo=1e18,xhi=-1e18,ylo=1e18,yhi=-1e18;
+                for (auto ci : net.cell_ids) {
+                    xlo = std::min(xlo, pd_.cells[ci].position.x);
+                    xhi = std::max(xhi, pd_.cells[ci].position.x);
+                    ylo = std::min(ylo, pd_.cells[ci].position.y);
+                    yhi = std::max(yhi, pd_.cells[ci].position.y);
+                }
+                return (xhi-xlo) + (yhi-ylo);
+            };
+            return hpwl(a) < hpwl(b);
+        });
+    } else {
+        std::sort(net_order.begin(), net_order.end(), [&](int a, int b) {
+            auto hpwl = [&](int ni) {
+                auto& net = pd_.nets[ni];
+                if (net.cell_ids.size() < 2) return 0.0;
+                double xlo=1e18,xhi=-1e18,ylo=1e18,yhi=-1e18;
+                for (auto ci : net.cell_ids) {
+                    xlo = std::min(xlo, pd_.cells[ci].position.x);
+                    xhi = std::max(xhi, pd_.cells[ci].position.x);
+                    ylo = std::min(ylo, pd_.cells[ci].position.y);
+                    yhi = std::max(yhi, pd_.cells[ci].position.y);
+                }
+                return (xhi-xlo) + (yhi-ylo);
+            };
+            return hpwl(a) < hpwl(b);
+        });
+    }
 
     // Phase 1: Initial routing
     int routed = 0, failed = 0;
@@ -432,8 +505,10 @@ void DetailedRouterV2::route(int num_threads) {
             failed++;
     }
 
-    // Phase 2: Rip-up/reroute failed nets (up to 5 iterations)
-    for (int rr = 0; rr < 5 && failed > 0; rr++) {
+    // Phase 2: Rip-up/reroute failed nets
+    int max_rr = config_.detailed_reroute_iterations;
+    for (int rr = 0; rr < max_rr && failed > 0; rr++) {
+        result.reroute_iterations++;
         int new_failed = 0;
         for (int ni : net_order) {
             if (!net_wires[ni].empty()) continue;
@@ -448,28 +523,114 @@ void DetailedRouterV2::route(int num_threads) {
         failed = new_failed;
     }
 
-    // Merge into PhysicalDesign, stamping net_id on each wire
+    // Industrial: via minimization pass
+    // For each net with >2 vias, try rerouting on a single layer pair
+    if (config_.enable_via_minimization) {
+        for (int ni : net_order) {
+            int vc = count_net_vias(net_vias[ni]);
+            if (vc <= 2) continue;
+            // Save current routing
+            auto saved_wires = net_wires[ni];
+            auto saved_vias = net_vias[ni];
+            // Try rerouting
+            unmark_net(ni);
+            net_wires[ni].clear();
+            net_vias[ni].clear();
+            if (route_net(pd_.nets[ni], ni, net_wires[ni], net_vias[ni])) {
+                int new_vc = count_net_vias(net_vias[ni]);
+                if (new_vc >= vc) {
+                    // No improvement — restore
+                    unmark_net(ni);
+                    net_wires[ni] = saved_wires;
+                    net_vias[ni] = saved_vias;
+                    for (auto& seg : saved_wires) {
+                        int tk = nearest_track(seg.layer, seg.start.y);
+                        mark_occupied(seg.layer, tk,
+                                      std::min(seg.start.x, seg.end.x),
+                                      std::max(seg.start.x, seg.end.x), ni);
+                    }
+                }
+            } else {
+                // Failed — restore
+                net_wires[ni] = saved_wires;
+                net_vias[ni] = saved_vias;
+            }
+        }
+    }
+
+    // Merge into PhysicalDesign
     for (int ni = 0; ni < (int)pd_.nets.size(); ni++) {
         for (auto& w : net_wires[ni]) w.net_id = ni;
         pd_.wires.insert(pd_.wires.end(), net_wires[ni].begin(), net_wires[ni].end());
         pd_.vias.insert(pd_.vias.end(), net_vias[ni].begin(), net_vias[ni].end());
     }
 
-    // Report
-    std::vector<int> wires_per_layer(num_layers_, 0);
+    // ── Compute industrial metrics ───────────────────────────────────
+    result.routed_nets = routed;
+    result.failed_nets = failed;
+    result.total_wires = (int)pd_.wires.size();
+    result.total_vias = (int)pd_.vias.size();
+
+    result.total_wirelength = 0;
     for (auto& w : pd_.wires)
-        if (w.layer >= 0 && w.layer < num_layers_) wires_per_layer[w.layer]++;
+        result.total_wirelength += w.start.dist(w.end);
+
+    // Per-layer distribution
+    result.wires_per_layer.resize(num_layers_, 0);
+    result.vias_per_layer.resize(std::max(1, num_layers_ - 1), 0);
+    for (auto& w : pd_.wires)
+        if (w.layer >= 0 && w.layer < num_layers_) result.wires_per_layer[w.layer]++;
+    for (auto& v : pd_.vias) {
+        int low = std::min(v.lower_layer, v.upper_layer);
+        if (low >= 0 && low < (int)result.vias_per_layer.size())
+            result.vias_per_layer[low]++;
+    }
+
+    // Critical net wirelength
+    if (config_.enable_timing_driven) {
+        for (int ni : net_order) {
+            if (get_criticality(ni) > 0.5) {
+                for (auto& w : net_wires[ni])
+                    result.critical_net_wirelength += w.start.dist(w.end);
+            }
+        }
+    }
+
+    // Antenna violations
+    if (config_.enable_antenna_check) {
+        for (int ni : net_order) {
+            auto av = check_antenna(ni, net_wires[ni]);
+            if (av.ratio > config_.max_antenna_ratio) {
+                result.antenna_violations++;
+                result.antenna_details.push_back(av);
+            }
+        }
+    }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    result.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
     std::cout << "DetailedRouterV2: Routing complete. "
-              << pd_.wires.size() << " wires, "
-              << pd_.vias.size() << " vias across "
+              << result.total_wires << " wires, "
+              << result.total_vias << " vias across "
               << num_layers_ << " layers.\n";
     std::cout << "  Layer distribution: ";
     for (int i = 0; i < num_layers_; i++) {
-        std::cout << "M" << (i+1) << "=" << wires_per_layer[i];
+        std::cout << "M" << (i+1) << "=" << result.wires_per_layer[i];
         if (i + 1 < num_layers_) std::cout << ", ";
     }
     std::cout << "\n";
+
+    result.message = std::to_string(result.routed_nets) + "/" +
+                     std::to_string(result.routed_nets + result.failed_nets) +
+                     " nets, " + std::to_string(result.total_vias) + " vias, " +
+                     std::to_string(result.reroute_iterations) + " reroute passes";
+    if (config_.enable_timing_driven) result.message += ", timing-driven";
+    if (config_.enable_via_minimization) result.message += ", via-min";
+    if (result.antenna_violations > 0)
+        result.message += ", " + std::to_string(result.antenna_violations) + " antenna";
+
+    return result;
 }
 
 } // namespace sf

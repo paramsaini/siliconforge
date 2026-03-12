@@ -1,17 +1,16 @@
 #pragma once
 // SiliconForge — Built-in TCL-compatible script interpreter
-// Supports: set, puts, expr, if/elseif/else, for, foreach, while, proc, source,
-//           variable substitution ($var, ${var}), command substitution [cmd],
-//           quoting (", {}), comments (#), and all SiliconForge EDA commands.
+// Industrial: arrays, namespaces, regex, full list ops, catch/error,
+//   upvar/uplevel, global, append, split, join, format, switch, break/continue, unset
 //
-// Industry EDA tools (Synopsys DC, Cadence Innovus, etc.) use TCL as their
-// scripting language. This interpreter provides TCL-compatible syntax so
-// scripts written for SiliconForge can use standard TCL idioms.
+// Reference: Synopsys DC Shell / Cadence Innovus TCL compatibility
+// Industry EDA tools use TCL as their scripting language.
 
 #include <string>
 #include <vector>
 #include <unordered_map>
 #include <functional>
+#include <regex>
 
 namespace sf {
 
@@ -36,6 +35,17 @@ public:
     void set_var(const std::string& name, const std::string& value);
     std::string get_var(const std::string& name) const;
     bool has_var(const std::string& name) const;
+    void unset_var(const std::string& name);
+
+    // Array access (industrial)
+    void set_array(const std::string& name, const std::string& key, const std::string& value);
+    std::string get_array(const std::string& name, const std::string& key) const;
+    bool has_array(const std::string& name) const;
+    std::vector<std::string> array_names(const std::string& name) const;
+    size_t array_size(const std::string& name) const;
+
+    // Namespace access (industrial)
+    std::string current_namespace() const { return current_ns_; }
 
     // Register all SiliconForge engine commands
     void register_sf_commands(SiliconForge& engine);
@@ -46,6 +56,20 @@ private:
     // User-defined procs: name → {args_list, body}
     struct Proc { std::vector<std::string> args; std::string body; };
     std::unordered_map<std::string, Proc> procs_;
+
+    // Industrial: arrays (name → {key → value})
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> arrays_;
+
+    // Industrial: namespaces
+    std::string current_ns_ = "::";
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> ns_vars_;
+
+    // Industrial: call stack for upvar/uplevel
+    struct Frame {
+        std::unordered_map<std::string, std::string>* vars;
+        std::string ns;
+    };
+    std::vector<Frame> call_stack_;
 
     // Parsing helpers
     std::string eval_command(const std::string& cmd);
@@ -71,6 +95,30 @@ private:
     std::string cmd_lindex(const std::vector<std::string>& args);
     std::string cmd_string(const std::vector<std::string>& args);
     std::string cmd_info(const std::vector<std::string>& args);
+
+    // Industrial: new commands
+    std::string cmd_array(const std::vector<std::string>& args);
+    std::string cmd_lappend(const std::vector<std::string>& args);
+    std::string cmd_lsort(const std::vector<std::string>& args);
+    std::string cmd_lsearch(const std::vector<std::string>& args);
+    std::string cmd_lrange(const std::vector<std::string>& args);
+    std::string cmd_lreplace(const std::vector<std::string>& args);
+    std::string cmd_join(const std::vector<std::string>& args);
+    std::string cmd_split(const std::vector<std::string>& args);
+    std::string cmd_append(const std::vector<std::string>& args);
+    std::string cmd_format(const std::vector<std::string>& args);
+    std::string cmd_regexp(const std::vector<std::string>& args);
+    std::string cmd_regsub(const std::vector<std::string>& args);
+    std::string cmd_catch(const std::vector<std::string>& args);
+    std::string cmd_error(const std::vector<std::string>& args);
+    std::string cmd_switch(const std::vector<std::string>& args);
+    std::string cmd_namespace(const std::vector<std::string>& args);
+    std::string cmd_global(const std::vector<std::string>& args);
+    std::string cmd_upvar(const std::vector<std::string>& args);
+    std::string cmd_unset(const std::vector<std::string>& args);
+    std::string cmd_concat(const std::vector<std::string>& args);
+    std::string cmd_eval_cmd(const std::vector<std::string>& args);
+    std::string cmd_lmap(const std::vector<std::string>& args);
 };
 
 } // namespace sf

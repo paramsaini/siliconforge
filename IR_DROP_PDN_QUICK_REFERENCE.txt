@@ -1,0 +1,255 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║  SiliconForge IR Drop / Power Grid (PDN) Subsystem - Quick Reference      ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+CORE FILES & LINE COUNTS:
+─────────────────────────────────────────────────────────────────────────────
+src/timing/ir_drop.hpp          46 lines    | IR Drop Analyzer class def
+src/timing/ir_drop.cpp          90 lines    | Distance-to-pad IR drop model
+src/timing/pdn.hpp              62 lines    | PDN Analyzer class def
+src/timing/pdn.cpp             127 lines    | Stripe-based PDN analysis
+src/timing/power.hpp            77 lines    | Power Analyzer class def
+src/timing/power.cpp           419 lines    | Full power analysis engine
+src/verify/reliability.hpp       70 lines    | Reliability + embedded IR-drop
+src/verify/reliability.cpp      239 lines    | Aging models + Gauss-Seidel mesh
+                              ─────────────
+                                821 lines   TOTAL
+
+
+KEY CLASSES & THEIR ROLES:
+─────────────────────────────────────────────────────────────────────────────
+
+1. PowerAnalyzer (power.hpp/cpp)
+   ├─ analyze(freq_mhz, vdd, default_activity)
+   ├─ Components: Dynamic + Static + Glitch + Clock power
+   ├─ Activity Propagation: Gate-level with topo sort
+   ├─ Glitch Estimation: Level-difference heuristic (capped 50%)
+   ├─ File Support: VCD parsing (IEEE 1364-2001), SAIF parsing
+   └─ Output: 10 top consumers, total mW breakdown, message
+
+2. IrDropAnalyzer (ir_drop.hpp/cpp)
+   ├─ analyze(grid_res=10)
+   ├─ Model: Distance to 4 corner pads (simplified)
+   ├─ Grid: Configurable resolution (default 10×10)
+   ├─ Current Distribution: Proportional to cell area
+   ├─ Hotspot Detection: >5% VDD drop threshold
+   └─ Output: Worst/avg drops, hotspots, 2D drop map
+
+3. PdnAnalyzer (pdn.hpp/cpp)
+   ├─ auto_config(vdd, current_ma) | set_config(PdnConfig)
+   ├─ analyze(grid_res=10)
+   ├─ Model: Horizontal + Vertical stripe mesh
+   ├─ Stripe Generation: ~Die_height/20 H-stripes, ~Die_width/20 V-stripes
+   ├─ Resistance: Distance_to_stripe × Rsheet + Pad_R (typ 0.01Ω)
+   ├─ EM Checking: Current density vs 1.0 mA/μm limit
+   └─ Output: Worst/avg drops, EM violations, node voltage map
+
+4. ReliabilityAnalyzer (reliability.hpp/cpp)
+   ├─ analyze()  [NBTI/HCI/TDDB aging models]
+   └─ analyze_ir_drop(power_mw)  [FULL RESISTIVE MESH SOLVER]
+      ├─ Grid: 16×16 (fixed)
+      ├─ Solver: Gauss-Seidel iterative (200 max iters, 1e-8 tolerance)
+      ├─ Sheet Resistance: 10 mΩ/sq (top-level power mesh M8+)
+      ├─ Boundary: VDD pads at all edges
+      ├─ Current Sinks: Per-placed-cell distribution
+      └─ Output: Max/avg drops, drop%, hotspot count & locations
+
+
+ALGORITHM COMPLEXITY:
+─────────────────────────────────────────────────────────────────────────────
+PowerAnalyzer::analyze()         O(num_gates)          Activity propagation
+PowerAnalyzer::glitch_activity() O(gate_fanin)         Topo level check
+IrDropAnalyzer::analyze()        O(grid_res²)          Grid computation
+PdnAnalyzer::analyze()           O(grid_res² × stripes) Nearest stripe lookup
+ReliabilityAnalyzer::analyze_ir_drop() O(16² × 200)    Gauss-Seidel 200 iters
+
+
+INTEGRATION POINTS:
+─────────────────────────────────────────────────────────────────────────────
+Flow Orchestration:
+  flow/engine.cpp::run_power()           → PowerAnalyzer::analyze()
+  flow/engine.cpp::run_reliability()     → ReliabilityAnalyzer (aging + IR-drop)
+  
+Shell Commands:
+  "ir_drop"      → runs reliability which calls analyze_ir_drop()
+  "reliability"  → runs aging + IR-drop mesh solver
+  
+MCMM (Multi-Corner Multi-Mode):
+  timing/mcmm.cpp → PowerAnalyzer per scenario/corner
+  
+Dependent Modules:
+  Electromigration (timing/electromigration.cpp) ← uses IR drop results
+  Noise Analysis (timing/noise.cpp) ← uses power estimates
+
+
+POWER COMPONENTS BREAKDOWN:
+─────────────────────────────────────────────────────────────────────────────
+total_power_mw = dynamic_power_mw + static_power_mw + clock_power_mw
+
+dynamic_power_mw = switching_power_mw + internal_power_mw + glitch_power_mw
+
+Per-Cell:
+  - Leakage (static): Gate type lookup, V² scaling, cell_leakage() × vdd²
+  - Switching: P = α × C × V² × f (activity from propagation)
+  - Internal: 15% of dynamic (P_int = 0.15 × P_dyn)
+  - Glitch: Reconvergent gate activity estimation
+
+Clock:
+  - DFF power: DFF count × full-toggle dynamic
+  - CTS buffer: ~1 buffer per 8 DFFs, full toggle
+
+
+HOTSPOT DETECTION THRESHOLDS:
+─────────────────────────────────────────────────────────────────────────────
+IrDropAnalyzer:           > 5% of VDD
+PdnAnalyzer:              > 5% of VDD
+ReliabilityAnalyzer:      > 5% of VDD (0.05 × vdd)
+Flow Engine Warnings:     > 10% (reinforcement needed)
+
+
+FILE FORMATS SUPPORTED:
+─────────────────────────────────────────────────────────────────────────────
+VCD (Value Change Dump):  IEEE 1364-2001, toggle count extraction
+SAIF (Switching Activity): TC (toggle count), T0 (zero transitions), T1 (one)
+Parsed by PowerAnalyzer for activity factors
+
+
+BUILD SYSTEM (CMakeLists.txt):
+─────────────────────────────────────────────────────────────────────────────
+All 8 files compiled into: siliconforge_lib (static)
+Linked with: main.cpp → siliconforge executable
+Target includes: ${CMAKE_CURRENT_SOURCE_DIR}
+
+
+IMPLEMENTATION STATUS:
+─────────────────────────────────────────────────────────────────────────────
+✅ FULLY IMPLEMENTED:
+   • PowerAnalyzer (all components)
+   • VCD/SAIF parsing
+   • Activity propagation
+   • Gauss-Seidel IR-drop mesh solver (ReliabilityAnalyzer)
+   • PdnAnalyzer stripe topology
+   • Hotspot detection
+
+⚠️  PARTIALLY IMPLEMENTED (Simplified/Heuristic):
+   • IrDropAnalyzer (distance model, not mesh-based)
+   • Glitch estimation (level-difference heuristic)
+   • PdnAnalyzer EM (just counts violations)
+   • Sheet resistance (fixed 10mΩ/sq, no layer variations)
+
+❌ NOT IMPLEMENTED:
+   • EM analysis (just stubs)
+   • Decap modeling
+   • Via placement optimization
+   • PDN transient simulation
+   • Voltage regulator (VREG) stability
+   • Substrate coupling
+
+
+REFERENCES IN CODE:
+─────────────────────────────────────────────────────────────────────────────
+[1] Zhuo et al., "Static and Dynamic IR-Drop Analysis", ICCAD 2004
+    → Referenced in ir_drop.hpp
+
+[2] Nassif, "Power Grid Analysis Benchmarks", ASP-DAC 2008
+    → Referenced in pdn.hpp
+
+[3] Rabaey, Chandrakasan, Nikolic, "Digital Integrated Circuits", 2003
+    → Referenced in power.hpp
+
+[4] Rauch, "Review and Reexamination of Reliability Effects", IEEE TED 2007
+    → Referenced in reliability.hpp
+
+[5] J.R. Black (1969), JEDEC JEP122H
+    → Referenced in electromigration.hpp
+
+
+TEST COVERAGE:
+─────────────────────────────────────────────────────────────────────────────
+test_phase5.cpp:
+  • test_power_basic() - Total/dynamic/static power verification
+  • test_power_voltage_scaling() - V² scaling confirmation
+  
+No dedicated IR-drop or PDN unit tests (system integration testing)
+
+
+TYPICAL FLOW SEQUENCE:
+─────────────────────────────────────────────────────────────────────────────
+1. read_verilog()          → Netlist creation
+2. run_synthesis()         → Gate library mapping
+3. run_power()             → PowerAnalyzer (100mA default, 1000mV default)
+4. run_floorplan()         → PhysicalDesign creation
+5. run_place()             → Cell placement
+6. run_reliability()        → Aging analysis + IR-drop mesh solver
+   └─ ReliabilityAnalyzer::analyze_ir_drop(total_power_mw)
+      ├─ 16×16 grid setup
+      ├─ Cell-based current sink distribution
+      ├─ Gauss-Seidel solver (boundary = VDD pads)
+      ├─ Hotspot extraction (>5% VDD)
+      └─ Results logging
+
+
+KEY DEFAULTS:
+─────────────────────────────────────────────────────────────────────────────
+PowerAnalyzer:
+  • supply_voltage: 1.8V
+  • default_activity: 0.1 (10%)
+  
+IrDropAnalyzer:
+  • grid_res: 10
+  • vdd: 1.8V
+  • total_current_ma: 100
+  • grid_resistance: 0.1 Ω/grid_unit
+  
+PdnAnalyzer:
+  • stripe width: 1.0 um
+  • stripe layer: 3 (H-stripe), 4 (V-stripe)
+  • resistance_per_um: 0.05 Ω/um
+  • pad_resistance: 0.01 Ω
+  • em_limit: 1.0 mA/μm
+  
+ReliabilityAnalyzer:
+  • lifetime_years: 10
+  • temperature_c: 85
+  • voltage: 1.0V
+  • duty_cycle: 0.5
+  • sheet_resistance: 10 mΩ/sq (IR-drop mesh)
+  
+
+DATA TYPES:
+─────────────────────────────────────────────────────────────────────────────
+PowerResult:
+  ├─ Power (mW): total, dynamic, static, switching, internal, clock, glitch
+  ├─ Frequency: clock_freq_mhz
+  ├─ Voltage: supply_voltage
+  ├─ Count: num_cells
+  ├─ Timing: time_ms
+  ├─ Top consumers: CellPower[] (name, dynamic, leakage, total)
+  └─ Message: human-readable summary
+
+IrDropResult:
+  ├─ Drops (mV): worst, avg
+  ├─ Hotspots: num_hotspots (count), hotspots[] (region, drop_mv, current_ma)
+  ├─ Grid: drop_map[grid_y][grid_x], grid_x, grid_y
+  ├─ Threshold: threshold_pct
+  ├─ Voltage: vdd
+  └─ Message: summary
+
+PdnResult:
+  ├─ Drops: worst_drop_mv, worst_drop_pct, avg_drop_mv
+  ├─ EM: em_violations, worst_current_density
+  ├─ Nodes: PdnNode[] (x, y, voltage, current_draw)
+  └─ Timing: time_ms, message
+
+AgingResult:
+  ├─ Aging shifts: nbti_vth_shift_mv, hci_vth_shift_mv
+  ├─ Reliability: tddb_failure_rate (FIT), em_failure_rate
+  ├─ Timing: timing_degradation_pct
+  ├─ Risk: cells_at_risk, details[] (CellAging[])
+  ├─ Embedded IR-drop: IrDropResult with max_drop_mv, avg_drop_mv, drop_pct, hotspots
+  └─ Timing: time_ms, message
+
+
+═════════════════════════════════════════════════════════════════════════════
+For detailed source code, see: IR_DROP_PDN_RESEARCH.md (944 lines)
+═════════════════════════════════════════════════════════════════════════════

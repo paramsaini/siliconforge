@@ -14,6 +14,7 @@ add_library(siliconforge_lib STATIC
     frontend/verilog_parser.cpp
     frontend/sdc_parser.cpp
     frontend/sva_parser.cpp
+    frontend/upf_parser.cpp
 
     # ── Synthesis ─────────────────────────────────────────────────────
     synth/aig_opt.cpp
@@ -71,6 +72,7 @@ add_library(siliconforge_lib STATIC
 
     # ── Timing & Power ────────────────────────────────────────────────
     timing/sta.cpp
+    timing/ssta.cpp
     timing/power.cpp
     timing/parasitics.cpp
     timing/ir_drop.cpp

@@ -1,62 +1,219 @@
 #pragma once
-// SiliconForge — Power Distribution Network (PDN) Analyzer
-// Models VDD/VSS grid, computes voltage drops, and validates EM limits.
-// Reference: Nassif, "Power Grid Analysis Benchmarks", ASP-DAC 2008
+// SiliconForge — Power Distribution Network (PDN) Analyzer (Industrial Grade)
+// Frequency-domain impedance analysis, target impedance, resonance detection,
+// decoupling capacitor modeling & optimization, bump/C4 pad modeling.
+//
+// References:
+//   - Nassif, "Power Grid Analysis Benchmarks", ASP-DAC 2008
+//   - Smith, "Decoupling Capacitor Calculations for CMOS Circuits", IEEE EMC 1994
+//   - Swaminathan & Engin, "Power Integrity Modeling and Design for Semiconductors"
 
 #include "pnr/physical.hpp"
 #include <string>
 #include <vector>
+#include <complex>
+#include <cmath>
 
 namespace sf {
 
+// ── PDN components ───────────────────────────────────────────────────────
+
 struct PdnStripe {
     enum Dir { HORIZONTAL, VERTICAL } direction;
-    double offset;      // position on perpendicular axis
-    double width;       // stripe width
+    double offset;
+    double width;
     int layer;
     double resistance_per_um;
 };
 
+struct DecapModel {
+    std::string name;
+    double capacitance_nf = 10.0;
+    double esr_mohm = 50.0;       // equivalent series resistance
+    double esl_ph = 100.0;        // equivalent series inductance (picohenry)
+    double area_um2 = 100.0;      // silicon area
+    double leakage_ua = 0.1;
+    int quantity = 0;
+
+    // Self-resonant frequency
+    double srf_mhz() const {
+        double l = esl_ph * 1e-12; // H
+        double c = capacitance_nf * 1e-9; // F
+        if (l <= 0 || c <= 0) return 0;
+        return 1.0 / (2.0 * M_PI * std::sqrt(l * c)) * 1e-6; // MHz
+    }
+};
+
+struct BumpPad {
+    double x, y;
+    double resistance_mohm = 10.0;
+    double inductance_ph = 30.0;
+    enum Type { POWER, GROUND, SIGNAL } type = POWER;
+};
+
+struct ViaArray {
+    int count = 1;
+    double per_via_resistance_mohm = 5.0;
+    double per_via_inductance_ph = 10.0;
+    int from_layer = 0, to_layer = 1;
+
+    double total_resistance_mohm() const {
+        return (count > 0) ? per_via_resistance_mohm / count : per_via_resistance_mohm;
+    }
+    double total_inductance_ph() const {
+        return (count > 0) ? per_via_inductance_ph / count : per_via_inductance_ph;
+    }
+};
+
+// ── Configuration ────────────────────────────────────────────────────────
+
 struct PdnConfig {
     double vdd = 1.8;
     double total_current_ma = 100;
+    double max_transient_current_ma = 300; // peak switching
+
+    // PDN mesh
     std::vector<PdnStripe> stripes;
     int pad_count = 4;
-    double pad_resistance = 0.01;   // Ohm per pad
-    double em_limit_ma_per_um = 1.0; // electromigration current limit
+    double pad_resistance = 0.01;
+    double em_limit_ma_per_um = 1.0;
+
+    // Bumps / C4
+    std::vector<BumpPad> bumps;
+    double default_bump_r_mohm = 10.0;
+    double default_bump_l_ph = 30.0;
+
+    // Via arrays between layers
+    std::vector<ViaArray> via_arrays;
+
+    // Decoupling capacitors
+    std::vector<DecapModel> decaps;
+    double on_die_cap_nf = 50.0;       // intrinsic on-die capacitance
+
+    // Target impedance
+    double voltage_ripple_pct = 5.0;   // max allowed ripple
+    double target_impedance_mohm = 0;  // auto-computed if 0
+
+    // Frequency sweep
+    double freq_start_mhz = 1.0;
+    double freq_stop_mhz = 5000.0;     // 5 GHz
+    int freq_points = 100;             // log-spaced
 };
 
+// ── Impedance point ──────────────────────────────────────────────────────
+
+struct ImpedancePoint {
+    double freq_mhz;
+    double magnitude_mohm;
+    double phase_deg;
+    std::complex<double> z;
+    bool exceeds_target = false;
+};
+
+// ── Resonance ────────────────────────────────────────────────────────────
+
+struct Resonance {
+    double freq_mhz;
+    double impedance_mohm;
+    double q_factor;
+    enum Type { SERIES, PARALLEL } type;
+};
+
+// ── Result ───────────────────────────────────────────────────────────────
+
 struct PdnResult {
+    // Basic metrics
     double worst_drop_mv = 0;
     double worst_drop_pct = 0;
     double avg_drop_mv = 0;
     int em_violations = 0;
     double worst_current_density = 0;
-    double time_ms = 0;
 
+    // Impedance profile
+    std::vector<ImpedancePoint> impedance_profile;
+    double target_impedance_mohm = 0;
+    int target_violations = 0;        // freq points exceeding target
+    double worst_impedance_mohm = 0;
+    double worst_impedance_freq_mhz = 0;
+
+    // Resonances
+    std::vector<Resonance> resonances;
+    int num_resonances = 0;
+
+    // Decap analysis
+    double total_decap_nf = 0;
+    double total_decap_area_um2 = 0;
+    double total_decap_leakage_ua = 0;
+    int decap_types_used = 0;
+
+    // Via array
+    double total_via_resistance_mohm = 0;
+
+    // Bump/C4
+    int power_bumps = 0;
+    int ground_bumps = 0;
+    double bump_inductance_ph = 0;
+
+    // Power integrity signoff
+    bool pi_signoff_pass = false;
+    std::string pi_summary;
+
+    // Node data (from spatial analysis)
     struct PdnNode {
         double x, y;
         double voltage;
         double current_draw;
     };
     std::vector<PdnNode> nodes;
+
+    double time_ms = 0;
     std::string message;
 };
+
+// ── Analyzer ─────────────────────────────────────────────────────────────
 
 class PdnAnalyzer {
 public:
     PdnAnalyzer(const PhysicalDesign& pd) : pd_(pd) {}
 
     void set_config(const PdnConfig& cfg) { cfg_ = cfg; }
+    const PdnConfig& config() const { return cfg_; }
     void auto_config(double vdd = 1.8, double current_ma = 100);
 
+    // Add components
+    void add_decap(const DecapModel& d) { cfg_.decaps.push_back(d); }
+    void add_bump(const BumpPad& b) { cfg_.bumps.push_back(b); }
+    void add_via_array(const ViaArray& v) { cfg_.via_arrays.push_back(v); }
+
+    // Full analysis
     PdnResult analyze(int grid_res = 10);
+
+    // Frequency-domain impedance sweep
+    std::vector<ImpedancePoint> impedance_sweep() const;
+
+    // Target impedance calculation: Z_target = VDD × ripple% / I_transient
+    double compute_target_impedance() const;
 
 private:
     const PhysicalDesign& pd_;
     PdnConfig cfg_;
 
     double nearest_stripe_resistance(double x, double y) const;
+
+    // Impedance model: parallel combination of PDN mesh + decaps + die cap
+    std::complex<double> pdn_impedance_at(double freq_hz) const;
+
+    // PDN mesh impedance (R + jωL)
+    std::complex<double> mesh_impedance(double freq_hz) const;
+
+    // Single decap impedance: Z = ESR + j(ωL - 1/ωC)
+    std::complex<double> decap_impedance(const DecapModel& d, double freq_hz) const;
+
+    // Detect resonances from impedance profile
+    std::vector<Resonance> find_resonances(const std::vector<ImpedancePoint>& profile) const;
+
+    // Spatial voltage analysis
+    void spatial_analysis(int grid_res, PdnResult& r);
 };
 
 } // namespace sf

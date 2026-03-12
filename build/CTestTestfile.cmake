@@ -1,6 +1,6 @@
 # CMake generated Testfile for 
-# Source directory: /Users/paramsaini/Desktop/siliconforge
-# Build directory: /Users/paramsaini/Desktop/siliconforge/build
+# Source directory: /home/paramsaini/Desktop/siliconforge
+# Build directory: /home/paramsaini/Desktop/siliconforge/build
 # 
 # This file includes the relevant testing commands required for 
 # testing this directory and lists subdirectories to be tested as well.

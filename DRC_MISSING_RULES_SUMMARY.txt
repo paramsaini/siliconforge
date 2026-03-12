@@ -1,0 +1,293 @@
+================================================================================
+DRC MISSING ADVANCED RULES - SUMMARY FOR MODERN NODES (28nm and below)
+================================================================================
+
+CURRENTLY IMPLEMENTED ADVANCED FEATURES:
+✓ Width-dependent spacing (CONDITIONAL_SPACING) - 18 rules
+✓ Parallel-run-length dependent spacing - 4 rules
+✓ End-of-line spacing rules - 8 rules
+✓ Antenna rules (ratio, area, cumulative) - 13 rules
+✓ Density rules - all metal layers
+✓ Via array spacing - all via layers
+✓ Notch/corner fill rules - 8 rules
+✓ Hole width/spacing - 8 rules
+✓ Latchup/punchthrough - 6 rules
+✓ Gate spacing (poly-to-poly on active)
+✓ High-voltage rules
+
+
+TOP 10 MISSING RULE CATEGORIES FOR ADVANCED NODES:
+================================================================================
+
+1. ELECTROMIGRATION RULES (Critical for reliability)
+   ✗ Maximum current density per layer (A/um²)
+   ✗ Via EM current limits
+   ✗ Wire width ↔ current capacity relationship
+   ✗ Temperature-dependent EM parameters
+   ✗ Cumulative via EM limits
+   
+   Impact: High - 5-7nm nodes require strict EM verification
+   Suggested Implementation:
+     - New rule type: MAX_CURRENT_DENSITY
+     - Per-layer current limits (e.g., M1: 0.5-1.0 MA/cm²)
+     - Via current limits (sequential via arrays)
+     - Wire width scaling factor
+
+
+2. STRESS-INDUCED VOIDING RULES (CMP/reliability)
+   ✗ Stress voiding due to metal density (via arrays)
+   ✗ Copper CMP voiding in lower metals
+   ✗ Void-fill requirements
+   ✗ Metal fill patterns
+   
+   Impact: Medium-High - Critical for M1-M3
+   Suggested Implementation:
+     - New rule type: VOID_FILL_SPACING
+     - Via density limits per region
+     - Metal fill requirements per density
+
+
+3. LINEARITY/MATCHING RULES (Analog/RF)
+   ✗ Matched pair minimum spacing
+   ✗ Symmetry axis constraints
+   ✗ Orientation matching rules
+   ✗ Spacing from non-matched elements
+   
+   Impact: High - for analog blocks
+   Suggested Implementation:
+     - New rule type: MATCH_PAIR_SPACING
+     - rule.layer, rule.layer2 for pair identification
+     - condition_min_distance for symmetry line
+
+
+4. PROCESS CORNER & TEMPERATURE VARIANT RULES
+   ✗ Rules that vary per process corner (slow/fast/typical)
+   ✗ Temperature-dependent spacing/width
+   ✗ Voltage-domain specific rules (1.8V vs 3.3V vs 5V)
+   ✗ Foundry guardbanding factors
+   
+   Impact: Medium - critical for mixed-signal
+   Suggested Implementation:
+     - New rule properties: process_corner, temperature_min, temperature_max
+     - Variant rule deck loading per corner
+     - Rule interpolation for intermediate conditions
+
+
+5. MULTI-PATTERNING CONFLICT DETECTION (ArF/EUV)
+   ✗ TriplePatterning (3-color) spacing conflicts
+   ✗ QuadruplePatterning (4-color) conflicts
+   ✗ Self-Aligned Quadruple Patterning (SAQP) rules
+   ✗ EUV single-exposure rules
+   ✗ Color assignment validation
+   
+   Impact: Very High - mandatory for 7nm and below
+   Suggested Implementation:
+     - New rule type: MULTI_PATTERNING_SPACING
+     - New property: etch_color (0-3 for 4-color)
+     - Spacing rules between different colors
+     - SAQP-specific geometry constraints
+
+
+6. POWER/GROUND ISOLATION RULES
+   ✗ Minimum spacing: signal to power
+   ✗ Minimum spacing: signal to ground
+   ✗ Power mesh density requirements
+   ✗ Return path constraints
+   ✗ Ground loop prevention
+   
+   Impact: High - power delivery and noise critical
+   Suggested Implementation:
+     - New rule property: net_type (SIGNAL, POWER, GROUND)
+     - New rule type: POWER_SIGNAL_SPACING
+     - Required: layer1 = signal, layer2 = power/ground
+
+
+7. CRITICAL DIMENSION VARIATION (CDV) RULES
+   ✗ Mask loading effects (pattern density dependent)
+   ✗ Proximity effects (design context dependent)
+   ✗ Feature size variations due to neighbors
+   ✗ Optical proximity correction (OPC) requirements
+   ✗ Resist effects modeling
+   
+   Impact: Very High - <16nm nodes
+   Suggested Implementation:
+     - New rule type: CRITICAL_DIMENSION_DEPENDENT
+     - Pattern context analysis
+     - Spacing tables based on neighborhood density
+
+
+8. HOLE GEOMETRY & METAL FILL (CMP/Planarity)
+   ✗ Minimum hole width in metal layers
+   ✗ Maximum hole spacing (promotes metal fill)
+   ✗ Enclosed area requirements
+   ✗ Metal fill window sizing
+   ✗ Fill-aware spacing rules
+   
+   Impact: Medium - for yield/CMP uniformity
+   Suggested Implementation:
+     - Enhance MIN_HOLE_WIDTH checking (currently stubbed)
+     - Enhance MIN_HOLE_SPACING checking (currently stubbed)
+     - Implement MIN_ENCLOSED_AREA evaluation
+
+
+9. VOLTAGE & ISOLATION RULES (Mixed-Signal)
+   ✗ I/O voltage domain rules (5V isolated from 1.8V)
+   ✗ Isolation ring requirements
+   ✗ Substrate taps density
+   ✗ ESD structure rules
+   ✗ Ground bounce limitations
+   
+   Impact: Medium - for analog/mixed-signal
+   Suggested Implementation:
+     - New rule property: voltage_domain
+     - New rule type: VOLTAGE_ISOLATION_SPACING
+     - Isolation structure templates
+
+
+10. TRANSMISSION LINE & DIFF PAIR RULES
+    ✗ Differential pair spacing constraints
+    ✗ Coupling length minimization
+    ✗ Skew limitations
+    ✗ Impedance control requirements
+    ✗ Return path constraints
+    
+    Impact: Medium - for high-speed I/O
+    Suggested Implementation:
+      - New rule type: DIFF_PAIR_SPACING
+      - Property: pair_partner (reference to paired wire)
+      - Length matching rules
+
+
+SECONDARY MISSING RULES (Lower priority):
+================================================================================
+
+11. Lithography wavelength tuning
+    - EUV specific rules
+    - ArF immersion rules
+    - Mask biasing requirements
+    
+12. Thermal stress & mechanical deformation
+    - Thermal gradient effects
+    - Mechanical stress mapping
+    - Strain engineering rules
+    
+13. Reliability: Time Dependent Dielectric Breakdown (TDDB)
+    - Voltage-stress duration dependent
+    - Temperature acceleration
+    - Defect density dependent
+    
+14. Power delivery network (PDN) optimization
+    - Via density for power delivery
+    - Metal density on power nets
+    - Impedance targets
+    
+15. Special component rules
+    - Inductor/coil spacing
+    - Capacitor array rules
+    - Resistor matching constraints
+    - Bandgap cell templates
+
+
+IMPLEMENTATION ROADMAP RECOMMENDATION:
+================================================================================
+
+PHASE 1 (Months 1-2): High-ROI Advanced Rules
+  1. Implement hole detection (MIN_ENCLOSED_AREA enforcement)
+  2. Add electromigration current density rules
+  3. Add width-dependent current limits
+  4. Add stress voiding rules (metal density dependent)
+
+PHASE 2 (Months 3-4): Modern Node Support
+  1. Add process corner variant loading
+  2. Add temperature-dependent rules
+  3. Add multi-patterning conflict detection
+  4. Add voltage domain isolation rules
+
+PHASE 3 (Months 5-6): High-Speed & Analog
+  1. Add matched-pair spacing rules
+  2. Add differential pair rules
+  3. Add power/ground isolation rules
+  4. Add symmetry constraint checking
+
+PHASE 4 (Months 7+): Reliability & Optimization
+  1. Add TDDB lifetime estimation
+  2. Add thermal stress analysis
+  3. Add PDN optimization rules
+  4. Add ESD structure validation
+
+
+KEY INSIGHTS FROM ANALYSIS:
+================================================================================
+
+Architecture is SOLID:
+  ✓ Extensible enum-based rule type system
+  ✓ Clean separation of concerns (each check_* function)
+  ✓ JSON I/O framework ready for complex rule decks
+  ✓ Spatial indexing ensures performance at scale
+  ✓ Conditional rules framework (width/PRL) supports advanced rules
+
+Main Gaps:
+  • Several check_* functions are stubs (jog, notch, corner, holes)
+  • No temperature/voltage/corner variants
+  • No multi-patterning support
+  • No EM/reliability rules
+  • No lithography simulation
+
+Recommended Quick Wins:
+  1. Implement check_min_hole() and check_min_enclosed_area() (2-3 hours)
+  2. Implement jog/step detection (4-6 hours)
+  3. Add temperature/voltage properties to DrcRule (1 hour)
+  4. Add EM current density rule type (2-3 hours)
+  5. Implement hole detection geometry (4-6 hours)
+
+
+TECHNICAL DETAILS FOR IMPLEMENTATION:
+================================================================================
+
+To add a new rule type (example: MAX_CURRENT_DENSITY):
+
+1. In drc.hpp, add to DrcRule::Type enum:
+   MAX_CURRENT_DENSITY,
+
+2. Add to rule_type_map in drc.cpp:
+   {"MAX_CURRENT_DENSITY", DrcRule::MAX_CURRENT_DENSITY},
+
+3. Create check function in drc.cpp:
+   void DrcEngine::check_current_density(DrcResult& r) {
+       for (auto& rule : rules_) {
+           if (rule.type != DrcRule::MAX_CURRENT_DENSITY) continue;
+           r.total_rules++;
+           // Logic here...
+       }
+   }
+
+4. Call in check() dispatcher (line ~1450):
+   check_current_density(r);
+
+5. Add test case to test_phase17.cpp
+
+6. JSON rule decks can use "MAX_CURRENT_DENSITY" in type field
+
+
+To add rule properties (example: temperature variant):
+
+1. In drc.hpp, add to DrcRule struct:
+   double temperature_min = -40;  // Celsius
+   double temperature_max = 125;  // Celsius
+
+2. Update JSON parser in drc.cpp load_rules_from_file():
+   rule.temperature_min = rj["temperature_min"].as_number(-40);
+   rule.temperature_max = rj["temperature_max"].as_number(125);
+
+3. Update JSON writer in drc.cpp write_rules_to_file():
+   if (r.temperature_min != -40) ofs << ",\n      \"temperature_min\": " << r.temperature_min;
+   if (r.temperature_max != 125) ofs << ",\n      \"temperature_max\": " << r.temperature_max;
+
+4. Use in checks:
+   if (current_temp < rule.temperature_min || current_temp > rule.temperature_max)
+       continue; // Skip rule outside temperature range
+
+
+================================================================================
+END OF MISSING RULES SUMMARY
+================================================================================

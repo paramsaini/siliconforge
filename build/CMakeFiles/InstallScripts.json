@@ -1,9 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/Users/paramsaini/Desktop/siliconforge/build/cmake_install.cmake",
-		"/Users/paramsaini/Desktop/siliconforge/build/src/cmake_install.cmake",
-		"/Users/paramsaini/Desktop/siliconforge/build/tests/cmake_install.cmake"
-	],
-	"Parallel" : false
-}

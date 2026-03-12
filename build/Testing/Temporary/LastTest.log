@@ -1,10 +1,10 @@
-Start testing: Mar 11 14:54 GMT
+Start testing: Mar 12 09:05 GMT
 ----------------------------------------------------------
-1/14 Testing: Phase1Tests
-1/14 Test: Phase1Tests
-Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase1"
-Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase1Tests" start time: Mar 11 14:54 GMT
+1/38 Testing: Phase1Tests
+1/38 Test: Phase1Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase1"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase1Tests" start time: Mar 12 09:05 GMT
 Output:
 ----------------------------------------------------------
 
@@ -63,18 +63,18 @@ Running: bmc_counter_overflow
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.53 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase1Tests" end time: Mar 11 14:54 GMT
+"Phase1Tests" end time: Mar 12 09:05 GMT
 "Phase1Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-2/14 Testing: Phase2Tests
-2/14 Test: Phase2Tests
-Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase2"
-Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase2Tests" start time: Mar 11 14:54 GMT
+2/38 Testing: Phase2Tests
+2/38 Test: Phase2Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase2"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase2Tests" start time: Mar 12 09:05 GMT
 Output:
 ----------------------------------------------------------
 
@@ -123,18 +123,18 @@ Running: fault_sim_basic
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.50 sec
+Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase2Tests" end time: Mar 11 14:54 GMT
+"Phase2Tests" end time: Mar 12 09:05 GMT
 "Phase2Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-3/14 Testing: Phase3Tests
-3/14 Test: Phase3Tests
-Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase3"
-Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase3Tests" start time: Mar 11 14:54 GMT
+3/38 Testing: Phase3Tests
+3/38 Test: Phase3Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase3"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase3Tests" start time: Mar 12 09:05 GMT
 Output:
 ----------------------------------------------------------
 
@@ -175,18 +175,18 @@ Running: scan_insert_multi_chain
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.55 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase3Tests" end time: Mar 11 14:54 GMT
+"Phase3Tests" end time: Mar 12 09:05 GMT
 "Phase3Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-4/14 Testing: Phase4Tests
-4/14 Test: Phase4Tests
-Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase4"
-Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase4Tests" start time: Mar 11 14:54 GMT
+4/38 Testing: Phase4Tests
+4/38 Test: Phase4Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase4"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase4Tests" start time: Mar 12 09:05 GMT
 Output:
 ----------------------------------------------------------
 
@@ -223,18 +223,18 @@ Running: gdsii_binary
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.47 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase4Tests" end time: Mar 11 14:54 GMT
+"Phase4Tests" end time: Mar 12 09:05 GMT
 "Phase4Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-5/14 Testing: Phase5Tests
-5/14 Test: Phase5Tests
-Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase5"
-Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase5Tests" start time: Mar 11 14:54 GMT
+5/38 Testing: Phase5Tests
+5/38 Test: Phase5Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase5"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase5Tests" start time: Mar 12 09:05 GMT
 Output:
 ----------------------------------------------------------
 
@@ -279,18 +279,18 @@ Running: def_roundtrip
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.53 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase5Tests" end time: Mar 11 14:54 GMT
+"Phase5Tests" end time: Mar 12 09:05 GMT
 "Phase5Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-6/14 Testing: Phase6Tests
-6/14 Test: Phase6Tests
-Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase6"
-Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase6Tests" start time: Mar 11 14:54 GMT
+6/38 Testing: Phase6Tests
+6/38 Test: Phase6Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase6"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase6Tests" start time: Mar 12 09:05 GMT
 Output:
 ----------------------------------------------------------
 
@@ -333,18 +333,18 @@ Running: ir_drop_hotspot
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.64 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase6Tests" end time: Mar 11 14:54 GMT
+"Phase6Tests" end time: Mar 12 09:05 GMT
 "Phase6Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-7/14 Testing: Phase7Tests
-7/14 Test: Phase7Tests
-Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase7"
-Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase7Tests" start time: Mar 11 14:54 GMT
+7/38 Testing: Phase7Tests
+7/38 Test: Phase7Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase7"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase7Tests" start time: Mar 12 09:05 GMT
 Output:
 ----------------------------------------------------------
 
@@ -389,18 +389,18 @@ Running: pdn_em_check
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.62 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase7Tests" end time: Mar 11 14:54 GMT
+"Phase7Tests" end time: Mar 12 09:05 GMT
 "Phase7Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-8/14 Testing: Phase8Tests
-8/14 Test: Phase8Tests
-Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase8"
-Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase8Tests" start time: Mar 11 14:54 GMT
+8/38 Testing: Phase8Tests
+8/38 Test: Phase8Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase8"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase8Tests" start time: Mar 12 09:05 GMT
 Output:
 ----------------------------------------------------------
 
@@ -441,18 +441,18 @@ Running: chip_export
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.59 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase8Tests" end time: Mar 11 14:54 GMT
+"Phase8Tests" end time: Mar 12 09:05 GMT
 "Phase8Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-9/14 Testing: Phase9Tests
-9/14 Test: Phase9Tests
-Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase9"
-Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase9Tests" start time: Mar 11 14:54 GMT
+9/38 Testing: Phase9Tests
+9/38 Test: Phase9Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase9"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase9Tests" start time: Mar 12 09:05 GMT
 Output:
 ----------------------------------------------------------
 
@@ -491,18 +491,18 @@ Running: postroute_opt
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.48 sec
+Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase9Tests" end time: Mar 11 14:54 GMT
+"Phase9Tests" end time: Mar 12 09:05 GMT
 "Phase9Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-10/14 Testing: Phase10Tests
-10/14 Test: Phase10Tests
-Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase10"
-Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase10Tests" start time: Mar 11 14:54 GMT
+10/38 Testing: Phase10Tests
+10/38 Test: Phase10Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase10"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase10Tests" start time: Mar 12 09:05 GMT
 Output:
 ----------------------------------------------------------
 
@@ -541,18 +541,18 @@ Running: design_db_multi
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.51 sec
+Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase10Tests" end time: Mar 11 14:54 GMT
+"Phase10Tests" end time: Mar 12 09:05 GMT
 "Phase10Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-11/14 Testing: Phase11Tests
-11/14 Test: Phase11Tests
-Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase11"
-Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase11Tests" start time: Mar 11 14:54 GMT
+11/38 Testing: Phase11Tests
+11/38 Test: Phase11Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase11"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase11Tests" start time: Mar 12 09:05 GMT
 Output:
 ----------------------------------------------------------
 
@@ -580,18 +580,18 @@ AI Tuner: [Iter 0] New Best! WNS=-0.15 ns, Cong=0.291667, D=0.5, W=1.5
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.50 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase11Tests" end time: Mar 11 14:54 GMT
+"Phase11Tests" end time: Mar 12 09:05 GMT
 "Phase11Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-12/14 Testing: Phase12Tests
-12/14 Test: Phase12Tests
-Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase12"
-Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase12Tests" start time: Mar 11 14:54 GMT
+12/38 Testing: Phase12Tests
+12/38 Test: Phase12Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase12"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase12Tests" start time: Mar 12 09:05 GMT
 Output:
 ----------------------------------------------------------
 
@@ -611,18 +611,18 @@ Running: logic_viz
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.56 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase12Tests" end time: Mar 11 14:54 GMT
+"Phase12Tests" end time: Mar 12 09:05 GMT
 "Phase12Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-13/14 Testing: Phase13Tests
-13/14 Test: Phase13Tests
-Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase13"
-Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase13Tests" start time: Mar 11 14:54 GMT
+13/38 Testing: Phase13Tests
+13/38 Test: Phase13Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase13"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase13Tests" start time: Mar 12 09:05 GMT
 Output:
 ----------------------------------------------------------
 
@@ -649,7 +649,7 @@ Running: hls_parser_scheduler
 Running: tsv_insertion
   [PASS] tsv_insertion
 Running: detailed_router_v2
-DetailedRouterV2: Starting multi-threaded routing with 2 threads, 2 metal layers.
+DetailedRouterV2: Starting routing with 2 metal layers.
 DetailedRouterV2: Routing complete. 8 wires, 3 vias across 2 layers.
   Layer distribution: M1=4, M2=4
   [PASS] detailed_router_v2
@@ -659,18 +659,18 @@ DetailedRouterV2: Routing complete. 8 wires, 3 vias across 2 layers.
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.48 sec
+Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase13Tests" end time: Mar 11 14:54 GMT
+"Phase13Tests" end time: Mar 12 09:05 GMT
 "Phase13Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-14/14 Testing: Phase14Tests
-14/14 Test: Phase14Tests
-Command: "/Users/paramsaini/Desktop/siliconforge/build/tests/test_phase14"
-Directory: /Users/paramsaini/Desktop/siliconforge/build/tests
-"Phase14Tests" start time: Mar 11 14:54 GMT
+14/38 Testing: Phase14Tests
+14/38 Test: Phase14Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase14"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase14Tests" start time: Mar 12 09:05 GMT
 Output:
 ----------------------------------------------------------
 
@@ -698,11 +698,11 @@ Running: End-to-End Flow Validation
 [SiliconForge] Running Timing-Driven Analytical Placer...
   [PASS] Placement complete. HPWL: 68, Util: 1.4%
 [SiliconForge] Running AI PnR Tuner...
-AI Tuner: [Iter 0] New Best! WNS=-0.15 ns, Cong=0.645833, D=0.5, W=1.5
-AI Tuner: [Iter 4] New Best! WNS=-0.15 ns, Cong=0.416667, D=0.9, W=1.1
+AI Tuner: [Iter 0] New Best! WNS=-0.15 ns, Cong=0.455556, D=0.5, W=1.5
+AI Tuner: [Iter 5] New Best! WNS=-0.15 ns, Cong=0.416667, D=1, W=1
   [PASS] AI Optimization applied. Best WNS: -0.15
 [SiliconForge] Running Detailed Router v2 (Multi-Threaded)...
-DetailedRouterV2: Starting multi-threaded routing with 4 threads, 2 metal layers.
+DetailedRouterV2: Starting routing with 2 metal layers.
 DetailedRouterV2: Routing complete. 21 wires, 8 vias across 2 layers.
   Layer distribution: M1=16, M2=5
   [PASS] Routing complete. 21 wires, 8 vias, 2 metal layers.
@@ -723,11 +723,1738 @@ DetailedRouterV2: Routing complete. 21 wires, 8 vias across 2 layers.
 ══════════════════════════════════════════════════
 
 <end of output>
-Test time =   0.58 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"Phase14Tests" end time: Mar 11 14:54 GMT
+"Phase14Tests" end time: Mar 12 09:05 GMT
 "Phase14Tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Mar 11 14:54 GMT
+15/38 Testing: Phase15Tests
+15/38 Test: Phase15Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase15"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase15Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+
+╔══════════════════════════════════════════════════╗
+║  SiliconForge Phase 15 — STA OCV/AOCV Industrial ║
+╚══════════════════════════════════════════════════╝
+
+── AOCV Derate Formula ──
+Running: aocv_late_derate_formula
+  [PASS] aocv_late_derate_formula
+Running: aocv_early_derate_formula
+  [PASS] aocv_early_derate_formula
+Running: aocv_min_depth_clamp
+  [PASS] aocv_min_depth_clamp
+Running: aocv_custom_variations
+  [PASS] aocv_custom_variations
+
+── OCV Mode & Engine ──
+Running: ocv_mode_none_baseline
+  [PASS] ocv_mode_none_baseline
+Running: ocv_flat_derating
+  [PASS] ocv_flat_derating
+Running: aocv_depth_derating
+  [PASS] aocv_depth_derating
+Running: ocv_worse_than_nominal
+  [PASS] ocv_worse_than_nominal
+Running: aocv_less_pessimistic_than_flat_ocv
+  [PASS] aocv_less_pessimistic_than_flat_ocv
+
+── Corner Derate ──
+Running: corner_derate_fields
+  [PASS] corner_derate_fields
+Running: analyze_corner_api
+  [PASS] analyze_corner_api
+
+── Clock Uncertainty & Results ──
+Running: clock_uncertainty_affects_slack
+  [PASS] clock_uncertainty_affects_slack
+Running: sta_result_completeness
+  [PASS] sta_result_completeness
+Running: timing_path_fields
+  [PASS] timing_path_fields
+
+══════════════════════════════════════════════════
+  Results: 14 passed, 0 failed
+══════════════════════════════════════════════════
+
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Phase15Tests" end time: Mar 12 09:05 GMT
+"Phase15Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+16/38 Testing: Phase16Tests
+16/38 Test: Phase16Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase16"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase16Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+
+╔══════════════════════════════════════════════════╗
+║  SiliconForge Phase 16 — MCMM Industrial Tests   ║
+╚══════════════════════════════════════════════════╝
+
+── Corner / Mode Basics ──
+Running: mcmm_single_corner_single_mode
+  [PASS] mcmm_single_corner_single_mode
+Running: mcmm_default_corners
+  [PASS] mcmm_default_corners
+Running: mcmm_foundry_corners
+  [PASS] mcmm_foundry_corners
+Running: mcmm_scenario_count_cross_product
+  [PASS] mcmm_scenario_count_cross_product
+
+── Corner Configuration ──
+Running: mcmm_custom_corner_fields
+  [PASS] mcmm_custom_corner_fields
+Running: mcmm_per_corner_ocv
+  [PASS] mcmm_per_corner_ocv
+Running: mcmm_per_corner_aocv
+  [PASS] mcmm_per_corner_aocv
+
+── Mode Configuration ──
+Running: mcmm_functional_modes
+  [PASS] mcmm_functional_modes
+Running: mcmm_per_mode_uncertainty
+  [PASS] mcmm_per_mode_uncertainty
+
+── Aggregation & Completeness ──
+Running: mcmm_worst_case_aggregation
+  [PASS] mcmm_worst_case_aggregation
+Running: mcmm_slow_corner_worst_timing
+  [PASS] mcmm_slow_corner_worst_timing
+Running: mcmm_result_completeness
+  [PASS] mcmm_result_completeness
+Running: mcmm_clear_and_rebuild
+  [PASS] mcmm_clear_and_rebuild
+
+════════════════════════════════════════
+Phase 16 Results: 13 passed, 0 failed
+════════════════════════════════════════
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Phase16Tests" end time: Mar 12 09:05 GMT
+"Phase16Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+17/38 Testing: Phase17Tests
+17/38 Test: Phase17Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase17"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase17Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+
+╔══════════════════════════════════════════════════╗
+║  SiliconForge Phase 17 — DRC Industrial Tests     ║
+╚══════════════════════════════════════════════════╝
+
+── SKY130 Rule Deck ──
+Running: sky130_rule_count
+[DRC] Loaded SKY130 rule deck: 224 rules
+  [PASS] sky130_rule_count
+Running: sky130_key_values
+[DRC] Loaded SKY130 rule deck: 224 rules
+  [PASS] sky130_key_values
+Running: sky130_layer_assignments
+[DRC] Loaded SKY130 rule deck: 224 rules
+  [PASS] sky130_layer_assignments
+Running: sky130_conditional_rules
+[DRC] Loaded SKY130 rule deck: 224 rules
+  [PASS] sky130_conditional_rules
+Running: sky130_all_rule_categories
+[DRC] Loaded SKY130 rule deck: 224 rules
+  [PASS] sky130_all_rule_categories
+
+── JSON I/O ──
+Running: json_roundtrip
+[DRC] Loaded SKY130 rule deck: 224 rules
+[DRC] Loaded 224 rules from PDK 'exported' (/tmp/sf_test_drc_rt.json)
+  [PASS] json_roundtrip
+Running: json_roundtrip_conditional
+[DRC] Loaded SKY130 rule deck: 224 rules
+[DRC] Loaded 224 rules from PDK 'exported' (/tmp/sf_test_drc_cond.json)
+  [PASS] json_roundtrip_conditional
+Running: json_append_mode
+[DRC] Loaded SKY130 rule deck: 224 rules
+[DRC] Loaded 224 rules from PDK 'exported' (/tmp/sf_test_drc_append.json)
+  [PASS] json_append_mode
+
+── Rule Management ──
+Running: rule_enable_disable
+[DRC] Loaded SKY130 rule deck: 224 rules
+  [PASS] rule_enable_disable
+Running: rule_severity_levels
+  [PASS] rule_severity_levels
+
+── DRC Checking ──
+Running: drc_clean_design
+  [PASS] drc_clean_design
+Running: drc_boundary_violation
+  [PASS] drc_boundary_violation
+Running: drc_width_violation
+[DRC] Loaded SKY130 rule deck: 224 rules
+  [PASS] drc_width_violation
+Running: drc_spacing_violation
+[DRC] Loaded SKY130 rule deck: 224 rules
+  [PASS] drc_spacing_violation
+Running: drc_result_timing
+  [PASS] drc_result_timing
+
+── Error Handling ──
+Running: bad_json_file
+[DRC] ERROR: Cannot open rule deck: /tmp/sf_nonexistent_file_xyz.json
+  [PASS] bad_json_file
+Running: invalid_json_content
+[DRC] JSON parse error in /tmp/sf_test_bad_json.json: Invalid bool at 0
+  [PASS] invalid_json_content
+Running: clear_rules_works
+[DRC] Loaded SKY130 rule deck: 224 rules
+  [PASS] clear_rules_works
+
+════════════════════════════════════════
+Phase 17 Results: 18 passed, 0 failed
+════════════════════════════════════════
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Phase17Tests" end time: Mar 12 09:05 GMT
+"Phase17Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+18/38 Testing: Phase18Tests
+18/38 Test: Phase18Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase18"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase18Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+
+╔══════════════════════════════════════════════════╗
+║  SiliconForge Phase 18 — PnR Industrial Tests     ║
+╚══════════════════════════════════════════════════╝
+
+── Retiming Engine ──
+Running: retiming_improves_critical_path
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 6.5 units
+[Retiming] Already optimally pipelined.
+  [PASS] retiming_improves_critical_path
+Running: retiming_result_fields
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 6.5 units
+[Retiming] Already optimally pipelined.
+  [PASS] retiming_result_fields
+Running: retiming_pure_combinational
+[Retiming] No flip-flops — retiming not applicable.
+  [PASS] retiming_pure_combinational
+Running: retiming_single_gate
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 1 nodes, 0 edges.
+[Retiming] Trivial graph — nothing to retime.
+  [PASS] retiming_single_gate
+Running: retiming_preserves_io
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 6.5 units
+[Retiming] Already optimally pipelined.
+  [PASS] retiming_preserves_io
+
+── Post-Route Optimizer ──
+Running: postroute_legacy_mode
+  [PASS] postroute_legacy_mode
+Running: postroute_result_fields
+  [PASS] postroute_result_fields
+Running: postroute_sta_driven_mode
+  [PASS] postroute_sta_driven_mode
+Running: postroute_max_iterations
+  [PASS] postroute_max_iterations
+Running: postroute_no_degradation
+  [PASS] postroute_no_degradation
+
+── Timing-Driven Placement ──
+Running: placement_basic
+  [PASS] placement_basic
+Running: placement_timing_driven_enabled
+  [PASS] placement_timing_driven_enabled
+Running: placement_timing_weight_effect
+  [PASS] placement_timing_weight_effect
+Running: placement_cells_in_bounds
+  [PASS] placement_cells_in_bounds
+Running: placement_result_completeness
+  [PASS] placement_result_completeness
+
+════════════════════════════════════════
+Phase 18 Results: 15 passed, 0 failed
+════════════════════════════════════════
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Phase18Tests" end time: Mar 12 09:05 GMT
+"Phase18Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+19/38 Testing: Phase19Tests
+19/38 Test: Phase19Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase19"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase19Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+
+╔══════════════════════════════════════════════════════╗
+║  SiliconForge Phase 19 — E2E Industrial Integration   ║
+╚══════════════════════════════════════════════════════╝
+
+── STA + MCMM Integration ──
+Running: e2e_sta_ocv_to_mcmm
+  [PASS] e2e_sta_ocv_to_mcmm
+Running: e2e_aocv_deep_pipeline
+  [PASS] e2e_aocv_deep_pipeline
+Running: e2e_mcmm_full_sweep
+  [PASS] e2e_mcmm_full_sweep
+
+── PnR Pipeline ──
+Running: e2e_place_then_sta
+  [PASS] e2e_place_then_sta
+Running: e2e_place_route_postopt
+  [PASS] e2e_place_route_postopt
+Running: e2e_retiming_then_sta
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 6.5 units
+[Retiming] Already optimally pipelined.
+  [PASS] e2e_retiming_then_sta
+
+── DRC Pipeline ──
+Running: e2e_drc_with_sky130_after_placement
+[DRC] Loaded SKY130 rule deck: 224 rules
+  [PASS] e2e_drc_with_sky130_after_placement
+Running: e2e_drc_export_reimport_check
+[DRC] Loaded SKY130 rule deck: 224 rules
+[DRC] Loaded 224 rules from PDK 'exported' (/tmp/sf_phase19_drc_roundtrip.json)
+  [PASS] e2e_drc_export_reimport_check
+
+── Full Signoff Flow ──
+Running: e2e_full_signoff_flow
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 6.5 units
+[Retiming] Already optimally pipelined.
+    [signoff] Retiming: cp_before=6.5 cp_after=6.5
+    [signoff] Placement: HPWL=201.546 timing_iters=3
+    [signoff] PostRoute: WNS 0 -> 0 iters=1
+    [signoff] STA AOCV: WNS=0 endpoints=3
+    [signoff] MCMM: scenarios=7 worst_setup_wns=0
+[DRC] Loaded SKY130 rule deck: 224 rules
+    [signoff] DRC SKY130: rules=224 violations=30
+  [PASS] e2e_full_signoff_flow
+Running: e2e_all_upgrades_summary
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 6.5 units
+[Retiming] Already optimally pipelined.
+[DRC] Loaded SKY130 rule deck: 224 rules
+
+    ╔══════════════════════════════════════════════════════╗
+    ║  INDUSTRIAL UPGRADE E2E SUMMARY                      ║
+    ╠══════════════════════════════════════════════════════╣
+    ║  Retiming:           ✓ (cp_before=6.5, cp_after=6.5)
+    ║  Timing-Driven Place: ✓ (HPWL=201.546, timing_iters=3)
+    ║  Post-Route Opt:     ✓ (WNS: 0→0, iters=1)
+    ║  STA OCV/AOCV:       ✓ (WNS=0, mode=AOCV)
+    ║  MCMM:               ✓ (scenarios=7, worst_wns=0)
+    ║  DRC SKY130:         ✓ (rules=224, violations=30)
+    ╚══════════════════════════════════════════════════════╝
+
+  [PASS] e2e_all_upgrades_summary
+
+════════════════════════════════════════
+Phase 19 Results: 10 passed, 0 failed
+════════════════════════════════════════
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Phase19Tests" end time: Mar 12 09:05 GMT
+"Phase19Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+20/38 Testing: Phase20Tests
+20/38 Test: Phase20Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase20"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase20Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+
+╔═══════════════════════════════════════════════════════╗
+║  SiliconForge Phase 20 — STA Industrial Features Test  ║
+╚═══════════════════════════════════════════════════════╝
+
+── CPPR ──
+Running: cppr_disabled_by_default
+  [PASS] cppr_disabled_by_default
+Running: cppr_with_ocv
+  [PASS] cppr_with_ocv
+Running: cppr_with_aocv
+  [PASS] cppr_with_aocv
+Running: cppr_reduces_pessimism
+  [PASS] cppr_reduces_pessimism
+
+── POCV ──
+Running: pocv_table_default_sigma
+  [PASS] pocv_table_default_sigma
+Running: pocv_table_per_cell_sigma
+  [PASS] pocv_table_per_cell_sigma
+Running: pocv_mode_enabled
+  [PASS] pocv_mode_enabled
+Running: pocv_with_pba_path_sigma
+  [PASS] pocv_with_pba_path_sigma
+
+── PBA ──
+Running: pba_disabled_by_default
+  [PASS] pba_disabled_by_default
+Running: pba_enabled_computes_path_delays
+  [PASS] pba_enabled_computes_path_delays
+Running: pba_with_aocv
+  [PASS] pba_with_aocv
+Running: pba_result_fields
+  [PASS] pba_result_fields
+
+── Crosstalk ──
+Running: xtalk_disabled_by_default
+  [PASS] xtalk_disabled_by_default
+Running: xtalk_enabled_with_config
+  [PASS] xtalk_enabled_with_config
+Running: xtalk_delta_on_close_wires
+  [PASS] xtalk_delta_on_close_wires
+Running: xtalk_config_fields
+  [PASS] xtalk_config_fields
+
+── Integration ──
+Running: all_industrial_features_together
+  [PASS] all_industrial_features_together
+Running: pocv_with_cppr_and_pba
+  [PASS] pocv_with_cppr_and_pba
+
+════════════════════════════════════════
+Phase 20 Results: 18 passed, 0 failed
+════════════════════════════════════════
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Phase20Tests" end time: Mar 12 09:05 GMT
+"Phase20Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+21/38 Testing: Phase21Tests
+21/38 Test: Phase21Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase21"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase21Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+=== Phase 21: Post-Route Optimizer Industrial Tests ===
+
+Running: vt_type_enum
+  [PASS] vt_type_enum
+Running: vt_type_str_conversion
+  [PASS] vt_type_str_conversion
+Running: gate_vt_assignment
+  [PASS] gate_vt_assignment
+Running: config_defaults
+  [PASS] config_defaults
+Running: config_custom
+  [PASS] config_custom
+Running: vt_leakage_model
+  [PASS] vt_leakage_model
+Running: vt_delay_model
+  [PASS] vt_delay_model
+Running: optimize_sta_driven_with_industrial
+  [PASS] optimize_sta_driven_with_industrial
+Running: optimize_with_all_features_disabled
+  [PASS] optimize_with_all_features_disabled
+Running: optimize_legacy_unchanged
+  [PASS] optimize_legacy_unchanged
+Running: leakage_measurement
+  [PASS] leakage_measurement
+Running: leakage_recovery_pass
+  [PASS] leakage_recovery_pass
+Running: deep_path_vt_swap
+  [PASS] deep_path_vt_swap
+Running: result_counters_non_negative
+  [PASS] result_counters_non_negative
+Running: useful_skew_disabled_by_default
+  [PASS] useful_skew_disabled_by_default
+Running: message_includes_industrial_info
+  [PASS] message_includes_industrial_info
+Running: e2e_full_industrial_opt
+  [PASS] e2e_full_industrial_opt
+Running: e2e_backward_compatibility
+  [PASS] e2e_backward_compatibility
+
+=== Results: 18 passed, 0 failed ===
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Phase21Tests" end time: Mar 12 09:05 GMT
+"Phase21Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+22/38 Testing: Phase22Tests
+22/38 Test: Phase22Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase22"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase22Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+=== Phase 22: Placer Industrial Tests ===
+
+Running: congestion_driven_basic
+  [PASS] congestion_driven_basic
+Running: congestion_weight_effect
+  [PASS] congestion_weight_effect
+Running: congestion_disabled_by_default
+  [PASS] congestion_disabled_by_default
+Running: fence_constraint
+  [PASS] fence_constraint
+Running: blockage_constraint
+  [PASS] blockage_constraint
+Running: constraint_type_enum
+  [PASS] constraint_type_enum
+Running: cell_padding_basic
+  [PASS] cell_padding_basic
+Running: displacement_measurement
+  [PASS] displacement_measurement
+Running: displacement_in_message
+  [PASS] displacement_in_message
+Running: incremental_mode_basic
+  [PASS] incremental_mode_basic
+Running: max_displacement_setting
+  [PASS] max_displacement_setting
+Running: slack_histogram_populated
+  [PASS] slack_histogram_populated
+Running: slack_histogram_zero_when_no_timing
+  [PASS] slack_histogram_zero_when_no_timing
+Running: timing_aware_detail_basic
+  [PASS] timing_aware_detail_basic
+Running: timing_message_includes_swaps
+  [PASS] timing_message_includes_swaps
+Running: e2e_all_features
+  [PASS] e2e_all_features
+Running: e2e_backward_compatibility
+  [PASS] e2e_backward_compatibility
+
+=== Results: 17 passed, 0 failed ===
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Phase22Tests" end time: Mar 12 09:05 GMT
+"Phase22Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+23/38 Testing: Phase23Tests
+23/38 Test: Phase23Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase23"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase23Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+=== Phase 23: Retiming Industrial Tests ===
+
+Running: config_defaults
+  [PASS] config_defaults
+Running: config_custom
+  [PASS] config_custom
+Running: result_fmax_metrics
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 2 units
+[Retiming] Already optimally pipelined.
+  [PASS] result_fmax_metrics
+Running: result_register_count
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 2 units
+[Retiming] Already optimally pipelined.
+  [PASS] result_register_count
+Running: clock_gating_detection
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 2 units
+[Retiming] Already optimally pipelined.
+  [PASS] clock_gating_detection
+Running: clock_gating_manual_mark
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 2 units
+[Retiming] Already optimally pipelined.
+  [PASS] clock_gating_manual_mark
+Running: reset_path_preservation
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 3 nodes, 1 edges.
+  Critical path delay (before): 2 units
+[Retiming] Already optimally pipelined.
+  [PASS] reset_path_preservation
+Running: reset_disabled
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 3 nodes, 1 edges.
+  Critical path delay (before): 2 units
+[Retiming] Already optimally pipelined.
+  [PASS] reset_disabled
+Running: multicycle_path_constraint
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 2 units
+[Retiming] Already optimally pipelined.
+  [PASS] multicycle_path_constraint
+Running: hold_aware_retiming
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 2 units
+[Retiming] Already optimally pipelined.
+  [PASS] hold_aware_retiming
+Running: hold_disabled
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 2 units
+[Retiming] Already optimally pipelined.
+  [PASS] hold_disabled
+Running: register_budget_unlimited
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 2 units
+[Retiming] Already optimally pipelined.
+  [PASS] register_budget_unlimited
+Running: register_budget_zero
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 2 units
+[Retiming] Already optimally pipelined.
+  [PASS] register_budget_zero
+Running: dont_retime_gate
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 2 units
+[Retiming] Already optimally pipelined.
+  [PASS] dont_retime_gate
+Running: dont_retime_clear
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 2 units
+[Retiming] Already optimally pipelined.
+  [PASS] dont_retime_clear
+Running: liberty_delay_integration
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 2 units
+[Retiming] Already optimally pipelined.
+  [PASS] liberty_delay_integration
+Running: e2e_full_industrial
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 2 units
+[Retiming] Already optimally pipelined.
+  [PASS] e2e_full_industrial
+Running: e2e_backward_compatibility
+[Retiming] Building Leiserson-Saxe graph...
+  Graph: 4 nodes, 3 edges.
+  Critical path delay (before): 2 units
+[Retiming] Already optimally pipelined.
+  [PASS] e2e_backward_compatibility
+
+=== Results: 18 passed, 0 failed ===
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Phase23Tests" end time: Mar 12 09:05 GMT
+"Phase23Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+24/38 Testing: Phase24Tests
+24/38 Test: Phase24Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase24"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase24Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+=== Phase 24: MCMM Industrial Features Tests ===
+
+Running: signoff_type_enum
+  [PASS] signoff_type_enum
+Running: pvt_corner_defaults
+  [PASS] pvt_corner_defaults
+Running: functional_mode_defaults
+  [PASS] functional_mode_defaults
+Running: mcmm_config_defaults
+  [PASS] mcmm_config_defaults
+Running: cppr_per_corner
+  [PASS] cppr_per_corner
+Running: pocv_per_corner
+  [PASS] pocv_per_corner
+Running: active_scenario_set
+  [PASS] active_scenario_set
+Running: scenario_pruning
+  [PASS] scenario_pruning
+Running: signoff_summaries
+  [PASS] signoff_summaries
+Running: corner_signoff_type
+  [PASS] corner_signoff_type
+Running: mode_signoff_type
+  [PASS] mode_signoff_type
+Running: sensitivity_analysis
+  [PASS] sensitivity_analysis
+Running: foundry_corners_count
+  [PASS] foundry_corners_count
+Running: default_modes_signoff
+  [PASS] default_modes_signoff
+Running: industrial_result_metrics
+  [PASS] industrial_result_metrics
+Running: clear_active_set
+  [PASS] clear_active_set
+Running: full_foundry_signoff_e2e
+  [PASS] full_foundry_signoff_e2e
+Running: scenario_fields
+  [PASS] scenario_fields
+
+=== Results: 18 passed, 0 failed ===
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Phase24Tests" end time: Mar 12 09:05 GMT
+"Phase24Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+25/38 Testing: Phase25Tests
+25/38 Test: Phase25Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase25"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase25Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+=== Phase 25: Router Industrial Features Tests ===
+
+Running: router_config_defaults
+  [PASS] router_config_defaults
+Running: net_timing_info_defaults
+  [PASS] net_timing_info_defaults
+Running: global_router_config_api
+  [PASS] global_router_config_api
+Running: global_router_timing_driven
+  [PASS] global_router_timing_driven
+Running: global_router_antenna_check
+  [PASS] global_router_antenna_check
+Running: global_router_industrial_metrics
+  [PASS] global_router_industrial_metrics
+Running: global_router_layer_promotion
+  [PASS] global_router_layer_promotion
+Running: global_router_net_timing_map
+  [PASS] global_router_net_timing_map
+Running: detailed_router_returns_result
+DetailedRouterV2: Starting routing with 4 metal layers.
+DetailedRouterV2: Routing complete. 13 wires, 7 vias across 4 layers.
+  Layer distribution: M1=5, M2=2, M3=4, M4=2
+  [PASS] detailed_router_returns_result
+Running: detailed_router_config_api
+DetailedRouterV2: Starting routing with 4 metal layers.
+DetailedRouterV2: Routing complete. 13 wires, 7 vias across 4 layers.
+  Layer distribution: M1=5, M2=2, M3=4, M4=2
+  [PASS] detailed_router_config_api
+Running: detailed_router_via_minimization
+DetailedRouterV2: Starting routing with 4 metal layers.
+DetailedRouterV2: Routing complete. 13 wires, 7 vias across 4 layers.
+  Layer distribution: M1=5, M2=2, M3=4, M4=2
+  [PASS] detailed_router_via_minimization
+Running: detailed_router_antenna_check
+DetailedRouterV2: Starting routing with 4 metal layers.
+DetailedRouterV2: Routing complete. 13 wires, 7 vias across 4 layers.
+  Layer distribution: M1=5, M2=2, M3=4, M4=2
+  [PASS] detailed_router_antenna_check
+Running: detailed_router_per_layer
+DetailedRouterV2: Starting routing with 4 metal layers.
+DetailedRouterV2: Routing complete. 13 wires, 7 vias across 4 layers.
+  Layer distribution: M1=5, M2=2, M3=4, M4=2
+  [PASS] detailed_router_per_layer
+Running: detailed_router_reroute_iters
+DetailedRouterV2: Starting routing with 4 metal layers.
+DetailedRouterV2: Routing complete. 13 wires, 7 vias across 4 layers.
+  Layer distribution: M1=5, M2=2, M3=4, M4=2
+  [PASS] detailed_router_reroute_iters
+Running: backward_compat_no_config
+  [PASS] backward_compat_no_config
+Running: route_result_fields
+  [PASS] route_result_fields
+Running: global_then_detailed_e2e
+DetailedRouterV2: Starting routing with 4 metal layers.
+DetailedRouterV2: Routing complete. 13 wires, 7 vias across 4 layers.
+  Layer distribution: M1=5, M2=2, M3=4, M4=2
+  [PASS] global_then_detailed_e2e
+Running: critical_net_wirelength_tracking
+  [PASS] critical_net_wirelength_tracking
+
+=== Results: 18 passed, 0 failed ===
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Phase25Tests" end time: Mar 12 09:05 GMT
+"Phase25Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+26/38 Testing: Phase26Tests
+26/38 Test: Phase26Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase26"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase26Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+═══════════════════════════════════════
+ Phase 26: Lint Engine Industrial Tests
+═══════════════════════════════════════
+
+── Connectivity ──
+Running: connectivity_run_all_clean
+  [PASS] connectivity_run_all_clean
+Running: connectivity_undriven
+  [PASS] connectivity_undriven
+Running: connectivity_multi_driven
+  [PASS] connectivity_multi_driven
+
+── Clock ──
+Running: clock_multiple_domains
+  [PASS] clock_multiple_domains
+Running: clock_gated
+  [PASS] clock_gated
+Running: clock_async_reset_inconsistent
+  [PASS] clock_async_reset_inconsistent
+Running: clock_as_data
+  [PASS] clock_as_data
+
+── Timing ──
+Running: timing_combo_depth
+  [PASS] timing_combo_depth
+Running: timing_reconvergent
+  [PASS] timing_reconvergent
+
+── Naming ──
+Running: naming_short
+  [PASS] naming_short
+Running: naming_convention_clock
+  [PASS] naming_convention_clock
+Running: naming_duplicates
+  [PASS] naming_duplicates
+
+── Structure ──
+Running: structure_high_fanout
+  [PASS] structure_high_fanout
+Running: structure_high_fanin
+  [PASS] structure_high_fanin
+Running: structure_dangling_net
+  [PASS] structure_dangling_net
+
+── Redundancy ──
+Running: redundancy_dead_logic
+  [PASS] redundancy_dead_logic
+Running: redundancy_double_inversion
+  [PASS] redundancy_double_inversion
+Running: redundancy_const_propagation
+  [PASS] redundancy_const_propagation
+
+── Power ──
+Running: power_unnecessary_buffer
+  [PASS] power_unnecessary_buffer
+
+── DFT ──
+Running: dft_no_scan_mux
+  [PASS] dft_no_scan_mux
+Running: dft_no_reset
+  [PASS] dft_no_reset
+
+── Config & Summary ──
+Running: config_disable_rule
+  [PASS] config_disable_rule
+Running: config_disable_category
+  [PASS] config_disable_category
+Running: summary_generation
+  [PASS] summary_generation
+Running: full_industrial_run
+    Full run: 2 violations (0E 0W 2I)
+  [PASS] full_industrial_run
+
+════════════════════════════════
+Results: 25 passed, 0 failed
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Phase26Tests" end time: Mar 12 09:05 GMT
+"Phase26Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+27/38 Testing: Phase27Tests
+27/38 Test: Phase27Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase27"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase27Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+═══════════════════════════════════════
+ Phase 27: TCL Shell Industrial Tests
+═══════════════════════════════════════
+
+── Arrays ──
+Running: array_set_get
+  [PASS] array_set_get
+Running: array_command
+  [PASS] array_command
+Running: array_substitution
+  [PASS] array_substitution
+
+── List Operations ──
+Running: lappend_basic
+  [PASS] lappend_basic
+Running: lsort_basic
+  [PASS] lsort_basic
+Running: lsort_integer
+  [PASS] lsort_integer
+Running: lsort_decreasing
+  [PASS] lsort_decreasing
+Running: lsearch_basic
+  [PASS] lsearch_basic
+Running: lrange_basic
+  [PASS] lrange_basic
+Running: lrange_end
+  [PASS] lrange_end
+
+── String Operations ──
+Running: string_index
+  [PASS] string_index
+Running: string_range
+  [PASS] string_range
+Running: string_first
+  [PASS] string_first
+Running: string_repeat
+  [PASS] string_repeat
+Running: string_is_integer
+  [PASS] string_is_integer
+
+── Regex ──
+Running: regexp_basic
+  [PASS] regexp_basic
+Running: regexp_capture
+  [PASS] regexp_capture
+Running: regsub_basic
+  [PASS] regsub_basic
+
+── Control Flow ──
+Running: catch_success
+  [PASS] catch_success
+Running: catch_error
+  [PASS] catch_error
+Running: switch_basic
+  [PASS] switch_basic
+Running: break_in_for
+  [PASS] break_in_for
+Running: continue_in_foreach
+  [PASS] continue_in_foreach
+
+── Namespace ──
+Running: namespace_eval
+  [PASS] namespace_eval
+
+── Join/Split/Format/Concat ──
+Running: join_basic
+  [PASS] join_basic
+Running: split_basic
+  [PASS] split_basic
+Running: format_basic
+  [PASS] format_basic
+Running: concat_basic
+  [PASS] concat_basic
+Running: append_basic
+  [PASS] append_basic
+Running: lmap_basic
+  [PASS] lmap_basic
+Running: unset_basic
+  [PASS] unset_basic
+
+── Backward Compatibility ──
+Running: backward_compat_basics
+  [PASS] backward_compat_basics
+
+════════════════════════════════
+Results: 32 passed, 0 failed
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Phase27Tests" end time: Mar 12 09:05 GMT
+"Phase27Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+28/38 Testing: Phase28Tests
+28/38 Test: Phase28Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase28"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase28Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+═══════════════════════════════════════
+ Phase 28: HLS Industrial Tests
+═══════════════════════════════════════
+
+── Parser ──
+Running: parse_simple_assign
+  [PASS] parse_simple_assign
+Running: parse_multi_statement
+  [PASS] parse_multi_statement
+Running: parse_if_else
+  [PASS] parse_if_else
+Running: parse_for_loop
+  [PASS] parse_for_loop
+Running: parse_while_loop
+  [PASS] parse_while_loop
+Running: parse_comparison_ops
+  [PASS] parse_comparison_ops
+Running: parse_shift_ops
+  [PASS] parse_shift_ops
+
+── Scheduling ──
+Running: schedule_asap
+  [PASS] schedule_asap
+Running: schedule_alap
+  [PASS] schedule_alap
+Running: schedule_mobility
+  [PASS] schedule_mobility
+Running: schedule_list
+  [PASS] schedule_list
+
+── Resource Allocation & Binding ──
+Running: resource_allocation
+  [PASS] resource_allocation
+Running: resource_binding
+  [PASS] resource_binding
+
+── Pipeline ──
+Running: pipeline_generation
+  [PASS] pipeline_generation
+
+── Full Synthesis ──
+Running: synthesize_full_asap
+    Cycles=5 Adders=2 Muls=1 Regs=7
+  [PASS] synthesize_full_asap
+Running: synthesize_full_list
+  [PASS] synthesize_full_list
+Running: synthesize_with_pipeline
+    Pipeline: 3 stages, II=1
+  [PASS] synthesize_with_pipeline
+Running: synthesize_to_netlist
+  [PASS] synthesize_to_netlist
+Running: latency_model
+  [PASS] latency_model
+
+════════════════════════════════
+Results: 19 passed, 0 failed
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Phase28Tests" end time: Mar 12 09:05 GMT
+"Phase28Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+29/38 Testing: Phase29Tests
+29/38 Test: Phase29Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase29"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase29Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+═══════════════════════════════════════════════════════
+ Phase 29: JTAG/BIST Industrial Tests
+═══════════════════════════════════════════════════════
+
+Running: tap_initial_state
+  [PASS] tap_initial_state
+Running: tap_reset
+  [PASS] tap_reset
+Running: tap_dr_scan_path
+  [PASS] tap_dr_scan_path
+Running: tap_ir_scan_path
+  [PASS] tap_ir_scan_path
+Running: tap_tlr_hold
+  [PASS] tap_tlr_hold
+Running: tap_rti_hold
+  [PASS] tap_rti_hold
+Running: jtag_idcode
+  [PASS] jtag_idcode
+Running: jtag_bypass
+  [PASS] jtag_bypass
+Running: jtag_ir_shift
+  [PASS] jtag_ir_shift
+Running: jtag_dr_shift
+  [PASS] jtag_dr_shift
+Running: bsr_add_cells
+  [PASS] bsr_add_cells
+Running: bsr_capture_shift_update
+  [PASS] bsr_capture_shift_update
+Running: lfsr_standard_polynomials
+  [PASS] lfsr_standard_polynomials
+Running: lfsr_sequence
+  [PASS] lfsr_sequence
+Running: lfsr_get_pattern
+  [PASS] lfsr_get_pattern
+Running: lfsr_reset
+  [PASS] lfsr_reset
+Running: misr_compress
+  [PASS] misr_compress
+Running: misr_deterministic
+  [PASS] misr_deterministic
+Running: misr_reset
+  [PASS] misr_reset
+Running: lbist_run
+  [PASS] lbist_run
+Running: mbist_march_c_minus
+  [PASS] mbist_march_c_minus
+Running: mbist_march_x
+  [PASS] mbist_march_x
+Running: mbist_checkerboard
+  [PASS] mbist_checkerboard
+Running: mbist_different_sizes
+  [PASS] mbist_different_sizes
+Running: bsdl_generate
+  [PASS] bsdl_generate
+Running: dft_full_integration
+  [PASS] dft_full_integration
+
+═══════════════════════════════════════════════════════
+ Results: 26 passed, 0 failed
+═══════════════════════════════════════════════════════
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Phase29Tests" end time: Mar 12 09:05 GMT
+"Phase29Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+30/38 Testing: Phase30Tests
+30/38 Test: Phase30Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase30"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase30Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+═══════════════════════════════════════════════════════
+ Phase 30: Memory Compiler Industrial Tests
+═══════════════════════════════════════════════════════
+
+Running: basic_sram_backward_compat
+  [PASS] basic_sram_backward_compat
+Running: register_file_backward_compat
+  [PASS] register_file_backward_compat
+Running: column_mux_2x
+  [PASS] column_mux_2x
+Running: column_mux_4x
+  [PASS] column_mux_4x
+Running: banking_2_banks
+  [PASS] banking_2_banks
+Running: banking_4_banks
+  [PASS] banking_4_banks
+Running: ecc_32bit
+  [PASS] ecc_32bit
+Running: ecc_64bit
+  [PASS] ecc_64bit
+Running: corner_ss
+  [PASS] corner_ss
+Running: corner_ff
+  [PASS] corner_ff
+Running: temperature_scaling
+  [PASS] temperature_scaling
+Running: voltage_scaling
+  [PASS] voltage_scaling
+Running: redundancy
+  [PASS] redundancy
+Running: power_gating
+  [PASS] power_gating
+Running: retention
+  [PASS] retention
+Running: mbist_wrapper
+  [PASS] mbist_wrapper
+Running: full_featured_sram
+  [PASS] full_featured_sram
+Running: dual_port_sram
+  [PASS] dual_port_sram
+Running: detailed_report_content
+  [PASS] detailed_report_content
+Running: extended_timing
+  [PASS] extended_timing
+
+═══════════════════════════════════════════════════════
+ Results: 20 passed, 0 failed
+═══════════════════════════════════════════════════════
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Phase30Tests" end time: Mar 12 09:05 GMT
+"Phase30Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+31/38 Testing: Phase31Tests
+31/38 Test: Phase31Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase31"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase31Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+═══════════════════════════════════════════════════════
+ Phase 31: LEF Parser Industrial Tests
+═══════════════════════════════════════════════════════
+
+Running: parse_basic_lef
+  [PASS] parse_basic_lef
+Running: units_parsing
+  [PASS] units_parsing
+Running: layer_routing
+  [PASS] layer_routing
+Running: layer_cut
+  [PASS] layer_cut
+Running: layer_count
+  [PASS] layer_count
+Running: via_parsing
+  [PASS] via_parsing
+Running: site_parsing
+  [PASS] site_parsing
+Running: macro_inv
+  [PASS] macro_inv
+Running: macro_pin_direction
+  [PASS] macro_pin_direction
+Running: macro_pin_port_geometry
+  [PASS] macro_pin_port_geometry
+Running: macro_obs
+  [PASS] macro_obs
+Running: multiple_macros
+  [PASS] multiple_macros
+Running: find_nonexistent
+  [PASS] find_nonexistent
+Running: empty_input
+  [PASS] empty_input
+
+═══════════════════════════════════════════════════════
+ Results: 14 passed, 0 failed
+═══════════════════════════════════════════════════════
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Phase31Tests" end time: Mar 12 09:05 GMT
+"Phase31Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+32/38 Testing: Phase32Tests
+32/38 Test: Phase32Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase32"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase32Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+═══════════════════════════════════════════════════════
+ Phase 32: UPF Power Intent Parser Tests
+═══════════════════════════════════════════════════════
+
+Running: parse_basic_upf
+  [PASS] parse_basic_upf
+Running: power_domains
+  [PASS] power_domains
+Running: supply_nets
+  [PASS] supply_nets
+Running: supply_ports
+  [PASS] supply_ports
+Running: isolation_strategy
+  [PASS] isolation_strategy
+Running: level_shifter
+  [PASS] level_shifter
+Running: retention_strategy
+  [PASS] retention_strategy
+Running: backslash_continuation
+  [PASS] backslash_continuation
+Running: report_generation
+  [PASS] report_generation
+Running: to_upf_export
+  [PASS] to_upf_export
+Running: empty_input
+  [PASS] empty_input
+Running: comment_handling
+  [PASS] comment_handling
+Running: power_state_table
+  [PASS] power_state_table
+Running: multi_domain
+  [PASS] multi_domain
+Running: upf_checker
+  [PASS] upf_checker
+
+═══════════════════════════════════════════════════════
+ Results: 15 passed, 0 failed
+═══════════════════════════════════════════════════════
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Phase32Tests" end time: Mar 12 09:05 GMT
+"Phase32Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+33/38 Testing: Phase33Tests
+33/38 Test: Phase33Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase33"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase33Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+═══════════════════════════════════════════════════════
+ Phase 33: Electromigration Analysis Tests
+═══════════════════════════════════════════════════════
+
+Running: blacks_equation
+  [PASS] blacks_equation
+Running: temperature_effect
+  [PASS] temperature_effect
+Running: current_density
+  [PASS] current_density
+Running: sky130_rules
+  [PASS] sky130_rules
+Running: rules_7nm
+  [PASS] rules_7nm
+Running: analyze_empty_design
+  [PASS] analyze_empty_design
+Running: analyze_simple_design
+  [PASS] analyze_simple_design
+Running: suggest_fixes
+  [PASS] suggest_fixes
+Running: violation_severity
+  [PASS] violation_severity
+Running: zero_current
+  [PASS] zero_current
+Running: config_defaults
+  [PASS] config_defaults
+
+═══════════════════════════════════════════════════════
+ Results: 11 passed, 0 failed
+═══════════════════════════════════════════════════════
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Phase33Tests" end time: Mar 12 09:05 GMT
+"Phase33Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+34/38 Testing: Phase34Tests
+34/38 Test: Phase34Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase34"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase34Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+═══════════════════════════════════════════════════════
+ Phase 34: Multi-Clock CTS Tests
+═══════════════════════════════════════════════════════
+
+Running: single_clock_backward_compat
+  [PASS] single_clock_backward_compat
+Running: multi_clock_two_domains
+  [PASS] multi_clock_two_domains
+Running: multi_clock_three_domains
+  [PASS] multi_clock_three_domains
+Running: synchronous_group
+  [PASS] synchronous_group
+Running: asynchronous_group
+  [PASS] asynchronous_group
+Running: useful_skew_tree
+  [PASS] useful_skew_tree
+Running: power_aware_tree
+  [PASS] power_aware_tree
+Running: power_aware_config
+  [PASS] power_aware_config
+Running: generated_clock
+  [PASS] generated_clock
+Running: empty_config
+  [PASS] empty_config
+Running: single_sink_domain
+  [PASS] single_sink_domain
+
+═══════════════════════════════════════════════════════
+ Results: 11 passed, 0 failed
+═══════════════════════════════════════════════════════
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Phase34Tests" end time: Mar 12 09:05 GMT
+"Phase34Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+35/38 Testing: Phase35Tests
+35/38 Test: Phase35Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase35"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase35Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+
+╔══════════════════════════════════════════════════╗
+║  SiliconForge Phase 35 — IR Drop Industrial      ║
+╚══════════════════════════════════════════════════╝
+
+── Config & API ──
+Running: config_defaults
+  [PASS] config_defaults
+Running: config_custom
+  [PASS] config_custom
+Running: set_config_api
+  [PASS] set_config_api
+Running: power_pad_struct
+  [PASS] power_pad_struct
+
+── Gauss-Seidel Solver ──
+Running: solver_convergence
+  [PASS] solver_convergence
+Running: solver_grid_resolution
+  [PASS] solver_grid_resolution
+Running: solver_override_grid
+  [PASS] solver_override_grid
+Running: solver_drop_values
+  [PASS] solver_drop_values
+Running: solver_median_drop
+  [PASS] solver_median_drop
+
+── Power Pad Patterns ──
+Running: pad_corners
+  [PASS] pad_corners
+Running: pad_perimeter
+  [PASS] pad_perimeter
+Running: pad_ring
+  [PASS] pad_ring
+Running: pad_custom
+  [PASS] pad_custom
+Running: more_pads_less_drop
+  [PASS] more_pads_less_drop
+
+── Per-Cell Current ──
+Running: per_cell_current
+  [PASS] per_cell_current
+Running: bulk_cell_currents
+  [PASS] bulk_cell_currents
+
+── Hotspots ──
+Running: hotspot_detection
+  [PASS] hotspot_detection
+
+── Dynamic IR Drop ──
+Running: dynamic_ir_drop
+  [PASS] dynamic_ir_drop
+Running: dynamic_vs_static
+  [PASS] dynamic_vs_static
+
+── Timing Derating ──
+Running: timing_derating
+  [PASS] timing_derating
+
+── Signoff ──
+Running: signoff_pass
+  [PASS] signoff_pass
+Running: signoff_metrics
+  [PASS] signoff_metrics
+
+── Legacy API ──
+Running: legacy_api
+  [PASS] legacy_api
+
+── Result Completeness ──
+Running: result_completeness
+  [PASS] result_completeness
+
+── E2E Industrial ──
+Running: e2e_industrial
+  [PASS] e2e_industrial
+
+══════════════════════════════════════════════════
+  Phase 35: 25 passed, 0 failed
+══════════════════════════════════════════════════
+
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Phase35Tests" end time: Mar 12 09:05 GMT
+"Phase35Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+36/38 Testing: Phase36Tests
+36/38 Test: Phase36Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase36"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase36Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+
+╔══════════════════════════════════════════════════╗
+║  SiliconForge Phase 36 — PDN Industrial           ║
+╚══════════════════════════════════════════════════╝
+
+── Config & Structs ──
+Running: pdn_config_defaults
+  [PASS] pdn_config_defaults
+Running: decap_model
+  [PASS] decap_model
+Running: bump_pad_struct
+  [PASS] bump_pad_struct
+Running: via_array_struct
+  [PASS] via_array_struct
+
+── Target Impedance ──
+Running: target_impedance
+  [PASS] target_impedance
+Running: target_impedance_custom
+  [PASS] target_impedance_custom
+
+── Impedance Sweep ──
+Running: impedance_sweep_basic
+  [PASS] impedance_sweep_basic
+Running: impedance_sweep_with_decap
+  [PASS] impedance_sweep_with_decap
+
+── Resonance ──
+Running: resonance_detection
+  [PASS] resonance_detection
+
+── Full Analysis ──
+Running: full_analysis_basic
+  [PASS] full_analysis_basic
+Running: add_components
+  [PASS] add_components
+
+── Signoff ──
+Running: pi_signoff
+  [PASS] pi_signoff
+Running: pi_summary_fields
+  [PASS] pi_summary_fields
+
+── Backward Compat ──
+Running: backward_compat
+  [PASS] backward_compat
+
+── E2E Industrial ──
+Running: e2e_industrial_pdn
+  [PASS] e2e_industrial_pdn
+
+══════════════════════════════════════════════════
+  Phase 36: 15 passed, 0 failed
+══════════════════════════════════════════════════
+
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"Phase36Tests" end time: Mar 12 09:05 GMT
+"Phase36Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+37/38 Testing: Phase37Tests
+37/38 Test: Phase37Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase37"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase37Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+
+══════════════════════════════════════════════════
+  Phase 37: Signal Integrity Industrial
+══════════════════════════════════════════════════
+
+── SI Config ──
+Running: si_config_defaults
+  [PASS] si_config_defaults
+Running: si_config_custom
+  [PASS] si_config_custom
+Running: si_set_config
+  [PASS] si_set_config
+
+── Miller Factor ──
+Running: miller_factor_opposite
+  [PASS] miller_factor_opposite
+Running: miller_factor_same_dir
+  [PASS] miller_factor_same_dir
+Running: miller_factor_zero
+  [PASS] miller_factor_zero
+
+── Timing Windows ──
+Running: timing_window_full_overlap
+  [PASS] timing_window_full_overlap
+Running: timing_window_no_overlap
+  [PASS] timing_window_no_overlap
+Running: timing_window_partial
+  [PASS] timing_window_partial
+
+── CID ──
+Running: cid_basic
+  [PASS] cid_basic
+Running: cid_zero_victim_cap
+  [PASS] cid_zero_victim_cap
+
+── Glitch Filtering ──
+Running: glitch_passes
+  [PASS] glitch_passes
+Running: glitch_filtered
+  [PASS] glitch_filtered
+
+── NIC Table ──
+Running: nic_table
+  [PASS] nic_table
+
+── Noise Config & SSN ──
+Running: noise_config_defaults
+  [PASS] noise_config_defaults
+Running: ssn_basic
+  [PASS] ssn_basic
+Running: ssn_single_output
+  [PASS] ssn_single_output
+Running: freq_sweep
+  [PASS] freq_sweep
+Running: timing_derating
+  [PASS] timing_derating
+
+── Backward Compat ──
+Running: backward_compat_si
+  [PASS] backward_compat_si
+Running: backward_compat_noise
+  [PASS] backward_compat_noise
+
+── E2E Industrial ──
+Running: e2e_industrial
+  [PASS] e2e_industrial
+
+══════════════════════════════════════════════════
+  Phase 37: 22 passed, 0 failed
+══════════════════════════════════════════════════
+
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Phase37Tests" end time: Mar 12 09:05 GMT
+"Phase37Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+38/38 Testing: Phase38Tests
+38/38 Test: Phase38Tests
+Command: "/home/paramsaini/Desktop/siliconforge/build/tests/test_phase38"
+Directory: /home/paramsaini/Desktop/siliconforge/build/tests
+"Phase38Tests" start time: Mar 12 09:05 GMT
+Output:
+----------------------------------------------------------
+
+══════════════════════════════════════════════════
+  Phase 38: DRC Advanced Rules
+══════════════════════════════════════════════════
+
+── DrcConfig ──
+Running: config_defaults
+  [PASS] config_defaults
+Running: config_custom
+  [PASS] config_custom
+
+── EM Width ──
+Running: em_width_clean
+  [PASS] em_width_clean
+Running: em_width_violation
+  [PASS] em_width_violation
+Running: em_disabled
+  [PASS] em_disabled
+
+── Multi-Patterning ──
+Running: multi_patterning_clean
+  [PASS] multi_patterning_clean
+Running: multi_patterning_violation
+  [PASS] multi_patterning_violation
+Running: multi_patterning_triple
+  [PASS] multi_patterning_triple
+
+── Stress Voiding ──
+Running: stress_voiding_clean
+  [PASS] stress_voiding_clean
+Running: stress_voiding_violation
+  [PASS] stress_voiding_violation
+
+── ESD Spacing ──
+Running: esd_spacing_clean
+  [PASS] esd_spacing_clean
+Running: esd_spacing_violation
+  [PASS] esd_spacing_violation
+
+── Guard Ring ──
+Running: guard_ring_clean
+  [PASS] guard_ring_clean
+Running: guard_ring_violation
+  [PASS] guard_ring_violation
+
+── Reliability Width ──
+Running: reliability_width
+  [PASS] reliability_width
+Running: reliability_disabled
+  [PASS] reliability_disabled
+
+── Temperature-Variant Spacing ──
+Running: temp_variant_spacing
+  [PASS] temp_variant_spacing
+
+── Advanced Node Rules ──
+Running: advanced_node_rules
+  [PASS] advanced_node_rules
+
+── EM Rule Generation ──
+Running: em_rule_generation
+  [PASS] em_rule_generation
+
+── Backward Compatibility ──
+Running: backward_compat
+  [PASS] backward_compat
+
+── E2E Advanced ──
+Running: e2e_advanced_rules
+  [PASS] e2e_advanced_rules
+
+══════════════════════════════════════════════════
+  Phase 38: 21 passed, 0 failed
+══════════════════════════════════════════════════
+
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"Phase38Tests" end time: Mar 12 09:05 GMT
+"Phase38Tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Mar 12 09:05 GMT

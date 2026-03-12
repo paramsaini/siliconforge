@@ -110,12 +110,23 @@ std::string TclInterp::substitute(const std::string& str) {
                 while (i < str.size() && str[i] != '}') varname += str[i++];
                 if (i < str.size()) i++; // skip }
                 i--; // outer loop will i++
+                result += get_var(varname);
             } else {
-                while (i < str.size() && (isalnum(str[i]) || str[i] == '_'))
+                while (i < str.size() && (isalnum(str[i]) || str[i] == '_' || str[i] == ':'))
                     varname += str[i++];
-                i--; // outer loop will i++
+                // Check for array reference: $arr(key)
+                if (i < str.size() && str[i] == '(') {
+                    i++; // skip (
+                    std::string key;
+                    while (i < str.size() && str[i] != ')') key += str[i++];
+                    // Substitute variables in key
+                    key = substitute(key);
+                    result += get_array(varname, key);
+                } else {
+                    i--; // outer loop will i++
+                    result += get_var(varname);
+                }
             }
-            result += get_var(varname);
         } else if (str[i] == '[') {
             // Command substitution
             i++;
@@ -373,18 +384,45 @@ void TclInterp::register_builtins() {
     register_command("lindex", [this](auto& a) { return cmd_lindex(a); });
     register_command("string", [this](auto& a) { return cmd_string(a); });
     register_command("info", [this](auto& a) { return cmd_info(a); });
-    register_command("catch", [this](auto& a) -> std::string {
-        if (a.empty()) return "1";
-        try { eval(a[0]); return "0"; } catch (...) { return "1"; }
-    });
-    register_command("error", [](auto& a) -> std::string {
-        std::string msg = a.empty() ? "error" : a[0];
-        throw std::runtime_error(msg);
-    });
+    // Industrial: new commands
+    register_command("array", [this](auto& a) { return cmd_array(a); });
+    register_command("lappend", [this](auto& a) { return cmd_lappend(a); });
+    register_command("lsort", [this](auto& a) { return cmd_lsort(a); });
+    register_command("lsearch", [this](auto& a) { return cmd_lsearch(a); });
+    register_command("lrange", [this](auto& a) { return cmd_lrange(a); });
+    register_command("lreplace", [this](auto& a) { return cmd_lreplace(a); });
+    register_command("join", [this](auto& a) { return cmd_join(a); });
+    register_command("split", [this](auto& a) { return cmd_split(a); });
+    register_command("append", [this](auto& a) { return cmd_append(a); });
+    register_command("format", [this](auto& a) { return cmd_format(a); });
+    register_command("regexp", [this](auto& a) { return cmd_regexp(a); });
+    register_command("regsub", [this](auto& a) { return cmd_regsub(a); });
+    register_command("catch", [this](auto& a) { return cmd_catch(a); });
+    register_command("error", [this](auto& a) { return cmd_error(a); });
+    register_command("switch", [this](auto& a) { return cmd_switch(a); });
+    register_command("namespace", [this](auto& a) { return cmd_namespace(a); });
+    register_command("global", [this](auto& a) { return cmd_global(a); });
+    register_command("upvar", [this](auto& a) { return cmd_upvar(a); });
+    register_command("unset", [this](auto& a) { return cmd_unset(a); });
+    register_command("concat", [this](auto& a) { return cmd_concat(a); });
+    register_command("eval", [this](auto& a) { return cmd_eval_cmd(a); });
+    register_command("lmap", [this](auto& a) { return cmd_lmap(a); });
+    register_command("break", [](auto&) -> std::string { throw std::string("break"); });
+    register_command("continue", [](auto&) -> std::string { throw std::string("continue"); });
 }
 
 std::string TclInterp::cmd_set(const std::vector<std::string>& args) {
     if (args.empty()) return "";
+    // Handle array syntax: set arr(key) value
+    std::string name = args[0];
+    auto paren = name.find('(');
+    if (paren != std::string::npos && name.back() == ')') {
+        std::string arrname = name.substr(0, paren);
+        std::string key = name.substr(paren + 1, name.size() - paren - 2);
+        if (args.size() == 1) return get_array(arrname, key);
+        set_array(arrname, key, args[1]);
+        return args[1];
+    }
     if (args.size() == 1) return get_var(args[0]);
     vars_[args[0]] = args[1];
     return args[1];
@@ -442,7 +480,13 @@ std::string TclInterp::cmd_for(const std::vector<std::string>& args) {
     while (true) {
         std::string cond = eval_expr(args[1]);
         try { if (std::stod(cond) == 0) break; } catch (...) { break; }
-        result = eval(args[3]); // body
+        try {
+            result = eval(args[3]); // body
+        } catch (const std::string& ctrl) {
+            if (ctrl == "break") break;
+            if (ctrl == "continue") { eval(args[2]); continue; }
+            throw;
+        }
         eval(args[2]); // increment
     }
     return result;
@@ -452,12 +496,17 @@ std::string TclInterp::cmd_foreach(const std::vector<std::string>& args) {
     // foreach var list body
     if (args.size() < 3) return "";
     std::string varname = args[0];
-    // Parse list
     auto items = tokenize(args[1]);
     std::string result;
     for (auto& item : items) {
         vars_[varname] = item;
-        result = eval(args[2]);
+        try {
+            result = eval(args[2]);
+        } catch (const std::string& ctrl) {
+            if (ctrl == "break") break;
+            if (ctrl == "continue") continue;
+            throw;
+        }
     }
     return result;
 }
@@ -468,7 +517,13 @@ std::string TclInterp::cmd_while(const std::vector<std::string>& args) {
     while (true) {
         std::string cond = eval_expr(args[0]);
         try { if (std::stod(cond) == 0) break; } catch (...) { break; }
-        result = eval(args[1]);
+        try {
+            result = eval(args[1]);
+        } catch (const std::string& ctrl) {
+            if (ctrl == "break") break;
+            if (ctrl == "continue") continue;
+            throw;
+        }
     }
     return result;
 }
@@ -548,6 +603,74 @@ std::string TclInterp::cmd_string(const std::vector<std::string>& args) {
         while (!r.empty() && (r.back() == ' ' || r.back() == '\t')) r.pop_back();
         return r;
     }
+    if (args[0] == "trimleft" && args.size() >= 2) {
+        std::string r = args[1];
+        while (!r.empty() && (r.front() == ' ' || r.front() == '\t')) r.erase(r.begin());
+        return r;
+    }
+    if (args[0] == "trimright" && args.size() >= 2) {
+        std::string r = args[1];
+        while (!r.empty() && (r.back() == ' ' || r.back() == '\t')) r.pop_back();
+        return r;
+    }
+    if (args[0] == "index" && args.size() >= 3) {
+        int idx = 0;
+        try { idx = std::stoi(args[2]); } catch (...) {}
+        if (idx >= 0 && idx < (int)args[1].size()) return std::string(1, args[1][idx]);
+        return "";
+    }
+    if (args[0] == "range" && args.size() >= 4) {
+        int first = 0, last = (int)args[1].size() - 1;
+        try { first = std::stoi(args[2]); } catch (...) {}
+        if (args[3] == "end") last = (int)args[1].size() - 1;
+        else try { last = std::stoi(args[3]); } catch (...) {}
+        if (first < 0) first = 0;
+        if (last >= (int)args[1].size()) last = (int)args[1].size() - 1;
+        if (first > last) return "";
+        return args[1].substr(first, last - first + 1);
+    }
+    if (args[0] == "first" && args.size() >= 3) {
+        size_t pos = args[2].find(args[1]);
+        return (pos != std::string::npos) ? std::to_string(pos) : "-1";
+    }
+    if (args[0] == "last" && args.size() >= 3) {
+        size_t pos = args[2].rfind(args[1]);
+        return (pos != std::string::npos) ? std::to_string(pos) : "-1";
+    }
+    if (args[0] == "repeat" && args.size() >= 3) {
+        std::string result;
+        int count = 0;
+        try { count = std::stoi(args[2]); } catch (...) {}
+        for (int i = 0; i < count; i++) result += args[1];
+        return result;
+    }
+    if (args[0] == "replace" && args.size() >= 4) {
+        int first = 0, last = 0;
+        try { first = std::stoi(args[2]); } catch (...) {}
+        try { last = std::stoi(args[3]); } catch (...) {}
+        std::string rep = (args.size() >= 5) ? args[4] : "";
+        std::string s = args[1];
+        if (first >= 0 && last < (int)s.size() && first <= last)
+            return s.substr(0, first) + rep + s.substr(last + 1);
+        return s;
+    }
+    if (args[0] == "match" && args.size() >= 3) {
+        // Glob-style match (simplified)
+        return (args[2].find(args[1]) != std::string::npos) ? "1" : "0";
+    }
+    if (args[0] == "is" && args.size() >= 3) {
+        if (args[1] == "integer") {
+            try { std::stoi(args[2]); return "1"; } catch (...) { return "0"; }
+        }
+        if (args[1] == "double") {
+            try { std::stod(args[2]); return "1"; } catch (...) { return "0"; }
+        }
+        if (args[1] == "alpha") {
+            for (char c : args[2]) if (!std::isalpha(c)) return "0";
+            return "1";
+        }
+        return "0";
+    }
     return "";
 }
 
@@ -566,7 +689,420 @@ std::string TclInterp::cmd_info(const std::vector<std::string>& args) {
         for (auto& kv : procs_) result += kv.first + " ";
         return result;
     }
+    if (args[0] == "vars") {
+        std::string result;
+        for (auto& kv : vars_) result += kv.first + " ";
+        return result;
+    }
+    if (args[0] == "globals") {
+        std::string result;
+        for (auto& kv : vars_) result += kv.first + " ";
+        return result;
+    }
     return "";
+}
+
+// ── Array access methods ────────────────────────────────────────────
+void TclInterp::unset_var(const std::string& name) {
+    vars_.erase(name);
+}
+
+void TclInterp::set_array(const std::string& name, const std::string& key, const std::string& value) {
+    arrays_[name][key] = value;
+}
+
+std::string TclInterp::get_array(const std::string& name, const std::string& key) const {
+    auto ait = arrays_.find(name);
+    if (ait == arrays_.end()) return "";
+    auto kit = ait->second.find(key);
+    return (kit != ait->second.end()) ? kit->second : "";
+}
+
+bool TclInterp::has_array(const std::string& name) const {
+    return arrays_.count(name) > 0;
+}
+
+std::vector<std::string> TclInterp::array_names(const std::string& name) const {
+    std::vector<std::string> result;
+    auto ait = arrays_.find(name);
+    if (ait != arrays_.end()) {
+        for (auto& kv : ait->second) result.push_back(kv.first);
+    }
+    return result;
+}
+
+size_t TclInterp::array_size(const std::string& name) const {
+    auto ait = arrays_.find(name);
+    return (ait != arrays_.end()) ? ait->second.size() : 0;
+}
+
+// ── Industrial TCL commands ─────────────────────────────────────────
+
+std::string TclInterp::cmd_array(const std::vector<std::string>& args) {
+    if (args.size() < 2) return "";
+    std::string subcmd = args[0];
+    std::string name = args[1];
+    if (subcmd == "set") {
+        if (args.size() < 3) return "";
+        auto items = tokenize(args[2]);
+        for (size_t i = 0; i + 1 < items.size(); i += 2)
+            arrays_[name][items[i]] = items[i + 1];
+        return "";
+    }
+    if (subcmd == "get") {
+        std::string result;
+        auto ait = arrays_.find(name);
+        if (ait != arrays_.end()) {
+            for (auto& kv : ait->second)
+                result += kv.first + " " + kv.second + " ";
+        }
+        if (!result.empty()) result.pop_back();
+        return result;
+    }
+    if (subcmd == "names") {
+        std::string result;
+        auto ait = arrays_.find(name);
+        if (ait != arrays_.end()) {
+            for (auto& kv : ait->second) result += kv.first + " ";
+        }
+        if (!result.empty()) result.pop_back();
+        return result;
+    }
+    if (subcmd == "size") {
+        return std::to_string(array_size(name));
+    }
+    if (subcmd == "exists") {
+        return has_array(name) ? "1" : "0";
+    }
+    if (subcmd == "unset") {
+        arrays_.erase(name);
+        return "";
+    }
+    return "";
+}
+
+std::string TclInterp::cmd_lappend(const std::vector<std::string>& args) {
+    if (args.empty()) return "";
+    std::string& val = vars_[args[0]];
+    for (size_t i = 1; i < args.size(); i++) {
+        if (!val.empty()) val += " ";
+        val += args[i];
+    }
+    return val;
+}
+
+std::string TclInterp::cmd_lsort(const std::vector<std::string>& args) {
+    if (args.empty()) return "";
+    bool decreasing = false;
+    bool integer_sort = false;
+    bool unique = false;
+    std::string list_str;
+    for (size_t i = 0; i < args.size(); i++) {
+        if (args[i] == "-decreasing") decreasing = true;
+        else if (args[i] == "-increasing") decreasing = false;
+        else if (args[i] == "-integer") integer_sort = true;
+        else if (args[i] == "-unique") unique = true;
+        else list_str = args[i];
+    }
+    auto items = tokenize(list_str);
+    if (integer_sort) {
+        std::sort(items.begin(), items.end(), [&](const std::string& a, const std::string& b) {
+            try {
+                int ia = std::stoi(a), ib = std::stoi(b);
+                return decreasing ? ia > ib : ia < ib;
+            } catch (...) { return a < b; }
+        });
+    } else {
+        std::sort(items.begin(), items.end());
+        if (decreasing) std::reverse(items.begin(), items.end());
+    }
+    if (unique) {
+        items.erase(std::unique(items.begin(), items.end()), items.end());
+    }
+    std::string result;
+    for (size_t i = 0; i < items.size(); i++) {
+        if (i > 0) result += " ";
+        result += items[i];
+    }
+    return result;
+}
+
+std::string TclInterp::cmd_lsearch(const std::vector<std::string>& args) {
+    if (args.size() < 2) return "-1";
+    auto items = tokenize(args[0]);
+    std::string pattern = args[1];
+    for (size_t i = 0; i < items.size(); i++) {
+        if (items[i] == pattern) return std::to_string(i);
+    }
+    return "-1";
+}
+
+std::string TclInterp::cmd_lrange(const std::vector<std::string>& args) {
+    if (args.size() < 3) return "";
+    auto items = tokenize(args[0]);
+    int first = 0, last = (int)items.size() - 1;
+    try { first = std::stoi(args[1]); } catch (...) {}
+    if (args[2] == "end") last = (int)items.size() - 1;
+    else try { last = std::stoi(args[2]); } catch (...) {}
+    if (first < 0) first = 0;
+    if (last >= (int)items.size()) last = (int)items.size() - 1;
+    std::string result;
+    for (int i = first; i <= last; i++) {
+        if (!result.empty()) result += " ";
+        result += items[i];
+    }
+    return result;
+}
+
+std::string TclInterp::cmd_lreplace(const std::vector<std::string>& args) {
+    if (args.size() < 3) return "";
+    auto items = tokenize(args[0]);
+    int first = 0, last = 0;
+    try { first = std::stoi(args[1]); } catch (...) {}
+    try { last = std::stoi(args[2]); } catch (...) {}
+    if (first < 0) first = 0;
+    if (last >= (int)items.size()) last = (int)items.size() - 1;
+    std::vector<std::string> result;
+    for (int i = 0; i < first; i++) result.push_back(items[i]);
+    for (size_t i = 3; i < args.size(); i++) result.push_back(args[i]);
+    for (int i = last + 1; i < (int)items.size(); i++) result.push_back(items[i]);
+    std::string out;
+    for (size_t i = 0; i < result.size(); i++) {
+        if (i > 0) out += " ";
+        out += result[i];
+    }
+    return out;
+}
+
+std::string TclInterp::cmd_join(const std::vector<std::string>& args) {
+    if (args.empty()) return "";
+    auto items = tokenize(args[0]);
+    std::string sep = " ";
+    if (args.size() >= 2) sep = args[1];
+    std::string result;
+    for (size_t i = 0; i < items.size(); i++) {
+        if (i > 0) result += sep;
+        result += items[i];
+    }
+    return result;
+}
+
+std::string TclInterp::cmd_split(const std::vector<std::string>& args) {
+    if (args.empty()) return "";
+    std::string str = args[0];
+    std::string sep = " ";
+    if (args.size() >= 2) sep = args[1];
+    std::string result;
+    size_t pos = 0;
+    while (pos < str.size()) {
+        size_t found = str.find(sep, pos);
+        if (found == std::string::npos) {
+            if (!result.empty()) result += " ";
+            result += str.substr(pos);
+            break;
+        }
+        if (!result.empty()) result += " ";
+        result += str.substr(pos, found - pos);
+        pos = found + sep.size();
+    }
+    return result;
+}
+
+std::string TclInterp::cmd_append(const std::vector<std::string>& args) {
+    if (args.empty()) return "";
+    std::string& val = vars_[args[0]];
+    for (size_t i = 1; i < args.size(); i++) val += args[i];
+    return val;
+}
+
+std::string TclInterp::cmd_format(const std::vector<std::string>& args) {
+    if (args.empty()) return "";
+    std::string fmt = args[0];
+    std::string result;
+    size_t ai = 1;
+    for (size_t i = 0; i < fmt.size(); i++) {
+        if (fmt[i] == '%' && i + 1 < fmt.size()) {
+            i++;
+            if (fmt[i] == 's' && ai < args.size()) {
+                result += args[ai++];
+            } else if (fmt[i] == 'd' && ai < args.size()) {
+                try { result += std::to_string(std::stoi(args[ai++])); }
+                catch (...) { result += args[ai - 1]; }
+            } else if (fmt[i] == 'f' && ai < args.size()) {
+                try { result += std::to_string(std::stod(args[ai++])); }
+                catch (...) { result += args[ai - 1]; }
+            } else if (fmt[i] == '%') {
+                result += '%';
+            } else {
+                result += '%';
+                result += fmt[i];
+            }
+        } else {
+            result += fmt[i];
+        }
+    }
+    return result;
+}
+
+std::string TclInterp::cmd_regexp(const std::vector<std::string>& args) {
+    if (args.size() < 2) return "0";
+    try {
+        std::regex re(args[0]);
+        std::smatch match;
+        std::string str = args[1];
+        bool found = std::regex_search(str, match, re);
+        // Store match results in variables if provided
+        for (size_t i = 2; i < args.size() && i - 2 < match.size(); i++) {
+            vars_[args[i]] = match[i - 2].str();
+        }
+        return found ? "1" : "0";
+    } catch (...) {
+        return "0";
+    }
+}
+
+std::string TclInterp::cmd_regsub(const std::vector<std::string>& args) {
+    // regsub pattern string replacement ?varname?
+    if (args.size() < 3) return "";
+    bool all = false;
+    size_t idx = 0;
+    if (args[0] == "-all") { all = true; idx = 1; }
+    if (idx + 2 >= args.size()) return "";
+    try {
+        std::regex re(args[idx]);
+        std::string result;
+        if (all) result = std::regex_replace(args[idx + 1], re, args[idx + 2]);
+        else result = std::regex_replace(args[idx + 1], re, args[idx + 2],
+                                          std::regex_constants::format_first_only);
+        if (idx + 3 < args.size()) {
+            vars_[args[idx + 3]] = result;
+        }
+        return result;
+    } catch (...) {
+        return args[1];
+    }
+}
+
+std::string TclInterp::cmd_catch(const std::vector<std::string>& args) {
+    if (args.empty()) return "1";
+    try {
+        std::string result = eval(args[0]);
+        if (args.size() >= 2) vars_[args[1]] = result;
+        return "0";
+    } catch (const TclReturn& tr) {
+        if (args.size() >= 2) vars_[args[1]] = tr.value;
+        return "0";
+    } catch (const std::exception& e) {
+        if (args.size() >= 2) vars_[args[1]] = e.what();
+        return "1";
+    } catch (...) {
+        if (args.size() >= 2) vars_[args[1]] = "unknown error";
+        return "1";
+    }
+}
+
+std::string TclInterp::cmd_error(const std::vector<std::string>& args) {
+    std::string msg = args.empty() ? "error" : args[0];
+    throw std::runtime_error(msg);
+}
+
+std::string TclInterp::cmd_switch(const std::vector<std::string>& args) {
+    if (args.size() < 2) return "";
+    std::string value = args[0];
+    // switch value {pattern body pattern body ...}
+    if (args.size() == 2) {
+        auto items = tokenize(args[1]);
+        for (size_t i = 0; i + 1 < items.size(); i += 2) {
+            if (items[i] == value || items[i] == "default") {
+                return eval(items[i + 1]);
+            }
+        }
+    } else {
+        // switch value pattern body pattern body ...
+        for (size_t i = 1; i + 1 < args.size(); i += 2) {
+            if (args[i] == value || args[i] == "default") {
+                return eval(args[i + 1]);
+            }
+        }
+    }
+    return "";
+}
+
+std::string TclInterp::cmd_namespace(const std::vector<std::string>& args) {
+    if (args.empty()) return "";
+    if (args[0] == "eval" && args.size() >= 3) {
+        std::string old_ns = current_ns_;
+        current_ns_ = args[1];
+        if (current_ns_.substr(0, 2) != "::") current_ns_ = "::" + current_ns_;
+        std::string result = eval(args[2]);
+        current_ns_ = old_ns;
+        return result;
+    }
+    if (args[0] == "current") return current_ns_;
+    if (args[0] == "exists" && args.size() >= 2) {
+        return (ns_vars_.count(args[1]) > 0) ? "1" : "0";
+    }
+    return "";
+}
+
+std::string TclInterp::cmd_global(const std::vector<std::string>& args) {
+    // In our simple model, all variables are global already
+    // This is a no-op for compatibility
+    return "";
+}
+
+std::string TclInterp::cmd_upvar(const std::vector<std::string>& args) {
+    // upvar ?level? otherVar myVar
+    // Simple implementation: create alias in current scope
+    if (args.size() < 2) return "";
+    size_t idx = 0;
+    if (args.size() >= 3 && (args[0] == "1" || args[0] == "#0")) idx = 1;
+    std::string other = args[idx];
+    std::string mine = args[idx + 1];
+    // Copy the value (simplified — real TCL uses reference)
+    vars_[mine] = get_var(other);
+    return "";
+}
+
+std::string TclInterp::cmd_unset(const std::vector<std::string>& args) {
+    for (auto& a : args) {
+        vars_.erase(a);
+        arrays_.erase(a);
+    }
+    return "";
+}
+
+std::string TclInterp::cmd_concat(const std::vector<std::string>& args) {
+    std::string result;
+    for (size_t i = 0; i < args.size(); i++) {
+        if (i > 0) result += " ";
+        result += args[i];
+    }
+    return result;
+}
+
+std::string TclInterp::cmd_eval_cmd(const std::vector<std::string>& args) {
+    std::string script;
+    for (auto& a : args) {
+        if (!script.empty()) script += " ";
+        script += a;
+    }
+    return eval(script);
+}
+
+std::string TclInterp::cmd_lmap(const std::vector<std::string>& args) {
+    // lmap var list body — like foreach but collects results
+    if (args.size() < 3) return "";
+    std::string varname = args[0];
+    auto items = tokenize(args[1]);
+    std::string result;
+    for (auto& item : items) {
+        vars_[varname] = item;
+        std::string r = eval(args[2]);
+        if (!result.empty()) result += " ";
+        result += r;
+    }
+    return result;
 }
 
 // ── Register SiliconForge engine commands as TCL procedures ──────────

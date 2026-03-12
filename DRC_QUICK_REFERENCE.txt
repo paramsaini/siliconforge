@@ -1,0 +1,399 @@
+================================================================================
+SILICONFORGE DRC ENGINE - QUICK REFERENCE GUIDE
+================================================================================
+
+KEY FILES:
+  src/verify/drc.hpp      - Header: DrcRule, DrcLayer, DrcEngine interface
+  src/verify/drc.cpp      - Implementation: ~1505 lines
+  tests/test_phase17.cpp  - 18 comprehensive test cases
+
+RULE STATISTICS:
+  Total rule types defined:     45 enum values
+  SKY130 built-in rules:        224 rules
+  Fully working rule checks:    ~28 rule types
+  Stub functions (no logic):    4-5 checks (jog, notch, corner, holes)
+
+LAYER SUPPORT:
+  Process layers:     7 (wells, diff, poly, implants, HVI)
+  Contact layers:     3 (LICON, LI1, MCON)
+  Metal layers:       10 (MET1-MET5 + 5 vias)
+  Special layers:     3 (PAD, RDL, CELL, ANY)
+  Total:              26 layer types
+
+
+================================================================================
+RULE TYPE QUICK LOOKUP
+================================================================================
+
+BASIC GEOMETRY:
+  MIN_WIDTH ..................... Minimum line width
+  MIN_SPACING ................... Minimum edge-to-edge distance (with PRL >0 filter)
+  MIN_AREA ...................... Minimum enclosed area
+  MAX_WIDTH ..................... Maximum line width (slot prevention)
+  MIN_ENCLOSURE ................. Minimum enclosure (contact by metal)
+  MAX_LENGTH ..................... Maximum wire length
+
+ADVANCED SPACING:
+  WIDE_WIRE_SPACING ............. Spacing increases for wider wires (aux_value = width threshold)
+  PARALLEL_RUN_LENGTH_SPACING ... Spacing when PRL > threshold (aux_value = PRL threshold)
+  END_OF_LINE_SPACING ........... Special spacing for thin wire ends (aux_value = EOL width)
+  EOL_SPACING_WITHIN ............ EOL within specific distance
+  CONDITIONAL_SPACING ........... Width or PRL dependent (condition_min_width, condition_min_length)
+  CONDITIONAL_ENCLOSURE ......... Width dependent enclosure
+
+CONTACT/VIA:
+  MIN_VIA_WIDTH ................. Via/contact minimum dimension
+  MIN_VIA_SPACING ............... Via-to-via distance
+  VIA_ENCLOSURE ................. Metal must enclose via (layer2 = metal layer)
+  VIA_ARRAY_SPACING ............. Spacing for via arrays (>2 vias)
+  MIN_CUT_AREA .................. Via area requirement
+  CUT_SPACING ................... Cut-to-cut spacing
+  CUT_ENCLOSURE ................. Cut by layer enclosure
+
+GEOMETRY FEATURES:
+  MIN_HOLE_WIDTH ................ Minimum hole/void width in metal
+  MIN_HOLE_SPACING .............. Minimum spacing between holes
+  MIN_ENCLOSED_AREA ............. Minimum enclosed cavity area
+  MIN_STEP ....................... Minimum segment length (jog detection)
+  JOG_LENGTH ..................... Minimum jog feature size
+  JOG_SPACING ................... Spacing within jog pattern
+  NOTCH_FILL ..................... Minimum notch width (internal angle)
+  CORNER_FILL ................... Minimum corner fill dimension
+
+ELECTRICAL:
+  ANTENNA_RATIO ................. Wire area / gate area limit
+  ANTENNA_AREA .................. Absolute wire area limit
+  ANTENNA_CUMULATIVE_RATIO ...... Cumulative antenna ratio
+  DENSITY_MIN ................... Minimum metal density (ratio)
+  DENSITY_MAX ................... Maximum metal density (ratio)
+
+FRONT-END:
+  POLY_ENDCAP ................... Poly extension past diffusion
+  POLY_GATE_MIN_WIDTH ........... Minimum poly gate length
+  GATE_SPACING .................. Poly-to-poly over active spacing
+  DIFF_ENCLOSURE ................ Diffusion enclosure of contact
+  WELL_ENCLOSURE ................ Well enclosure of active
+  WELL_SPACING .................. Well-to-well distance
+  IMPLANT_ENCLOSURE ............. Implant enclosure of active
+  IMPLANT_SPACING ............... Implant-to-implant spacing
+  LATCHUP_SPACING ............... Substrate tap spacing (anti-latchup)
+
+UNIMPLEMENTED:
+  FATFINGER_WIDTH ............... (Not implemented)
+  FATFINGER_SPACING ............. (Not implemented)
+  MIN_EXTENSION ................. (Not implemented)
+  MIN_OVERLAP ................... (Not implemented)
+  SAME_NET_SPACING .............. (Filtered in checks, not independent rule)
+  DIFFERENT_NET_SPACING ......... (Filtered in checks, not independent rule)
+
+
+================================================================================
+CONDITIONAL RULE PARAMETERS EXPLAINED
+================================================================================
+
+DrcRule struct includes conditional parameters:
+
+  condition_min_width:   Threshold wire width (used in WIDE_WIRE_SPACING, CONDITIONAL_SPACING)
+  condition_min_length:  Threshold parallel run length (used in PARALLEL_RUN_LENGTH_SPACING)
+
+Example: MET1 width-dependent spacing rule
+  {
+    "name": "m1.7",
+    "type": "CONDITIONAL_SPACING",
+    "layer": 14,  // MET1
+    "value": 0.280,         // spacing when condition met
+    "condition_min_width": 0.700,  // if wire >= 0.7um, apply this spacing
+    "description": "Metal1 spacing for wires >= 0.70um"
+  }
+
+Example: MET1 PRL-dependent spacing
+  {
+    "name": "m1.prl.1",
+    "type": "PARALLEL_RUN_LENGTH_SPACING",
+    "layer": 14,  // MET1
+    "value": 0.220,         // spacing required
+    "condition_min_width": 0.420,  // wire >= 0.42um AND
+    "condition_min_length": 0.450, // parallel run >= 0.45um
+    "description": "Metal1 PRL spacing"
+  }
+
+
+================================================================================
+CHECK FUNCTIONS & COVERAGE
+================================================================================
+
+FULLY IMPLEMENTED (with real logic):
+  ✓ check_min_width()              - Passes/fails on width threshold
+  ✓ check_max_width()              - Passes/fails on max threshold
+  ✓ check_min_spacing()            - Edge-to-edge spacing with PRL filter
+  ✓ check_min_area()               - Wire area vs minimum
+  ✓ check_boundary()               - Cell placement within die
+  ✓ check_density()                - Per-layer metal density
+  ✓ check_via_rules()              - Via spacing, enclosure, area
+  ✓ check_wide_wire_spacing()      - Width-dependent spacing enforcement
+  ✓ check_end_of_line()            - EOL identification and spacing
+  ✓ check_antenna()                - Antenna ratio/area calculation
+  ✓ check_parallel_run()           - PRL threshold enforcement
+  ✓ check_conditional_spacing()    - Width+PRL dependent spacing
+  ✓ check_min_step()               - Short segment detection
+
+STUB IMPLEMENTATIONS (function exists, minimal/no logic):
+  ⚠ check_jog()                    - No L-shaped detection
+  ⚠ check_notch_fill()             - No geometry analysis
+  ⚠ check_corner_fill()            - No corner detection
+  ⚠ check_min_hole()               - Counted but not checked
+  ⚠ check_conditional_enclosure()  - Stub only
+  ⚠ check_enclosure()              - Via enclosure only (in check_via_rules)
+  ⚠ check_cut_rules()              - Counted but minimal logic
+
+
+================================================================================
+TYPICAL USAGE EXAMPLE
+================================================================================
+
+1. LOAD SKY130 RULES:
+   PhysicalDesign pd;
+   pd.die_area = Rect(0, 0, 1000, 1000);
+   DrcEngine eng(pd);
+   eng.load_sky130_rules();  // 224 rules loaded
+   int count = eng.rule_count();  // returns 224
+
+2. DISABLE SOME RULES:
+   eng.disable_rule("m1.1");  // Disable MET1 min width
+   
+3. RUN DRC CHECK:
+   DrcResult result = eng.check();
+   std::cout << result.violations << " violations found\n";
+   for (auto& v : result.details)
+       std::cout << v.rule_name << ": " << v.message << "\n";
+
+4. EXPORT RULES TO JSON:
+   eng.write_rules_to_file("my_rules.json");
+   
+5. LOAD CUSTOM PDK:
+   DrcEngine eng2(pd);
+   int loaded = eng2.load_rules_from_file("foundry_45nm.json");
+
+
+================================================================================
+SPATIAL INDEXING DETAILS
+================================================================================
+
+The DrcEngine uses a spatial grid for O(n log n) performance:
+
+  sgrid_nx_, sgrid_ny_:  Grid dimensions (typically 4-16 per side)
+  sgrid_cw_, sgrid_ch_:  Cell width/height in um
+  spatial_grid_:         Vector<Vector<GridCell>>
+
+Each GridCell contains:
+  - wire_ids:   indices into pd_.wires on this layer
+  - cell_ids:   indices into pd_.cells
+  - via_ids:    indices into pd_.vias
+
+Query methods:
+  query_nearby_wires(x, y, radius, layer) - returns wire indices within radius
+  query_nearby_cells(x, y, radius) - returns cell indices within radius
+
+Built on demand during check() via build_spatial_index().
+
+
+================================================================================
+JSON RULE DECK FORMAT REFERENCE
+================================================================================
+
+Minimal example:
+{
+  "pdk": "my_foundry_45nm",
+  "layers": {
+    "M1": 0, "M2": 1, "V1": 100
+  },
+  "rules": [
+    {
+      "name": "M1.W.1",
+      "type": "MIN_WIDTH",
+      "layer": "M1",
+      "value": 0.045,
+      "description": "Metal1 minimum width"
+    }
+  ]
+}
+
+Full example with conditional rule:
+{
+  "name": "m1.spaced",
+  "type": "CONDITIONAL_SPACING",
+  "layer": 0,
+  "value": 0.280,
+  "description": "Conditional spacing when width >= 0.7",
+  "condition_min_width": 0.700,
+  "condition_min_length": 0.0,
+  "severity": "error",
+  "enabled": true
+}
+
+Supported field types:
+  name (string, required)
+  type (string, required) - must match DrcRule::Type enum name
+  layer (int or string, required)
+  value (number, required)
+  layer2 (int, optional)
+  description (string, optional)
+  aux_value (number, optional)
+  aux_value2 (number, optional)
+  condition_min_width (number, optional)
+  condition_min_length (number, optional)
+  severity (string, optional) - "error", "warning", "info"
+  enabled (boolean, optional)
+
+
+================================================================================
+PERFORMANCE CHARACTERISTICS
+================================================================================
+
+SKY130 with ~1000 wires:
+  DRC check time: ~5-50 ms (depends on wire density)
+  Memory: ~1-5 MB for engine + rule set
+  Limiting factor: Wire-to-wire spacing checks (O(n²) worst case, mitigated by spatial grid)
+
+Scaling:
+  - 10K wires: ~50-200 ms
+  - 100K wires: ~500-2000 ms
+  - Grid helps maintain near-linear scaling despite O(n²) theoretical worst case
+
+
+================================================================================
+TEST RESULTS (18 TESTS)
+================================================================================
+
+SKY130 Deck Tests (5 passed):
+  ✓ 224 rules loaded
+  ✓ Key rule values correct (nwell.1, diff.1, poly.1a, m1.1, m5.1)
+  ✓ Layer assignments correct
+  ✓ >= 10 conditional rules present
+  ✓ All major rule categories represented
+
+JSON I/O Tests (3 passed):
+  ✓ Rules survive write/read roundtrip
+  ✓ Conditional rule parameters preserved
+  ✓ Append mode works
+
+Rule Management Tests (2 passed):
+  ✓ Enable/disable toggling
+  ✓ Severity levels assignment
+
+DRC Checking Tests (5 passed):
+  ✓ Clean design: 0 violations
+  ✓ Boundary violation detected
+  ✓ Width violation detected
+  ✓ Spacing violation detected
+  ✓ Timing reported correctly
+
+Error Handling Tests (3 passed):
+  ✓ Nonexistent file handled
+  ✓ Invalid JSON rejected
+  ✓ Rule clearing works
+
+
+================================================================================
+KEY LIMITATIONS TO KNOW
+================================================================================
+
+1. No net-level antenna tracking
+   - Antenna rules use aggregate layer totals, not per-net
+   - Real PDKs track antenna per net/pin
+
+2. Simplified gate area estimation
+   - Assumes 30% of cell area is gate (hardcoded, not configurable)
+   - Real antenna rules are more precise
+
+3. No hierarchical checking
+   - Checks only flat design, not hierarchical netlists
+   - Must be flattened for complete verification
+
+4. No lithography awareness
+   - No OPC, mask biasing, or wavelength considerations
+   - Pure geometric checking
+
+5. No electrical verification
+   - No IR drop, EM lifetime, crosstalk, noise analysis
+   - DRC only, not SPICE or physical-design reliability analysis
+
+6. Limited front-end support
+   - Front-end checks exist but not all integrated
+   - Some front-end rules may not fire on expected designs
+
+7. No design context
+   - Rules don't adapt based on circuit function (analog/digital/I/O)
+   - All rules apply uniformly
+
+
+================================================================================
+CODE NAVIGATION QUICK REFERENCE
+================================================================================
+
+Header file (drc.hpp):
+  Lines 1-42:    DrcLayer layer enumeration (26 layers)
+  Lines 44-109:  DrcRule data structure with Type enum (45 types)
+  Lines 111-138: DrcViolation and DrcResult structures
+  Lines 140-209: DrcEngine public interface and check functions
+
+Implementation file (drc.cpp):
+  Lines 1-54:    Helper functions (wire_length, wire_area, wires_spacing, parallel_run_length)
+  Lines 56-119:  Spatial indexing (build_spatial_index, query_nearby_*)
+  Lines 122-234: load_default_rules, load_advanced_rules
+  Lines 241-567: load_sky130_rules (224 rules, fully documented)
+  Lines 597-843: JSON parsing infrastructure (parser, type mappings)
+  Lines 846-967: load_rules_from_file and write_rules_to_file
+  Lines 1045-1502: Individual check_* functions (18 functions)
+
+Test file (test_phase17.cpp):
+  Lines 34-50:   build_clean_design helper
+  Lines 57-90:   SKY130 deck tests
+  Lines 168-228: JSON I/O tests
+  Lines 269-314: Rule management tests
+  Lines 321-413: DRC checking tests
+  Lines 420-462: Error handling tests
+
+
+================================================================================
+FOR DEVELOPERS: ADDING NEW RULE TYPES
+================================================================================
+
+Minimal 5-step process:
+
+STEP 1: Add to enum (drc.hpp, line 49-93):
+  NEW_RULE_TYPE,
+
+STEP 2: Add to rule_type_map (drc.cpp, line 781-829):
+  {"NEW_RULE_TYPE", DrcRule::NEW_RULE_TYPE},
+
+STEP 3: Implement check function (drc.cpp):
+  void DrcEngine::check_new_rule_type(DrcResult& r) {
+      for (auto& rule : rules_) {
+          if (rule.type != DrcRule::NEW_RULE_TYPE) continue;
+          r.total_rules++;
+          // Your logic here
+          if (violation_detected) {
+              r.violations++;
+              r.details.push_back({rule.name, "message", bbox, actual, required, severity});
+          }
+      }
+  }
+
+STEP 4: Call from check() dispatcher (drc.cpp, line ~1450):
+  check_new_rule_type(r);
+
+STEP 5: Add test (test_phase17.cpp):
+  TEST(new_rule_type_test) {
+      PhysicalDesign pd;
+      // setup...
+      DrcEngine eng(pd);
+      // load rules, run check...
+      CHECK(expected_violations, "message");
+      PASS("new_rule_type_test");
+  }
+
+
+================================================================================
+END OF QUICK REFERENCE
+================================================================================

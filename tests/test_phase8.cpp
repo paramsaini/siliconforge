@@ -106,9 +106,20 @@ TEST(mcmm_default) {
 TEST(mcmm_custom) {
     auto nl = build_circuit();
     McmmAnalyzer mcmm(nl);
-    mcmm.add_corner({"slow", 0.81, 125, PvtCorner::SLOW, 1.5, 0.8});
-    mcmm.add_corner({"fast", 0.99, -40, PvtCorner::FAST, 0.7, 1.3});
-    mcmm.add_mode({"func", 1000, 0.2, "Functional"});
+    PvtCorner slow_c;
+    slow_c.name = "slow"; slow_c.voltage = 0.81; slow_c.temperature_c = 125;
+    slow_c.process = PvtCorner::SLOW; slow_c.delay_scale = 1.5; slow_c.power_scale = 0.8;
+    mcmm.add_corner(slow_c);
+
+    PvtCorner fast_c;
+    fast_c.name = "fast"; fast_c.voltage = 0.99; fast_c.temperature_c = -40;
+    fast_c.process = PvtCorner::FAST; fast_c.delay_scale = 0.7; fast_c.power_scale = 1.3;
+    mcmm.add_corner(fast_c);
+
+    FunctionalMode func_m;
+    func_m.name = "func"; func_m.clock_freq_mhz = 1000;
+    func_m.switching_activity = 0.2; func_m.description = "Functional";
+    mcmm.add_mode(func_m);
 
     auto r = mcmm.analyze();
     CHECK(r.scenarios == 2, "2 corners × 1 mode");

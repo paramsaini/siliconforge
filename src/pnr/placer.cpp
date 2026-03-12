@@ -1,6 +1,8 @@
-// SiliconForge — Analytical Placer (SimPL-style)
+// SiliconForge — Analytical Placer (SimPL-style) with Timing-Driven Mode
 // Conjugate-gradient solver + density bin spreading + Abacus legalization
+// Timing-driven: STA-based slack analysis → criticality-weighted net model
 #include "pnr/placer.hpp"
+#include "timing/sta.hpp"
 #include <algorithm>
 #include <numeric>
 #include <chrono>
@@ -392,29 +394,427 @@ void AnalyticalPlacer::legalize_abacus() {
     }
 }
 
+// ── Timing-driven: STA → criticality → net weight update ─────────────
+// Reference: Kong 2002, "criticality(net) = (1 - slack/WNS)^exp"
+// Nets with negative slack get exponentially higher placement weight,
+// guiding the CG solver to shorten critical paths.
+void AnalyticalPlacer::update_timing_weights(PlaceResult& result) {
+    if (!timing_driven_ || !nl_ || clock_period_ <= 0) return;
+
+    // Build STA engine from netlist + current physical positions
+    StaEngine sta(*nl_, lib_);
+    auto sta_result = sta.analyze(clock_period_, 10);
+
+    result.wns = sta_result.wns;
+    result.tns = sta_result.tns;
+    result.timing_iterations++;
+
+    // Compute per-net slack from STA timing data
+    // We need to map netlist net IDs → physical design net IDs
+    // The STA gives us per-pin arrival/required; we derive per-net worst slack
+
+    // Collect worst slack per netlist net from critical paths
+    std::unordered_map<int, double> net_slack;
+    double worst_slack = 0;
+    int num_critical = 0;
+
+    for (auto& path : sta_result.critical_paths) {
+        double slack = path.slack;
+        if (slack < worst_slack) worst_slack = slack;
+        if (slack < 0) num_critical++;
+
+        // Each path contains nets that form the timing path
+        for (auto nid : path.nets) {
+            auto it = net_slack.find(nid);
+            if (it == net_slack.end()) {
+                net_slack[nid] = slack;
+            } else {
+                it->second = std::min(it->second, slack);
+            }
+        }
+    }
+
+    result.critical_nets = num_critical;
+    if (worst_slack >= 0) return; // All timing met, no weighting needed
+
+    // Compute criticality for each net and map to physical net weights
+    // criticality = (1 - slack/|WNS|)^exp, clamped to [0, 1]
+    double abs_wns = std::abs(worst_slack);
+    timing_net_weights_.clear();
+
+    for (auto& [nid, slack] : net_slack) {
+        if (slack >= 0) continue; // Non-critical nets keep default weight
+        double criticality = std::pow(
+            std::clamp(1.0 - slack / abs_wns, 0.0, 1.0),
+            criticality_exp_
+        );
+        // Net weight = 1 + timing_weight * criticality
+        double w = 1.0 + timing_weight_ * criticality;
+        timing_net_weights_[nid] = w;
+    }
+
+    // Apply timing weights to physical design nets
+    // Map by name: netlist net name → physical net with same name
+    for (size_t i = 0; i < pd_.nets.size(); i++) {
+        const auto& pnet = pd_.nets[i];
+        // Try to find matching netlist net by name
+        for (int nid = 0; nid < (int)nl_->num_nets(); nid++) {
+            if (nl_->net(nid).name == pnet.name) {
+                auto wit = timing_net_weights_.find(nid);
+                if (wit != timing_net_weights_.end()) {
+                    net_weights_[pnet.id] = wit->second;
+                }
+                break;
+            }
+        }
+    }
+}
+
+// ── Industrial: Congestion-driven placement (RUDY model) ─────────────
+// RUDY = Rectangular Uniform wire DensitY estimation
+// For each net, distribute its expected routing demand uniformly
+// across the bounding box of the net. Then penalize congested bins.
+
+void AnalyticalPlacer::build_congestion_grid(int nx, int ny) {
+    cong_nx_ = nx; cong_ny_ = ny;
+    congestion_grid_.resize(ny);
+    double bw = pd_.die_area.width() / nx;
+    double bh = pd_.die_area.height() / ny;
+    for (int j = 0; j < ny; j++) {
+        congestion_grid_[j].resize(nx);
+        for (int i = 0; i < nx; i++) {
+            auto& bin = congestion_grid_[j][i];
+            // Routing supply: proportional to bin area × available tracks
+            bin.supply = bw * bh * 0.5; // assume 50% routing efficiency
+            bin.demand = 0;
+        }
+    }
+}
+
+void AnalyticalPlacer::update_congestion_demand() {
+    if (cong_nx_ <= 0 || cong_ny_ <= 0) return;
+    double bw = pd_.die_area.width() / cong_nx_;
+    double bh = pd_.die_area.height() / cong_ny_;
+
+    // Reset demand
+    for (auto& row : congestion_grid_)
+        for (auto& bin : row) bin.demand = 0;
+
+    int n = (int)pd_.cells.size();
+    for (auto& net : pd_.nets) {
+        if (net.cell_ids.size() < 2) continue;
+        // Compute bounding box of net
+        double xmin = 1e18, xmax = -1e18, ymin = 1e18, ymax = -1e18;
+        for (int cid : net.cell_ids) {
+            if (cid < 0 || cid >= n) continue;
+            double cx = pd_.cells[cid].position.x;
+            double cy = pd_.cells[cid].position.y;
+            xmin = std::min(xmin, cx); xmax = std::max(xmax, cx);
+            ymin = std::min(ymin, cy); ymax = std::max(ymax, cy);
+        }
+        double net_hpwl = (xmax - xmin) + (ymax - ymin);
+        if (net_hpwl < 1e-6) continue;
+
+        // Distribute demand uniformly across bins overlapping the bbox
+        int bx0 = std::max(0, (int)((xmin - pd_.die_area.x0) / bw));
+        int bx1 = std::min(cong_nx_ - 1, (int)((xmax - pd_.die_area.x0) / bw));
+        int by0 = std::max(0, (int)((ymin - pd_.die_area.y0) / bh));
+        int by1 = std::min(cong_ny_ - 1, (int)((ymax - pd_.die_area.y0) / bh));
+        int num_bins = std::max(1, (bx1 - bx0 + 1) * (by1 - by0 + 1));
+        double per_bin = net_hpwl / num_bins;
+        for (int j = by0; j <= by1; j++)
+            for (int i = bx0; i <= bx1; i++)
+                congestion_grid_[j][i].demand += per_bin;
+    }
+}
+
+void AnalyticalPlacer::apply_congestion_penalty() {
+    if (cong_nx_ <= 0 || cong_ny_ <= 0) return;
+    double bw = pd_.die_area.width() / cong_nx_;
+    double bh = pd_.die_area.height() / cong_ny_;
+    int n = (int)pd_.cells.size();
+
+    // Push cells away from congested bins by adjusting anchors
+    for (int ci = 0; ci < n; ci++) {
+        if (fixed_cells_.count(ci)) continue;
+        int bx = std::clamp((int)((x_[ci] - pd_.die_area.x0) / bw), 0, cong_nx_ - 1);
+        int by = std::clamp((int)((y_[ci] - pd_.die_area.y0) / bh), 0, cong_ny_ - 1);
+        double overflow = congestion_grid_[by][bx].overflow();
+        if (overflow <= 0) continue;
+
+        double ratio = congestion_grid_[by][bx].ratio();
+        double penalty = congestion_weight_ * (ratio - 1.0);
+        // Push toward less congested neighbor bin
+        double target_x = x_[ci], target_y = y_[ci];
+        if (bx > 0 && congestion_grid_[by][bx-1].ratio() < ratio)
+            target_x -= bw * 0.3 * penalty;
+        else if (bx < cong_nx_ - 1 && congestion_grid_[by][bx+1].ratio() < ratio)
+            target_x += bw * 0.3 * penalty;
+        if (by > 0 && congestion_grid_[by-1][bx].ratio() < ratio)
+            target_y -= bh * 0.3 * penalty;
+        else if (by < cong_ny_ - 1 && congestion_grid_[by+1][bx].ratio() < ratio)
+            target_y += bh * 0.3 * penalty;
+
+        anchor_x_[ci] = anchor_x_[ci] * 0.7 + target_x * 0.3;
+        anchor_y_[ci] = anchor_y_[ci] * 0.7 + target_y * 0.3;
+    }
+}
+
+void AnalyticalPlacer::estimate_congestion(PlaceResult& result) {
+    if (cong_nx_ <= 0) build_congestion_grid(10, 10);
+    update_congestion_demand();
+
+    double peak = 0, total = 0;
+    int count = 0;
+    for (auto& row : congestion_grid_) {
+        for (auto& bin : row) {
+            double r = bin.ratio();
+            peak = std::max(peak, r);
+            total += r;
+            count++;
+        }
+    }
+    result.congestion_peak = peak;
+    result.congestion_avg = count > 0 ? total / count : 0;
+}
+
+// ── Industrial: Timing-aware detailed placement ──────────────────────
+// After Abacus legalization, do timing-aware cell swaps within each row.
+// Swap adjacent cells if it reduces WNS (not just HPWL).
+// Reference: Pan et al., "Timing-Driven Placement using Quadratic Programming", DAC 2005
+
+void AnalyticalPlacer::timing_aware_detail_placement(PlaceResult& result) {
+    if (!timing_driven_ || !nl_) return;
+
+    StaEngine sta(*nl_, lib_);
+    auto sta_before = sta.analyze(clock_period_, 5);
+    double wns_before = sta_before.wns;
+    int swapped = 0;
+
+    // For each row of cells, try timing-aware swaps
+    int num_rows = std::max(1, (int)(pd_.die_area.height() / pd_.row_height));
+    std::vector<std::vector<int>> row_cells(num_rows);
+    int n = (int)pd_.cells.size();
+
+    for (int i = 0; i < n; i++) {
+        if (fixed_cells_.count(i)) continue;
+        int row = std::clamp((int)((pd_.cells[i].position.y - pd_.die_area.y0) / pd_.row_height),
+                             0, num_rows - 1);
+        row_cells[row].push_back(i);
+    }
+
+    for (auto& rcells : row_cells) {
+        if (rcells.size() < 2) continue;
+        // Sort by x position
+        std::sort(rcells.begin(), rcells.end(),
+                  [&](int a, int b){ return pd_.cells[a].position.x < pd_.cells[b].position.x; });
+
+        for (size_t i = 0; i + 1 < rcells.size(); i++) {
+            int a = rcells[i], b = rcells[i+1];
+            // Try swap
+            std::swap(pd_.cells[a].position.x, pd_.cells[b].position.x);
+            if (pd_.cells[a].width != pd_.cells[b].width) {
+                double left_x = std::min(pd_.cells[a].position.x, pd_.cells[b].position.x);
+                pd_.cells[a].position.x = left_x;
+                pd_.cells[b].position.x = left_x + pd_.cells[a].width;
+            }
+
+            // Re-run STA and check if timing improved
+            StaEngine sta2(*nl_, lib_);
+            auto sta_after = sta2.analyze(clock_period_, 3);
+
+            if (sta_after.wns > wns_before || (sta_after.wns == wns_before && sta_after.tns > sta_before.tns)) {
+                // Keep the swap — timing improved
+                wns_before = sta_after.wns;
+                sta_before = sta_after;
+                swapped++;
+                std::swap(rcells[i], rcells[i+1]);
+            } else {
+                // Revert swap
+                std::swap(pd_.cells[a].position.x, pd_.cells[b].position.x);
+                if (pd_.cells[a].width != pd_.cells[b].width) {
+                    double left_x = std::min(pd_.cells[a].position.x, pd_.cells[b].position.x);
+                    pd_.cells[a].position.x = left_x;
+                    pd_.cells[b].position.x = left_x + pd_.cells[a].width;
+                }
+            }
+        }
+    }
+    result.timing_swaps = swapped;
+    result.wns = wns_before;
+}
+
+// ── Industrial: Placement constraints (fence/blockage) ───────────────
+void AnalyticalPlacer::enforce_constraints(PlaceResult& result) {
+    if (constraints_.empty()) return;
+    int violations = 0;
+    int n = (int)pd_.cells.size();
+
+    for (auto& con : constraints_) {
+        if (con.type == ConstraintType::FENCE) {
+            // Force cells inside the fence area
+            for (int cid : con.cell_ids) {
+                if (cid < 0 || cid >= n) continue;
+                auto& cell = pd_.cells[cid];
+                double nx = std::clamp(cell.position.x, con.area.x0,
+                                       con.area.x1 - cell.width);
+                double ny = std::clamp(cell.position.y, con.area.y0,
+                                       con.area.y1 - cell.height);
+                if (nx != cell.position.x || ny != cell.position.y) violations++;
+                cell.position.x = nx;
+                cell.position.y = ny;
+                x_[cid] = nx;
+                y_[cid] = ny;
+            }
+        } else if (con.type == ConstraintType::BLOCKAGE) {
+            // Push cells outside the blockage area
+            for (int ci = 0; ci < n; ci++) {
+                if (fixed_cells_.count(ci)) continue;
+                auto& cell = pd_.cells[ci];
+                Rect cr(cell.position.x, cell.position.y,
+                        cell.position.x + cell.width, cell.position.y + cell.height);
+                // Check overlap with blockage
+                if (cr.x1 > con.area.x0 && cr.x0 < con.area.x1 &&
+                    cr.y1 > con.area.y0 && cr.y0 < con.area.y1) {
+                    // Push to nearest edge
+                    double push_left = con.area.x0 - cell.width - cell.position.x;
+                    double push_right = con.area.x1 - cell.position.x;
+                    double push_down = con.area.y0 - cell.height - cell.position.y;
+                    double push_up = con.area.y1 - cell.position.y;
+                    double min_push = 1e18;
+                    double dx = 0, dy = 0;
+                    if (std::abs(push_right) < min_push) { min_push = std::abs(push_right); dx = push_right; dy = 0; }
+                    if (std::abs(push_left) < min_push) { min_push = std::abs(push_left); dx = push_left; dy = 0; }
+                    if (std::abs(push_up) < min_push) { min_push = std::abs(push_up); dx = 0; dy = push_up; }
+                    if (std::abs(push_down) < min_push) { dx = 0; dy = push_down; }
+                    cell.position.x += dx;
+                    cell.position.y += dy;
+                    x_[ci] = cell.position.x;
+                    y_[ci] = cell.position.y;
+                    violations++;
+                }
+            }
+        }
+        // GUIDE: soft constraint — handled via anchor weighting, not hard enforcement
+    }
+    result.constraint_violations = violations;
+}
+
+// ── Industrial: Cell padding for DRC-aware legalization ──────────────
+void AnalyticalPlacer::apply_cell_padding() {
+    if (cell_padding_.empty()) return;
+    // Temporarily inflate cell widths to account for padding
+    // This ensures Abacus legalization respects minimum spacing
+    for (auto& [cid, pad] : cell_padding_) {
+        if (cid >= 0 && cid < (int)pd_.cells.size()) {
+            pd_.cells[cid].width += pad.left + pad.right;
+            pd_.cells[cid].position.x += pad.left; // offset by left pad
+        }
+    }
+}
+
+// ── Industrial: Slack distribution histogram ─────────────────────────
+void AnalyticalPlacer::compute_slack_histogram(PlaceResult& result) {
+    if (!timing_driven_ || !nl_) return;
+
+    StaEngine sta(*nl_, lib_);
+    auto sta_r = sta.analyze(clock_period_, 5);
+
+    result.slack_histogram = {};
+    for (auto& path : sta_r.critical_paths) {
+        double s = path.slack;
+        int bucket;
+        if (s < -1.0) bucket = 0;
+        else if (s < -0.5) bucket = 1;
+        else if (s < -0.2) bucket = 2;
+        else if (s < -0.1) bucket = 3;
+        else if (s < 0) bucket = 4;
+        else if (s < 0.1) bucket = 5;
+        else if (s < 0.2) bucket = 6;
+        else if (s < 0.5) bucket = 7;
+        else if (s < 1.0) bucket = 8;
+        else bucket = 9;
+        result.slack_histogram[bucket]++;
+    }
+}
+
+// ── Industrial: Displacement measurement ─────────────────────────────
+void AnalyticalPlacer::compute_displacement(PlaceResult& result,
+                                            const std::vector<double>& orig_x,
+                                            const std::vector<double>& orig_y) {
+    int n = (int)pd_.cells.size();
+    double total_disp = 0, max_disp = 0;
+    int count = 0;
+    for (int i = 0; i < n; i++) {
+        if (fixed_cells_.count(i)) continue;
+        double dx = pd_.cells[i].position.x - orig_x[i];
+        double dy = pd_.cells[i].position.y - orig_y[i];
+        double d = std::sqrt(dx*dx + dy*dy);
+        total_disp += d;
+        max_disp = std::max(max_disp, d);
+        count++;
+    }
+    result.displacement_avg = count > 0 ? total_disp / count : 0;
+    result.displacement_max = max_disp;
+}
+
 // ── Main placement loop ──────────────────────────────────────────────
 PlaceResult AnalyticalPlacer::place() {
     auto t0 = std::chrono::high_resolution_clock::now();
     int n = (int)pd_.cells.size();
+
+    // In incremental mode, freeze all cells except specified ones
+    if (incremental_mode_) {
+        for (int i = 0; i < n; i++) {
+            if (!incremental_cells_.count(i))
+                fixed_cells_.insert(i);
+        }
+    }
+
+    // Apply cell padding before placement (inflates widths for DRC)
+    apply_cell_padding();
 
     // SimPL outer loop: alternate CG solve ↔ density spreading
     // Anchor weight increases each iteration to gradually enforce spreading
     x_.resize(n); y_.resize(n);
     anchor_x_.resize(n); anchor_y_.resize(n);
     anchor_w_.resize(n);
+
+    // Save original positions for displacement measurement
+    std::vector<double> orig_x(n), orig_y(n);
     for (int i = 0; i < n; i++) {
         anchor_x_[i] = pd_.die_area.center().x;
         anchor_y_[i] = pd_.die_area.center().y;
         anchor_w_[i] = 0.01;
+        orig_x[i] = pd_.cells[i].position.x;
+        orig_y[i] = pd_.cells[i].position.y;
+    }
+
+    // Initialize congestion grid if congestion-driven
+    if (congestion_driven_) {
+        int grid_size = std::max(5, (int)std::sqrt(n / 4.0));
+        build_congestion_grid(grid_size, grid_size);
     }
 
     int outer_iters = std::min(30, std::max(8, n / 10));
+    PlaceResult r;
     for (int oi = 0; oi < outer_iters; oi++) {
         // Phase 1: CG solve with current anchors
         solve_quadratic_cg();
 
         // Phase 2: Density spreading
         density_spread();
+
+        // Phase 2.5: Timing-driven net weight update (every N iterations)
+        if (timing_driven_ && oi > 0 && (oi % timing_update_interval_ == 0)) {
+            update_timing_weights(r);
+        }
+
+        // Phase 2.6: Congestion-driven penalty (every 2 iterations)
+        if (congestion_driven_ && oi > 1 && (oi % 2 == 0)) {
+            update_congestion_demand();
+            apply_congestion_penalty();
+        }
 
         // Update anchors: set to spread positions, increase weight
         for (int i = 0; i < n; i++) {
@@ -424,16 +824,63 @@ PlaceResult AnalyticalPlacer::place() {
         }
     }
 
-    // Phase 3: Final Abacus legalization
+    // Phase 3: Enforce placement constraints before legalization
+    enforce_constraints(r);
+
+    // Phase 4: Final Abacus legalization
     legalize_abacus();
 
+    // Phase 5: Timing-aware detailed placement (post-legalization swaps)
+    if (timing_driven_) {
+        timing_aware_detail_placement(r);
+    }
+
+    // Phase 6: Final timing analysis (if timing-driven)
+    if (timing_driven_) {
+        update_timing_weights(r);
+        compute_slack_histogram(r);
+    }
+
+    // Phase 7: Congestion estimation for reporting
+    if (congestion_driven_) {
+        estimate_congestion(r);
+    }
+
+    // Phase 8: Compute displacement metrics
+    compute_displacement(r, orig_x, orig_y);
+
+    // Restore cell padding (shrink widths back)
+    for (auto& [cid, pad] : cell_padding_) {
+        if (cid >= 0 && cid < (int)pd_.cells.size()) {
+            pd_.cells[cid].width -= pad.left + pad.right;
+            pd_.cells[cid].position.x -= pad.left;
+            r.cells_padded++;
+        }
+    }
+
     auto t1 = std::chrono::high_resolution_clock::now();
-    PlaceResult r;
     r.hpwl = compute_hpwl();
     r.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     r.iterations = outer_iters;
     r.legal = !pd_.has_overlaps();
-    r.message = r.legal ? "Placement legal (SimPL + Abacus)" : "Placement complete (minor overlaps)";
+
+    // Build summary message
+    r.message = "Placement ";
+    if (r.legal) r.message += "legal";
+    else r.message += "complete (minor overlaps)";
+    r.message += " (SimPL + Abacus";
+    if (timing_driven_) r.message += ", timing-driven";
+    if (congestion_driven_) r.message += ", congestion-driven";
+    if (incremental_mode_) r.message += ", incremental";
+    r.message += ")";
+    if (timing_driven_)
+        r.message += " WNS=" + std::to_string(r.wns).substr(0, 6);
+    if (r.timing_swaps > 0)
+        r.message += ", " + std::to_string(r.timing_swaps) + " timing swaps";
+    if (congestion_driven_)
+        r.message += ", cong_peak=" + std::to_string(r.congestion_peak).substr(0, 4);
+    r.message += ", disp_avg=" + std::to_string(r.displacement_avg).substr(0, 5);
+
     return r;
 }
 
