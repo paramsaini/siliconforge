@@ -93,11 +93,11 @@ CtsResult CtsEngine::build_clock_tree(const Point& source, const std::vector<int
     std::function<void(int)> create_wires = [&](int node) {
         auto& n = tree_[node];
         if (n.left >= 0) {
-            pd_.wires.push_back({0, n.position, tree_[n.left].position, 0.1});
+            pd_.wires.push_back({0, n.position, tree_[n.left].position, 0.14});
             create_wires(n.left);
         }
         if (n.right >= 0) {
-            pd_.wires.push_back({0, n.position, tree_[n.right].position, 0.1});
+            pd_.wires.push_back({0, n.position, tree_[n.right].position, 0.14});
             create_wires(n.right);
         }
     };
@@ -981,7 +981,7 @@ EcoCtsResult CtsEngine::apply_eco(const EcoCtsRequest& req, const CtsConfig& cts
             result.buffers_added++;
 
             // Add wire
-            pd_.wires.push_back({0, steiner.position, leaf.position, 0.1});
+            pd_.wires.push_back({0, steiner.position, leaf.position, 0.14});
         }
         result.sinks_added++;
     }
