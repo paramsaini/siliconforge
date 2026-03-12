@@ -228,6 +228,8 @@ double StaEngine::net_load_cap(NetId nid) const {
 }
 
 double StaEngine::wire_delay(NetId from, NetId to) const {
+    // Bounds check: invalid or out-of-range NetId → zero wire delay
+    if (from < 0 || from >= (NetId)nl_.num_nets()) return 0.0;
     auto& net = nl_.net(from);
     double fanout = (double)net.fanout.size();
     double eff_wd = analyzing_late_ ? derate_.wire_derate : derate_.early_wire;

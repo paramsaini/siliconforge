@@ -115,7 +115,9 @@ int CParser::parse_block(const std::vector<std::string>& tokens, size_t& i,
                          std::vector<CfgBlock>& blocks, std::map<std::string,int>& var_map) {
     int bid = block_counter_++;
     blocks.push_back({bid, "block_" + std::to_string(bid), {}, -1, -1, -1, -1, false, -1});
-    auto& block = blocks.back();
+    // NOTE: Do NOT hold a reference to blocks.back() — recursive parse_block()
+    // calls push_back() which can reallocate the vector, invalidating references.
+    // Always access via blocks[bid] after any recursive call.
 
     while (i < tokens.size()) {
         if (tokens[i] == "}") { i++; break; }
@@ -125,19 +127,19 @@ int CParser::parse_block(const std::vector<std::string>& tokens, size_t& i,
         if (tokens[i] == "if") {
             i++; // skip 'if'
             if (i < tokens.size() && tokens[i] == "(") i++;
-            int cond_id = parse_expr(tokens, i, block, var_map);
+            int cond_id = parse_expr(tokens, i, blocks[bid], var_map);
             if (i < tokens.size() && tokens[i] == ")") i++;
-            block.cond_node_id = cond_id;
+            blocks[bid].cond_node_id = cond_id;
 
             if (i < tokens.size() && tokens[i] == "{") i++;
             int true_bid = parse_block(tokens, i, blocks, var_map);
-            block.true_block_id = true_bid;
+            blocks[bid].true_block_id = true_bid;
 
             if (i < tokens.size() && tokens[i] == "else") {
                 i++;
                 if (i < tokens.size() && tokens[i] == "{") i++;
                 int false_bid = parse_block(tokens, i, blocks, var_map);
-                block.false_block_id = false_bid;
+                blocks[bid].false_block_id = false_bid;
             }
             continue;
         }
@@ -150,14 +152,14 @@ int CParser::parse_block(const std::vector<std::string>& tokens, size_t& i,
             // Parse init: var = expr;
             if (i + 2 < tokens.size() && tokens[i+1] == "=") {
                 std::string var = tokens[i]; i += 2;
-                int val = parse_expr(tokens, i, block, var_map);
-                block.datapath.push_back({id_counter_++, HlsOp::ASSIGN, 0, var, {val}});
-                var_map[var] = block.datapath.back().id;
+                int val = parse_expr(tokens, i, blocks[bid], var_map);
+                blocks[bid].datapath.push_back({id_counter_++, HlsOp::ASSIGN, 0, var, {val}});
+                var_map[var] = blocks[bid].datapath.back().id;
             }
             if (i < tokens.size() && tokens[i] == ";") i++;
 
             // Parse cond
-            int cond_id = parse_expr(tokens, i, block, var_map);
+            int cond_id = parse_expr(tokens, i, blocks[bid], var_map);
             if (i < tokens.size() && tokens[i] == ";") i++;
 
             // Parse incr (skip for now, mark as loop)
@@ -174,8 +176,8 @@ int CParser::parse_block(const std::vector<std::string>& tokens, size_t& i,
                     b.loop_bound = 8; // default bound for unrolling estimation
                 }
             }
-            block.true_block_id = body_bid;
-            block.cond_node_id = cond_id;
+            blocks[bid].true_block_id = body_bid;
+            blocks[bid].cond_node_id = cond_id;
             continue;
         }
 
@@ -183,15 +185,15 @@ int CParser::parse_block(const std::vector<std::string>& tokens, size_t& i,
         if (tokens[i] == "while") {
             i++;
             if (i < tokens.size() && tokens[i] == "(") i++;
-            int cond_id = parse_expr(tokens, i, block, var_map);
+            int cond_id = parse_expr(tokens, i, blocks[bid], var_map);
             if (i < tokens.size() && tokens[i] == ")") i++;
             if (i < tokens.size() && tokens[i] == "{") i++;
             int body_bid = parse_block(tokens, i, blocks, var_map);
             for (auto& b : blocks) {
                 if (b.id == body_bid) b.is_loop_header = true;
             }
-            block.true_block_id = body_bid;
-            block.cond_node_id = cond_id;
+            blocks[bid].true_block_id = body_bid;
+            blocks[bid].cond_node_id = cond_id;
             continue;
         }
 
@@ -199,10 +201,10 @@ int CParser::parse_block(const std::vector<std::string>& tokens, size_t& i,
         if (i + 1 < tokens.size() && tokens[i+1] == "=") {
             std::string target = tokens[i];
             i += 2; // skip var and =
-            int val = parse_expr(tokens, i, block, var_map);
+            int val = parse_expr(tokens, i, blocks[bid], var_map);
             if (i < tokens.size() && tokens[i] == ";") i++;
-            block.datapath.push_back({id_counter_++, HlsOp::ASSIGN, 0, target, {val}});
-            var_map[target] = block.datapath.back().id;
+            blocks[bid].datapath.push_back({id_counter_++, HlsOp::ASSIGN, 0, target, {val}});
+            var_map[target] = blocks[bid].datapath.back().id;
             continue;
         }
 

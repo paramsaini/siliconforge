@@ -664,3 +664,45 @@ Phase 41: Thermal Analysis — PENDING
 
 All changes backward-compatible. 39/39 CTest PASS.
 ================================================================================
+
+================================================================================
+CHECKPOINT: ASAN MEMORY BUG FIXES (Pre-Phase 40)
+================================================================================
+
+CONTEXT:
+Before starting Phases 40-44, comprehensive testing was performed per Rule 4.
+Built with -fsanitize=address (ASAN) and discovered 2 pre-existing memory bugs.
+
+BUG #1 — Phase 14: heap-buffer-overflow in StaEngine::wire_delay()
+  File: src/timing/sta.cpp
+  Root Cause: forward_propagation() passed NetId=-1 to wire_delay() when
+    gate inputs were empty. wire_delay() did nl_.net(-1) → nets_[-1] →
+    out-of-bounds heap access.
+  Fix: Added bounds check at top of wire_delay():
+    if (from < 0 || from >= (NetId)nl_.num_nets()) return 0.0;
+  Lines changed: sta.cpp wire_delay() function (2 lines added)
+
+BUG #2 — Phase 28: heap-use-after-free in CParser::parse_block()
+  File: src/hls/c_parser.cpp
+  Root Cause: parse_block() held `auto& block = blocks.back()` reference,
+    then recursive parse_block() calls pushed new blocks → vector reallocation
+    → dangling reference → use-after-free on block.true_block_id etc.
+  Fix: Replaced all `block.` references with index-based `blocks[bid].`
+    throughout the entire parse_block() function (if/for/while/assignment).
+  Lines changed: c_parser.cpp parse_block() function (~30 references updated)
+
+TEST RESULTS (Post-Fix):
+  CTest (Release):  39/39 PASS ✅
+  CTest (ASAN):     39/39 PASS ✅ (was 37/39 before fix)
+  Binary smoke:     PASS ✅ (help, read_verilog, synth, place, route, sta, drc, lec, exit)
+  Full signoff:     PASS ✅ (read_verilog→synth→place→route→sta→drc→lec)
+
+STATUS: All memory bugs eliminated. Ready to begin Phases 40-44.
+
+REMAINING PHASES:
+  Phase 40: Chiplet/Multi-Die Integration — PENDING
+  Phase 41: Thermal Analysis — PENDING
+  Phase 42: ML-Based Optimization — PENDING
+  Phase 43: Advanced CTS — PENDING
+  Phase 44: Advanced Formal Verification — PENDING
+================================================================================
