@@ -1,6 +1,6 @@
 #pragma once
 // SiliconForge — Unified End-to-End EDA Flow API
-// Orchestrates all 14 phases into a single, cohesive engine.
+// Orchestrates all 44 phases into a single, cohesive engine.
 // Provides full JSON state export for real-time frontend visualization.
 
 #include "core/netlist.hpp"
@@ -9,6 +9,21 @@
 #include "frontend/verilog_parser.hpp"
 #include "frontend/sva_parser.hpp"
 #include "sim/simulator.hpp"
+#include "timing/mcmm.hpp"
+#include "timing/ssta.hpp"
+#include "timing/ir_drop.hpp"
+#include "timing/pdn.hpp"
+#include "timing/signal_integrity.hpp"
+#include "timing/thermal.hpp"
+#include "timing/electromigration.hpp"
+#include "timing/noise.hpp"
+#include "pnr/cts.hpp"
+#include "pnr/post_route_opt.hpp"
+#include "pnr/chip_assembler.hpp"
+#include "ml/ml_opt.hpp"
+#include "formal/advanced_formal.hpp"
+#include "hls/c_parser.hpp"
+#include "dft/jtag_bist.hpp"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -104,6 +119,19 @@ public:
     bool run_reliability();
     bool run_lec();
 
+    // --- Advanced Analysis (Phases 20-44) ---
+    bool run_mcmm();
+    bool run_ssta();
+    bool run_ir_drop();
+    bool run_pdn();
+    bool run_signal_integrity();
+    bool run_thermal();
+    bool run_em();
+    bool run_noise();
+    bool run_post_route_opt();
+    bool run_chip_assemble();
+    bool run_adv_formal();
+
     // --- ML & Tuners ---
     bool optimize_pnr_with_ai();
 
@@ -146,6 +174,18 @@ private:
     bool is_cts_done_ = false;
     bool is_reliability_done_ = false;
     bool is_lec_done_ = false;
+    bool is_mcmm_done_ = false;
+    bool is_ssta_done_ = false;
+    bool is_ir_drop_done_ = false;
+    bool is_pdn_done_ = false;
+    bool is_si_done_ = false;
+    bool is_thermal_done_ = false;
+    bool is_em_done_ = false;
+    bool is_noise_done_ = false;
+    bool is_post_route_done_ = false;
+    bool is_chip_assembled_ = false;
+    bool is_ml_done_ = false;
+    bool is_adv_formal_done_ = false;
     Netlist pre_synth_nl_; // saved for LEC
     std::unordered_map<int, double> cts_insertion_delays_; // gate_id → insertion delay
 
@@ -158,6 +198,21 @@ private:
     DrcResultData drc_result_;
     LvsResultData lvs_result_;
     SimTrace sim_trace_;
+
+    // Advanced analysis results (Phases 20-44)
+    McmmResult mcmm_result_;
+    SstaResult ssta_result_;
+    IrDropResult ir_drop_result_;
+    PdnResult pdn_result_;
+    SiResult si_result_;
+    ThermalResult thermal_result_;
+    EmResult em_result_;
+    NoiseResult noise_result_;
+    CtsResult cts_result_;
+    PostRouteResult post_route_result_;
+    ChipResult chip_result_;
+    MlOptResult ml_result_;
+    AdvFormalResult adv_formal_result_;
 
     // JSON helpers
     static std::string json_escape(const std::string& s);

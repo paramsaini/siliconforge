@@ -40,7 +40,18 @@ void SiliconForgeShell::print_help() const {
     std::cout << "  cts                      : Run Clock Tree Synthesis\n";
     std::cout << "  reliability              : Run Reliability & IR-Drop Analysis\n";
     std::cout << "  lec                      : Run Logic Equivalence Checking\n";
-    std::cout << "  ai_tune                  : Run AI PnR optimization\n";
+    std::cout << "  ai_tune                  : Run AI PnR + ML optimization\n";
+    std::cout << "  mcmm                     : Run Multi-Corner Multi-Mode analysis\n";
+    std::cout << "  ssta                     : Run Statistical STA (Monte Carlo)\n";
+    std::cout << "  ir_drop                  : Run IR Drop analysis\n";
+    std::cout << "  pdn                      : Run PDN Impedance analysis\n";
+    std::cout << "  si                       : Run Signal Integrity analysis\n";
+    std::cout << "  thermal                  : Run Thermal analysis\n";
+    std::cout << "  em                       : Run Electromigration analysis\n";
+    std::cout << "  noise                    : Run Noise/SSN analysis\n";
+    std::cout << "  post_route_opt           : Run Post-Route Optimization\n";
+    std::cout << "  chip_assemble            : Run Chip Assembly (I/O pads, bumps)\n";
+    std::cout << "  adv_formal               : Run Advanced Formal (IC3/LTL/CEGAR)\n";
     std::cout << "  run_all [w] [h]          : Run full RTL-to-GDSII flow\n";
     std::cout << "  write_gds <file>         : Export GDSII binary\n";
     std::cout << "  dashboard <file>         : Generate Ultimate HTML Dashboard\n";
@@ -109,12 +120,34 @@ bool SiliconForgeShell::execute_command(const std::string& cmd_line) {
         engine_.run_cdc();
     } else if (cmd == "cts") {
         engine_.run_cts();
-    } else if (cmd == "reliability" || cmd == "ir_drop") {
+    } else if (cmd == "reliability") {
         engine_.run_reliability();
     } else if (cmd == "lec") {
         engine_.run_lec();
     } else if (cmd == "ai_tune") {
         engine_.optimize_pnr_with_ai();
+    } else if (cmd == "mcmm") {
+        engine_.run_mcmm();
+    } else if (cmd == "ssta") {
+        engine_.run_ssta();
+    } else if (cmd == "ir_drop") {
+        engine_.run_ir_drop();
+    } else if (cmd == "pdn") {
+        engine_.run_pdn();
+    } else if (cmd == "si") {
+        engine_.run_signal_integrity();
+    } else if (cmd == "thermal") {
+        engine_.run_thermal();
+    } else if (cmd == "em") {
+        engine_.run_em();
+    } else if (cmd == "noise") {
+        engine_.run_noise();
+    } else if (cmd == "post_route_opt") {
+        engine_.run_post_route_opt();
+    } else if (cmd == "chip_assemble") {
+        engine_.run_chip_assemble();
+    } else if (cmd == "adv_formal") {
+        engine_.run_adv_formal();
     } else if (cmd == "run_all") {
         double w = 200, h = 200;
         iss >> w >> h;

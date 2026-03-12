@@ -3,2390 +3,830 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SiliconForge — Real-Time EDA Studio</title>
+<title>SiliconForge Studio — RTL-to-GDSII EDA Platform</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
-
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-
-  :root {
-    --bg-primary: #0a0a0f;
-    --bg-secondary: #12121a;
-    --bg-card: #1a1a2e;
-    --bg-card-hover: #22223a;
-    --accent: #00d4ff;
-    --accent2: #7c3aed;
-    --accent3: #f59e0b;
-    --accent4: #10b981;
-    --accent5: #ef4444;
-    --text-primary: #e8e8f0;
-    --text-secondary: #8888a0;
-    --border: #2a2a3e;
-    --glow: rgba(0, 212, 255, 0.15);
-  }
-
-  body {
-    font-family: 'Inter', sans-serif;
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    overflow-x: hidden;
-  }
-
-  /* HERO */
-  .hero {
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    position: relative;
-    overflow: hidden;
-  }
-  .hero::before {
-    content: '';
-    position: absolute;
-    top: -50%; left: -50%;
-    width: 200%; height: 200%;
-    background: radial-gradient(ellipse at 30% 50%, rgba(0,212,255,0.06) 0%, transparent 50%),
-                radial-gradient(ellipse at 70% 50%, rgba(124,58,237,0.06) 0%, transparent 50%);
-    animation: heroGlow 8s ease-in-out infinite alternate;
-  }
-  @keyframes heroGlow { 0% { transform: rotate(0deg); } 100% { transform: rotate(3deg); } }
-  .hero h1 {
-    font-size: 4.5rem; font-weight: 900; letter-spacing: -0.03em;
-    background: linear-gradient(135deg, #00d4ff, #7c3aed, #f59e0b);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    position: relative; z-index: 1;
-  }
-  .hero .subtitle {
-    font-size: 1.3rem; color: var(--text-secondary); margin-top: 1rem;
-    font-weight: 300; letter-spacing: 0.15em; text-transform: uppercase;
-    position: relative; z-index: 1;
-  }
-  .hero .scroll-hint {
-    position: absolute; bottom: 2rem; color: var(--text-secondary);
-    font-size: 0.85rem; animation: bounce 2s infinite; z-index: 1;
-  }
-  @keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(8px); } }
-
-  /* UPLOAD ZONE */
-  .upload-zone {
-    position: relative; z-index: 10;
-    margin-top: 2rem; padding: 20px 40px;
-    border: 2px dashed var(--border); border-radius: 12px;
-    background: rgba(26,26,46,0.5); backdrop-filter: blur(10px);
-    cursor: pointer; transition: all 0.3s;
-    display: flex; align-items: center; gap: 15px;
-  }
-  .upload-zone:hover { border-color: var(--accent); background: rgba(0,212,255,0.05); }
-  .upload-zone.dragover { border-color: var(--accent); background: rgba(0,212,255,0.1); }
-  .upload-zone input[type="file"] { display: none; }
-  .upload-zone .upload-icon { font-size: 1.5rem; }
-  .upload-zone .upload-text { color: var(--text-secondary); font-size: 0.9rem; }
-  .upload-zone .upload-text strong { color: var(--accent); }
-
-  /* FLOW BUTTON */
-  .flow-btn {
-    position: relative; z-index: 10;
-    margin-top: 1.5rem; padding: 12px 30px;
-    background: linear-gradient(135deg, rgba(0,212,255,0.15), rgba(124,58,237,0.15));
-    color: #fff; border: 1px solid var(--accent);
-    border-radius: 10px; font-family: 'JetBrains Mono', monospace;
-    font-size: 1rem; cursor: pointer; transition: all 0.3s;
-    letter-spacing: 0.05em;
-  }
-  .flow-btn:hover { background: linear-gradient(135deg, #00d4ff, #7c3aed); color: #000; box-shadow: 0 0 20px rgba(0,212,255,0.4); }
-  .flow-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  .flow-btn.reset-btn {
-    background: linear-gradient(135deg, rgba(239,68,68,0.15), rgba(249,115,22,0.15));
-    border-color: #ef4444; margin-left: 12px;
-  }
-  .flow-btn.reset-btn:hover { background: linear-gradient(135deg, #ef4444, #f97316); color: #000; box-shadow: 0 0 20px rgba(239,68,68,0.4); }
-
-  /* STAGE SECTIONS */
-  .stage {
-    min-height: 100vh; padding: 4rem 2rem;
-    display: flex; flex-direction: column; align-items: center;
-    position: relative; border-top: 1px solid var(--border);
-  }
-  .stage-header {
-    text-align: center; margin-bottom: 2rem;
-    position: relative; z-index: 2;
-  }
-  .stage-number {
-    font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;
-    color: var(--accent); letter-spacing: 0.3em;
-    text-transform: uppercase; margin-bottom: 0.5rem;
-  }
-  .stage-title { font-size: 2.5rem; font-weight: 800; letter-spacing: -0.02em; }
-  .stage-desc {
-    color: var(--text-secondary); margin-top: 0.5rem;
-    max-width: 600px; line-height: 1.6;
-  }
-
-  /* CANVAS CONTAINERS */
-  .viz-container {
-    width: min(1200px, 95vw); height: 600px;
-    background: var(--bg-card); border: 1px solid var(--border);
-    border-radius: 16px; overflow: hidden; position: relative;
-    box-shadow: 0 0 60px rgba(0,0,0,0.5), 0 0 120px var(--glow);
-  }
-  .viz-container canvas { width: 100%; height: 100%; }
-  .viz-toolbar {
-    position: absolute; top: 12px; right: 12px;
-    display: flex; gap: 6px; z-index: 10;
-  }
-  .viz-toolbar button {
-    background: rgba(20,20,35,0.85); border: 1px solid var(--border);
-    color: var(--text-secondary); padding: 6px 12px; border-radius: 8px;
-    font-family: 'JetBrains Mono', monospace; font-size: 0.7rem;
-    cursor: pointer; transition: all 0.2s; backdrop-filter: blur(10px);
-  }
-  .viz-toolbar button:hover { border-color: var(--accent); color: var(--accent); }
-  .viz-toolbar button.active { background: rgba(0,212,255,0.15); border-color: var(--accent); color: var(--accent); }
-  .viz-info {
-    position: absolute; bottom: 12px; left: 12px;
-    background: rgba(10,10,15,0.9); border: 1px solid var(--border);
-    border-radius: 10px; padding: 10px 14px;
-    font-family: 'JetBrains Mono', monospace; font-size: 0.7rem;
-    color: var(--text-secondary); backdrop-filter: blur(10px);
-    z-index: 10; line-height: 1.6;
-  }
-  .viz-info .metric { color: var(--accent); font-weight: 600; }
-  .viz-info .warn { color: var(--accent3); }
-  .viz-info .good { color: var(--accent4); }
-  .viz-info .bad { color: var(--accent5); }
-  .viz-label {
-    position: absolute; top: 12px; left: 12px;
-    background: rgba(10,10,15,0.9); border: 1px solid var(--border);
-    border-radius: 8px; padding: 6px 12px;
-    font-family: 'JetBrains Mono', monospace; font-size: 0.65rem;
-    color: var(--accent); letter-spacing: 0.1em; text-transform: uppercase;
-    backdrop-filter: blur(10px); z-index: 10;
-  }
-
-  /* RUN BUTTON */
-  .run-btn {
-    margin-top: 15px; padding: 10px 24px;
-    background: rgba(0,212,255,0.1); color: #00d4ff;
-    border: 1px solid #00d4ff; border-radius: 8px;
-    font-family: 'JetBrains Mono', monospace; font-size: 1rem;
-    cursor: pointer; transition: all 0.2s; z-index: 10; position: relative;
-  }
-  .run-btn:hover { background: #00d4ff; color: #000; box-shadow: 0 0 15px #00d4ff; }
-  .run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  .run-btn.running { animation: pulse 1s infinite; }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
-
-  /* TERMINAL */
-  .sf-terminal {
-    position: fixed; bottom: 20px; right: 20px;
-    width: 520px; height: 380px;
-    background: rgba(5,5,10,0.95);
-    border: 1px solid #00d4ff; border-radius: 12px;
-    box-shadow: 0 10px 40px rgba(0,212,255,0.2);
-    z-index: 1000; display: flex; flex-direction: column;
-    overflow: hidden; backdrop-filter: blur(10px);
-  }
-  .sf-term-header {
-    background: #111; padding: 10px 15px;
-    font-size: 0.75rem; color: #888; border-bottom: 1px solid #333;
-    display: flex; justify-content: space-between; font-family: 'Inter', sans-serif;
-  }
-  .sf-term-body {
-    flex: 1; padding: 15px; font-family: 'JetBrains Mono', monospace;
-    font-size: 0.8rem; color: #10b981; overflow-y: auto; white-space: pre-wrap; line-height: 1.4;
-  }
-  .sf-term-input {
-    display: flex; border-top: 1px solid #333; background: #0a0a10;
-  }
-  .sf-term-input span {
-    padding: 8px 10px; color: #00d4ff; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;
-  }
-  .sf-term-input input {
-    flex: 1; background: transparent; border: none; color: #e8e8f0;
-    font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;
-    padding: 8px 0; outline: none;
-  }
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --bg-card: #1c2128;
+  --border: #30363d;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #484f58;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --red: #f85149;
+  --orange: #d29922;
+  --purple: #bc8cff;
+  --cyan: #39d2c0;
+  --sidebar-width: 260px;
+  --header-height: 48px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: var(--bg-primary); color: var(--text-primary);
+  height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+}
+.header {
+  height: var(--header-height); background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; padding: 0 16px; gap: 16px; flex-shrink: 0;
+}
+.header .logo { font-size: 15px; font-weight: 700; color: var(--accent); letter-spacing: 0.5px; }
+.header .logo span { color: var(--text-secondary); font-weight: 400; }
+.header-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.btn {
+  padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg-tertiary); color: var(--text-primary); font-size: 12px;
+  cursor: pointer; transition: all 0.15s;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn-primary { background: #238636; border-color: #238636; color: #fff; }
+.btn-primary:hover { background: #2ea043; }
+.main-layout { display: flex; flex: 1; overflow: hidden; }
+.sidebar {
+  width: var(--sidebar-width); background: var(--bg-secondary);
+  border-right: 1px solid var(--border); overflow-y: auto; flex-shrink: 0;
+}
+.sidebar::-webkit-scrollbar { width: 6px; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.sidebar-group { border-bottom: 1px solid var(--border); }
+.sidebar-group-header {
+  padding: 10px 14px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);
+  cursor: pointer; display: flex; align-items: center; gap: 6px; user-select: none;
+}
+.sidebar-group-header:hover { color: var(--text-primary); }
+.sidebar-group-header .arrow { font-size: 10px; transition: transform 0.2s; }
+.sidebar-group.collapsed .arrow { transform: rotate(-90deg); }
+.sidebar-group.collapsed .sidebar-items { display: none; }
+.sidebar-item {
+  padding: 7px 14px 7px 28px; font-size: 13px; color: var(--text-secondary);
+  cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.15s;
+}
+.sidebar-item:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.sidebar-item.active { background: var(--bg-tertiary); color: var(--accent); border-right: 2px solid var(--accent); }
+.sidebar-item .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
+.sidebar-item .dot.done { background: var(--green); }
+.content-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.stage-content { flex: 1; overflow-y: auto; padding: 20px; }
+.stage-content::-webkit-scrollbar { width: 8px; }
+.stage-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.stage-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.stage-header h2 { font-size: 18px; font-weight: 600; }
+.stage-header .num { color: var(--text-muted); font-size: 13px; }
+.card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.card-title { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.3px; }
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.metric { background: var(--bg-tertiary); border-radius: 6px; padding: 10px; }
+.metric-label { font-size: 11px; color: var(--text-secondary); margin-bottom: 2px; }
+.metric-value { font-size: 18px; font-weight: 700; }
+.metric-value.good { color: var(--green); }
+.metric-value.warn { color: var(--orange); }
+.metric-value.bad { color: var(--red); }
+.viz-container { width: 100%; background: var(--bg-primary); border-radius: 6px; border: 1px solid var(--border); overflow: hidden; }
+.viz-container canvas { display: block; width: 100%; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text-secondary); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+.data-table td { padding: 6px 12px; border-bottom: 1px solid var(--bg-tertiary); }
+.flow-progress { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.flow-chip { font-size: 11px; padding: 3px 8px; border-radius: 12px; border: 1px solid var(--border); color: var(--text-muted); }
+.flow-chip.done { border-color: var(--green); color: var(--green); background: rgba(63,185,80,0.1); }
+.terminal-panel { height: 180px; background: var(--bg-primary); border-top: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+.terminal-header { display: flex; align-items: center; padding: 6px 12px; background: var(--bg-secondary); border-bottom: 1px solid var(--border); gap: 8px; }
+.terminal-header span { font-size: 12px; color: var(--text-secondary); }
+.terminal-output { flex: 1; overflow-y: auto; padding: 8px 12px; font-family: 'SF Mono','Fira Code',monospace; font-size: 12px; line-height: 1.5; color: var(--text-secondary); white-space: pre-wrap; }
+.terminal-input-row { display: flex; align-items: center; padding: 4px 12px; border-top: 1px solid var(--border); background: var(--bg-secondary); }
+.terminal-prompt { color: var(--green); font-family: monospace; font-size: 12px; margin-right: 8px; }
+.terminal-input { flex: 1; background: transparent; border: none; color: var(--text-primary); font-family: monospace; font-size: 12px; outline: none; }
 </style>
 </head>
 <body>
-
-<!-- HERO -->
-<section class="hero">
-  <h1>SiliconForge</h1>
-  <div class="subtitle">RTL-to-GDSII Real-Time EDA Studio</div>
-
-  <div class="upload-zone" id="upload-zone" onclick="document.getElementById('file-input').click()">
-    <span class="upload-icon">+</span>
-    <div class="upload-text">
-      <strong>Upload Verilog</strong> or drag & drop .v file here<br>
-      <span style="font-size:0.75rem; color:#666;">Default: studio/test_design.v</span>
-    </div>
-    <input type="file" id="file-input" accept=".v,.sv,.vh" onchange="handleFileUpload(event)">
+<div class="header">
+  <div class="logo">SiliconForge <span>Studio</span></div>
+  <div class="header-actions">
+    <input type="file" id="verilog-upload" accept=".v,.sv" style="display:none" onchange="uploadFile(this)">
+    <button class="btn" onclick="document.getElementById('verilog-upload').click()">Upload Verilog</button>
+    <button class="btn btn-primary" onclick="runFullFlow()">Run Full Flow</button>
+    <button class="btn" onclick="refreshState()">Refresh</button>
   </div>
-
-  <button class="flow-btn" id="run-all-btn" onclick="runFullFlow()">Run Full RTL-to-GDSII Flow</button>
-  <button class="flow-btn reset-btn" id="new-design-btn" onclick="newDesign()">New Design</button>
-
-  <div class="scroll-hint">scroll to explore each stage</div>
-</section>
-
-<!-- STAGE 1: RTL CIRCUIT GRAPH -->
-<section class="stage" id="s1">
-  <div class="stage-header">
-    <div class="stage-number">Stage 01 -- RTL Design</div>
-    <div class="stage-title">Circuit Graph</div>
-    <div class="stage-desc">Force-directed graph of logic gates from your Verilog. Real netlist data from SiliconForge parser.</div>
-    <button class="run-btn" id="btn-s1" onclick="runStage('read_verilog ' + currentDesignFile, 1)">Execute: read_verilog</button>
-  </div>
-  <div class="viz-container">
-    <canvas id="c1"></canvas>
-    <div class="viz-label" id="label-s1">RTL Netlist -- Awaiting Verilog</div>
-    <div class="viz-toolbar" data-active-tab="logic">
-      <button class="active" data-tab="logic">Logic</button>
-      <button data-tab="hierarchy">Hierarchy</button>
-      <button data-tab="clock">Clock Domains</button>
-    </div>
-    <div class="viz-info" id="info-s1">
-      Nodes: <span class="metric" id="ui-gates">--</span> |
-      Nets: <span class="metric" id="ui-nets">--</span> |
-      FFs: <span class="metric" id="ui-ffs">0</span> |
-      PIs: <span class="metric" id="ui-pis">--</span> |
-      POs: <span class="metric" id="ui-pos">--</span>
+</div>
+<div class="main-layout">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="content-area">
+    <div class="stage-content" id="stage-content"></div>
+    <div class="terminal-panel">
+      <div class="terminal-header">
+        <span style="color:var(--green)">●</span><span>Terminal</span>
+        <button class="btn" style="margin-left:auto;padding:2px 8px;font-size:11px" onclick="clearTerminal()">Clear</button>
+      </div>
+      <div class="terminal-output" id="terminal-output"></div>
+      <div class="terminal-input-row">
+        <span class="terminal-prompt">sf&gt;</span>
+        <input class="terminal-input" id="terminal-input" placeholder="Enter command..." onkeydown="if(event.key==='Enter')sendTerminalCmd()">
+      </div>
     </div>
   </div>
-</section>
-
-<!-- STAGE 2: SIMULATION WAVEFORMS -->
-<section class="stage" id="s2">
-  <div class="stage-header">
-    <div class="stage-number">Stage 02 -- Simulation</div>
-    <div class="stage-title">Waveform Viewer</div>
-    <div class="stage-desc">Event-driven simulation waveforms. Real signal values from SiliconForge simulator.</div>
-    <button class="run-btn" id="btn-s2" onclick="runStage('simulate', 2)">Execute: simulate</button>
-  </div>
-  <div class="viz-container">
-    <canvas id="c2"></canvas>
-    <div class="viz-label" id="label-s2">Simulation -- Awaiting Execution</div>
-    <div class="viz-toolbar">
-      <button class="active">Signals</button>
-      <button>Bus View</button>
-    </div>
-    <div class="viz-info" id="info-s2">
-      Signals: <span class="metric" id="ui-sigs">--</span> |
-      Time Steps: <span class="metric" id="ui-times">--</span> |
-      Status: <span class="metric" id="ui-simstatus">Waiting</span>
-    </div>
-  </div>
-</section>
-
-<!-- STAGE 3: FORMAL VERIFICATION -->
-<section class="stage" id="s3">
-  <div class="stage-header">
-    <div class="stage-number">Stage 03 -- Formal Verification</div>
-    <div class="stage-title">Property Dashboard</div>
-    <div class="stage-desc">Bounded Model Checking results. Real SVA property status from SiliconForge BMC engine.</div>
-    <button class="run-btn" id="btn-s3" onclick="runStage('formal_bmc 10', 3)">Execute: formal_bmc</button>
-  </div>
-  <div class="viz-container">
-    <canvas id="c3"></canvas>
-    <div class="viz-label" id="label-s3">BMC -- Awaiting Execution</div>
-    <div class="viz-toolbar">
-      <button class="active">Properties</button>
-      <button>Trace</button>
-    </div>
-    <div class="viz-info" id="info-s3">
-      Properties: <span class="metric" id="ui-props">--</span> |
-      BMC Depth: <span class="metric" id="ui-bmc-depth">--</span>
-    </div>
-  </div>
-</section>
-
-<!-- STAGE 4: SYNTHESIS AIG -->
-<section class="stage" id="s4">
-  <div class="stage-header">
-    <div class="stage-number">Stage 04 -- Logic Synthesis</div>
-    <div class="stage-title">AIG Optimization</div>
-    <div class="stage-desc">Before/after AIG node counts. Real optimization results from SiliconForge synthesizer.</div>
-    <button class="run-btn" id="btn-s4" onclick="runStage('synth', 4)">Execute: synth</button>
-  </div>
-  <div class="viz-container">
-    <canvas id="c4"></canvas>
-    <div class="viz-label" id="label-s4">AIG -- Awaiting Synthesis</div>
-    <div class="viz-toolbar" data-active-tab="aig">
-      <button class="active" data-tab="aig">AIG Topology</button>
-      <button data-tab="critical">Critical Paths</button>
-    </div>
-    <div class="viz-info" id="info-s4">
-      Before: <span class="warn" id="ui-aig-before">--</span> |
-      After: <span class="good" id="ui-aig-after">--</span> |
-      Reduction: <span class="metric" id="ui-aig-reduction">--%</span> |
-      Depth: <span class="metric" id="ui-aig-depth">--</span>
-    </div>
-  </div>
-</section>
-
-<!-- STAGE 5: DFT / ATPG -->
-<section class="stage" id="s5">
-  <div class="stage-header">
-    <div class="stage-number">Stage 05 -- Design for Test</div>
-    <div class="stage-title">Fault Coverage Map</div>
-    <div class="stage-desc">PODEM ATPG coverage heatmap. Real fault simulation results from SiliconForge DFT engine.</div>
-    <button class="run-btn" id="btn-s5" onclick="runStage('run_dft', 5)">Execute: run_dft</button>
-  </div>
-  <div class="viz-container">
-    <canvas id="c5"></canvas>
-    <div class="viz-label" id="label-s5">PODEM ATPG -- Awaiting Execution</div>
-    <div class="viz-toolbar" data-active-tab="faults">
-      <button class="active" data-tab="faults">Fault Map</button>
-      <button data-tab="patterns">Test Patterns</button>
-    </div>
-    <div class="viz-info" id="info-s5">
-      Total Faults: <span class="metric" id="ui-faults">--</span> |
-      Detected: <span class="good" id="ui-detected">--</span> |
-      Coverage: <span class="good" id="ui-coverage">--%</span> |
-      Patterns: <span class="metric" id="ui-patterns">--</span>
-    </div>
-  </div>
-</section>
-
-<!-- STAGE 6: PLACEMENT -->
-<section class="stage" id="s6">
-  <div class="stage-header">
-    <div class="stage-number">Stage 06 -- Placement</div>
-    <div class="stage-title">Cell Placement + Density</div>
-    <div class="stage-desc">Analytical placement visualization. Real cell positions from SiliconForge placer.</div>
-    <button class="run-btn" id="btn-s6" onclick="runStage('floorplan 200 200 10', 6, 'place')">Execute: floorplan + place</button>
-  </div>
-  <div class="viz-container">
-    <canvas id="c6"></canvas>
-    <div class="viz-label" id="label-s6">Placement -- Awaiting Execution</div>
-    <div class="viz-toolbar" data-active-tab="cells">
-      <button class="active" data-tab="cells">Cells</button>
-      <button data-tab="density">Density</button>
-      <button data-tab="congestion">Congestion</button>
-    </div>
-    <div class="viz-info" id="info-s6">
-      Cells: <span class="metric" id="ui-cells">--</span> |
-      Die: <span class="metric" id="ui-die">--</span> |
-      Wirelength: <span class="metric" id="ui-hpwl">--</span> |
-      Util: <span class="good" id="ui-util">--%</span>
-    </div>
-  </div>
-</section>
-
-<!-- STAGE 7: 3D ROUTING -->
-<section class="stage" id="s7">
-  <div class="stage-header">
-    <div class="stage-number">Stage 07 -- Routing</div>
-    <div class="stage-title">3D Multi-Layer Routing</div>
-    <div class="stage-desc">Full 3D view of all metal layers. Real wire segments from SiliconForge router.</div>
-    <button class="run-btn" id="btn-s7" onclick="runStage('route', 7)">Execute: route</button>
-  </div>
-  <div class="viz-container">
-    <canvas id="c7"></canvas>
-    <div class="viz-label" id="label-s7">Routing -- Awaiting Execution</div>
-    <div class="viz-toolbar" data-active-tab="all">
-      <button class="active" data-tab="all">All Layers</button>
-      <button data-tab="m1">M1</button>
-      <button data-tab="m2">M2</button>
-      <button data-tab="m3">M3</button>
-      <button data-tab="m4">M4</button>
-    </div>
-    <div class="viz-info" id="info-s7">
-      Wires: <span class="metric" id="ui-wires">--</span> |
-      Vias: <span class="metric" id="ui-vias">--</span> |
-      Wirelength: <span class="metric" id="ui-wirelength">--</span>
-    </div>
-  </div>
-</section>
-
-<!-- STAGE 8: TIMING / POWER -->
-<section class="stage" id="s8">
-  <div class="stage-header">
-    <div class="stage-number">Stage 08 -- Signoff</div>
-    <div class="stage-title">Timing + Power + DRC/LVS</div>
-    <div class="stage-desc">Real timing analysis, power breakdown, and verification results from SiliconForge signoff.</div>
-    <button class="run-btn" id="btn-s8" onclick="runSignoff()">Execute: drc + lvs + sta + power</button>
-  </div>
-  <div class="viz-container">
-    <canvas id="c8"></canvas>
-    <div class="viz-label" id="label-s8">Signoff -- Awaiting Execution</div>
-    <div class="viz-toolbar">
-      <button class="active">Timing</button>
-      <button>Power</button>
-      <button>DRC</button>
-      <button>LVS</button>
-    </div>
-    <div class="viz-info" id="info-s8">
-      WNS: <span class="metric" id="ui-wns">--</span> |
-      TNS: <span class="metric" id="ui-tns">--</span> |
-      Power: <span class="metric" id="ui-power">--</span> |
-      DRC: <span class="metric" id="ui-drc">--</span> |
-      LVS: <span class="metric" id="ui-lvs">--</span>
-    </div>
-  </div>
-</section>
-
-<!-- STAGE 9: CROSS SECTION -->
-<section class="stage" id="s9">
-  <div class="stage-header">
-    <div class="stage-number">Stage 09 -- Cross Section</div>
-    <div class="stage-title">Process Stack View</div>
-    <div class="stage-desc">sky130 process layers with accurate heights. Reference process data.</div>
-  </div>
-  <div class="viz-container">
-    <canvas id="c9"></canvas>
-    <div class="viz-label">sky130 Process Stack -- Cross Section</div>
-    <div class="viz-toolbar">
-      <button class="active">Stack</button>
-      <button>X-Ray</button>
-    </div>
-    <div class="viz-info">
-      Layers: <span class="metric">li1, m1, m2, m3, m4, m5</span> |
-      Height: <span class="metric">12.4 um total</span>
-    </div>
-  </div>
-</section>
-
-<!-- STAGE 10: FINAL GDSII -->
-<section class="stage" id="s10">
-  <div class="stage-header">
-    <div class="stage-number">Stage 10 -- Final Output</div>
-    <div class="stage-title">GDSII 3D Chip View</div>
-    <div class="stage-desc">Complete layout with all layers. Real data from SiliconForge engine.</div>
-    <button class="run-btn" id="btn-s10" onclick="runStage('write_gds sf_final_layout.gds', 10)">Execute: write_gds</button>
-  </div>
-  <div class="viz-container">
-    <canvas id="c10"></canvas>
-    <div class="viz-label" id="label-s10">GDSII -- Awaiting Full Flow</div>
-    <div class="viz-toolbar">
-      <button class="active">All Layers</button>
-      <button>Hierarchy</button>
-      <button>Export</button>
-    </div>
-    <div class="viz-info" id="info-s10">
-      Cells: <span class="metric" id="ui-gds-cells">--</span> |
-      Wires: <span class="metric" id="ui-gds-wires">--</span> |
-      Die: <span class="metric" id="ui-gds-die">--</span> |
-      Status: <span class="metric" id="ui-gds-status">Waiting</span>
-    </div>
-  </div>
-</section>
-
+</div>
 <script>
-// ============================================================
-//  SiliconForge Real-Time Studio — Canvas Visualizations
-//  Renders REAL data from C++ EDA engine via /api/command
-// ============================================================
+let STATE = {};
+let currentStage = 'dashboard';
+let currentDesignFile = 'test_design.v';
 
-const DPR = window.devicePixelRatio || 1;
-window.STATE = null;
-let currentDesignFile = 'studio/test_design.v';
-let flowAborted = false;
+const STAGE_GROUPS = [
+  { name: 'Overview', stages: [
+    { id: 'dashboard', label: 'Dashboard', cmd: null },
+  ]},
+  { name: 'RTL & Frontend', stages: [
+    { id: 'rtl', label: 'RTL Design', cmd: 'read_verilog ' },
+    { id: 'simulation', label: 'Simulation', cmd: 'simulate' },
+    { id: 'formal', label: 'Formal Verification', cmd: 'formal_bmc 10' },
+    { id: 'synthesis', label: 'Logic Synthesis', cmd: 'synthesize' },
+    { id: 'dft', label: 'Design for Test', cmd: 'run_dft' },
+    { id: 'lec', label: 'LEC', cmd: 'lec' },
+  ]},
+  { name: 'Physical Design', stages: [
+    { id: 'placement', label: 'Placement', cmd: 'floorplan 200 200 10' },
+    { id: 'cts', label: 'Clock Tree Synthesis', cmd: 'cts' },
+    { id: 'routing', label: 'Routing', cmd: 'route' },
+    { id: 'post_route', label: 'Post-Route Opt', cmd: 'post_route_opt' },
+    { id: 'chip', label: 'Chip Assembly', cmd: 'chip_assemble' },
+  ]},
+  { name: 'Signoff', stages: [
+    { id: 'sta', label: 'Static Timing', cmd: 'sta' },
+    { id: 'power', label: 'Power Analysis', cmd: 'power' },
+    { id: 'drc', label: 'DRC', cmd: 'drc' },
+    { id: 'lvs', label: 'LVS', cmd: 'lvs' },
+  ]},
+  { name: 'Advanced Analysis', stages: [
+    { id: 'mcmm', label: 'MCMM Signoff', cmd: 'mcmm' },
+    { id: 'ssta', label: 'SSTA & Yield', cmd: 'ssta' },
+    { id: 'ir_drop', label: 'IR Drop', cmd: 'ir_drop' },
+    { id: 'pdn', label: 'PDN Impedance', cmd: 'pdn' },
+    { id: 'si', label: 'Signal Integrity', cmd: 'si' },
+    { id: 'thermal', label: 'Thermal Analysis', cmd: 'thermal' },
+    { id: 'em', label: 'Electromigration', cmd: 'em' },
+    { id: 'noise', label: 'Noise / SSN', cmd: 'noise' },
+    { id: 'ml', label: 'ML Optimization', cmd: 'ai_tune' },
+    { id: 'adv_formal', label: 'Advanced Formal', cmd: 'adv_formal' },
+  ]},
+  { name: 'Output', stages: [
+    { id: 'gdsii', label: 'GDSII Export', cmd: 'write_gds out.gds' },
+  ]},
+];
 
-// Animation frame IDs per stage (for cancellation on redraw)
-const animFrames = {};
-
-function setupCanvas(id) {
-  const c = document.getElementById(id);
-  const r = c.parentElement.getBoundingClientRect();
-  c.width = r.width * DPR;
-  c.height = r.height * DPR;
-  c.style.width = r.width + 'px';
-  c.style.height = r.height + 'px';
-  const ctx = c.getContext('2d');
-  ctx.scale(DPR, DPR);
-  return { ctx, w: r.width, h: r.height, c };
-}
-
-// Colors
-const COLORS = {
-  bg: '#0f0f1a', grid: 'rgba(40,40,65,0.4)', accent: '#00d4ff',
-  accent2: '#7c3aed', accent3: '#f59e0b', green: '#10b981',
-  red: '#ef4444', pink: '#ec4899', text: '#8888a0',
+const STAGE_STATE_MAP = {
+  rtl:'has_netlist', simulation:'is_simulated', formal:'is_formal_done',
+  synthesis:'is_synthesized', dft:'is_dft_done', lec:'is_lec_done',
+  placement:'is_placed', cts:'is_cts_done', routing:'is_routed',
+  post_route:'is_post_route_done', chip:'is_chip_assembled',
+  sta:'is_sta_done', power:'is_power_done', drc:'is_drc_done', lvs:'is_lvs_done',
+  mcmm:'is_mcmm_done', ssta:'is_ssta_done', ir_drop:'is_ir_drop_done',
+  pdn:'is_pdn_done', si:'is_si_done', thermal:'is_thermal_done',
+  em:'is_em_done', noise:'is_noise_done', ml:'is_ml_done', adv_formal:'is_adv_formal_done',
 };
-const GATE_COLORS = {
-  'AND': '#00d4ff', 'OR': '#7c3aed', 'NOT': '#f59e0b', 'MUX': '#ec4899',
-  'DFF': '#10b981', 'XOR': '#ef4444', 'BUF': '#6366f1', 'NAND': '#14b8a6',
-  'NOR': '#f97316', 'XNOR': '#a78bfa', 'INPUT': '#10b981', 'OUTPUT': '#ef4444',
-  'DLATCH': '#10b981', 'TRI': '#94a3b8', 'CONST0': '#475569', 'CONST1': '#475569',
-};
-function lerp(a, b, t) { return a + (b - a) * t; }
 
-// ============================================================
-// HELPER: Draw "waiting" placeholder
-// ============================================================
-function drawWaiting(ctx, w, h, msg) {
-  ctx.fillStyle = COLORS.bg;
-  ctx.fillRect(0, 0, w, h);
-  // Grid
-  ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 0.5;
-  for (let x = 0; x < w; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
-  for (let y = 0; y < h; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
-  // Message
-  ctx.fillStyle = '#333';
-  ctx.font = '600 18px Inter';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(msg || 'Click "Execute" above to run this stage', w/2, h/2);
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
+function buildSidebar() {
+  const sb = document.getElementById('sidebar');
+  sb.innerHTML = '';
+  for (const group of STAGE_GROUPS) {
+    const gDiv = document.createElement('div');
+    gDiv.className = 'sidebar-group';
+    const hdr = document.createElement('div');
+    hdr.className = 'sidebar-group-header';
+    hdr.innerHTML = '<span class="arrow">▾</span> ' + group.name;
+    hdr.onclick = function() { gDiv.classList.toggle('collapsed'); };
+    gDiv.appendChild(hdr);
+    const items = document.createElement('div');
+    items.className = 'sidebar-items';
+    for (const s of group.stages) {
+      const item = document.createElement('div');
+      item.className = 'sidebar-item' + (s.id === currentStage ? ' active' : '');
+      item.dataset.id = s.id;
+      const stateKey = STAGE_STATE_MAP[s.id];
+      const isDone = stateKey && STATE.flow_state && STATE.flow_state[stateKey];
+      item.innerHTML = '<span class="dot ' + (isDone ? 'done' : '') + '"></span>' + s.label;
+      item.onclick = function() { selectStage(s.id); };
+      items.appendChild(item);
+    }
+    gDiv.appendChild(items);
+    sb.appendChild(gDiv);
+  }
 }
 
-// ============================================================
-// STAGE 1: RTL CIRCUIT GRAPH — Real netlist
-// ============================================================
-function drawStage1() {
-  if (animFrames[1]) cancelAnimationFrame(animFrames[1]);
-  const { ctx, w, h } = setupCanvas('c1');
-  const S = window.STATE;
-
-  if (!S || !S.netlist || !S.netlist.gates || S.netlist.gates.length === 0) {
-    drawWaiting(ctx, w, h, 'Run read_verilog to load RTL netlist');
-    return;
-  }
-
-  const nl = S.netlist;
-  // Update UI
-  setText('ui-gates', nl.num_gates);
-  setText('ui-nets', nl.num_nets);
-  setText('ui-ffs', nl.num_ffs);
-  setText('ui-pis', nl.num_pis);
-  setText('ui-pos', nl.num_pos);
-  setText('label-s1', 'RTL Netlist -- ' + nl.num_gates + ' gates, ' + nl.num_nets + ' nets');
-
-  // Precalculate static layout once
-  if (!S._s1Layout) {
-    let nodes = [];
-    let edges = [];
-    
-    const piList = nl.primary_inputs || [];
-    const poList = nl.primary_outputs || [];
-    const gates = nl.gates || [];
-
-    // Layout: PIs on left, gates in columns by depth, POs on right
-    // Compute gate depths via BFS from PIs
-    const netMap = {}; // netId -> gate index that drives it
-    gates.forEach((g, i) => { netMap[g.output] = i; });
-    const gateDepth = new Array(gates.length).fill(0);
-    // Compute depth: max(input gate depths) + 1
-    const computed = new Array(gates.length).fill(false);
-    function computeDepth(gi) {
-      if (computed[gi]) return gateDepth[gi];
-      computed[gi] = true;
-      let maxD = 0;
-      for (const inp of gates[gi].inputs) {
-        if (netMap[inp] !== undefined && netMap[inp] !== gi) {
-          maxD = Math.max(maxD, computeDepth(netMap[inp]) + 1);
-        }
-      }
-      gateDepth[gi] = maxD;
-      return maxD;
-    }
-    gates.forEach((g, i) => computeDepth(i));
-    const maxDepth = Math.max(...gateDepth, 1);
-
-    // Place PIs
-    const margin = 60;
-    const piSpacing = Math.min(50, (h - 2 * margin) / Math.max(piList.length, 1));
-    const piStartY = (h - piList.length * piSpacing) / 2;
-    piList.forEach((pi, i) => {
-      nodes.push({ x: margin, y: piStartY + i * piSpacing, type: 'INPUT', label: pi.name, id: pi.id, r: 12, depth: 0 });
-    });
-
-    // Place gates by depth column
-    const colW = (w - 3 * margin) / (maxDepth + 2);
-    const depthGroups = {};
-    gates.forEach((g, i) => {
-      const d = gateDepth[i];
-      if (!depthGroups[d]) depthGroups[d] = [];
-      depthGroups[d].push({ gate: g, idx: i });
-    });
-    for (const d in depthGroups) {
-      const group = depthGroups[d];
-      const colX = margin + (parseInt(d) + 1) * colW;
-      const spacing = Math.min(45, (h - 2 * margin) / Math.max(group.length, 1));
-      const startY = (h - group.length * spacing) / 2;
-      group.forEach((item, i) => {
-        item.gate._s1idx = nodes.length; // track idx
-        nodes.push({ x: colX, y: startY + i * spacing, type: item.gate.type, label: item.gate.name, id: item.gate.id, r: 8, depth: parseInt(d) });
-      });
-    }
-
-    // Place POs
-    const poX = w - margin;
-    const poSpacing = Math.min(50, (h - 2 * margin) / Math.max(poList.length, 1));
-    const poStartY = (h - poList.length * poSpacing) / 2;
-    poList.forEach((po, i) => {
-      nodes.push({ x: poX, y: poStartY + i * poSpacing, type: 'OUTPUT', label: po.name, id: po.id, r: 12, depth: maxDepth + 1 });
-    });
-
-    // Generate edges mapping node inputs
-    gates.forEach(g => {
-      if (g._s1idx !== undefined) {
-        g.inputs.forEach(inpNet => {
-          // find who drives inpNet
-          let driverIdx = netMap[inpNet];
-          if (driverIdx !== undefined && gates[driverIdx]._s1idx !== undefined) {
-            edges.push({ from: gates[driverIdx]._s1idx, to: g._s1idx });
-          } else {
-            // Check PIs
-            let piIdx = piList.findIndex(p => p.id === inpNet);
-            if (piIdx !== -1) edges.push({ from: piIdx, to: g._s1idx });
-          }
-        });
-      }
-    });
-
-    // Check PO drives
-    poList.forEach((po, i) => {
-      let driverIdx = netMap[po.id];
-      if (driverIdx !== undefined && gates[driverIdx]._s1idx !== undefined) {
-        let poNodeIdx = nodes.length - poList.length + i;
-        edges.push({ from: gates[driverIdx]._s1idx, to: poNodeIdx });
-      }
-    });
-    
-    S._s1Layout = { nodes, edges };
-  }
-
-  const { nodes, edges } = S._s1Layout;
-  
-  let signalPhase = 0;
-  function animate() {
-    signalPhase += 0.02;
-    let activeTab = document.querySelector('#s1 .viz-toolbar').dataset.activeTab || 'logic';
-    ctx.fillStyle = COLORS.bg;
-    ctx.fillRect(0, 0, w, h);
-
-    // Grid
-    ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 0.5;
-    for (let x = 0; x < w; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
-    for (let y = 0; y < h; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
-
-    // Hierarchy Background Grouping
-    if (activeTab === 'hierarchy') {
-      let grouped = {};
-      nodes.forEach(n => {
-        if(!grouped[n.depth]) grouped[n.depth] = [];
-        grouped[n.depth].push(n);
-      });
-      for (const d in grouped) {
-        let groupNodes = grouped[d];
-        if (groupNodes.length === 0) continue;
-        let minY = Math.min(...groupNodes.map(n => n.y)) - 25;
-        let maxY = Math.max(...groupNodes.map(n => n.y)) + 25;
-        let x = groupNodes[0].x - 20;
-        
-        ctx.fillStyle = 'rgba(124, 58, 237, 0.05)';
-        ctx.strokeStyle = 'rgba(124, 58, 237, 0.2)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 4]);
-        ctx.beginPath(); ctx.roundRect(x, minY, 40, maxY - minY, 8);
-        ctx.fill(); ctx.stroke();
-        ctx.setLineDash([]);
-        
-        ctx.fillStyle = 'rgba(124, 58, 237, 0.4)';
-        ctx.font = '500 10px Inter'; ctx.textAlign = 'center';
-        ctx.fillText('Lvl ' + d, x + 20, minY - 8);
-      }
-    }
-
-    // Edges with signal animation
-    for (let e of edges) {
-      let from = nodes[e.from], to = nodes[e.to];
-      if (!from || !to) continue;
-      
-      let isClockPath = activeTab === 'clock' && (from.type === 'DFF' || to.type === 'DFF');
-      
-      ctx.beginPath();
-      ctx.strokeStyle = activeTab === 'clock' && !isClockPath ? 'rgba(255,255,255,0.05)' : (isClockPath ? '#ec489950' : 'rgba(0,212,255,0.15)');
-      ctx.lineWidth = isClockPath ? 2 : 1.5;
-      let cx = (from.x + to.x) / 2;
-      ctx.moveTo(from.x, from.y);
-      ctx.quadraticCurveTo(cx, (from.y + to.y) / 2, to.x, to.y);
-      ctx.stroke();
-
-      // Signal dot
-      let t = ((signalPhase + e.from * 0.1) % 1);
-      let sx = lerp(from.x, to.x, t);
-      let sy = lerp(from.y, to.y, t);
-      ctx.beginPath();
-      ctx.fillStyle = COLORS.accent;
-      ctx.shadowColor = COLORS.accent;
-      ctx.shadowBlur = 8;
-      ctx.arc(sx, sy, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-    }
-
-    // Nodes
-    for (let n of nodes) {
-      let isClockRelated = n.type === 'DFF' || n.label.toLowerCase().includes('clk');
-      let isDimmed = activeTab === 'clock' && !isClockRelated;
-      
-      let color = GATE_COLORS[n.type] || '#00d4ff';
-      if (activeTab === 'clock' && isClockRelated) color = '#ec4899';
-      
-      // Glow
-      if (!isDimmed) {
-        ctx.beginPath();
-        ctx.fillStyle = color + '20';
-        ctx.arc(n.x, n.y, n.r + (activeTab === 'clock' && isClockRelated ? 8 : 6), 0, Math.PI * 2);
-        ctx.fill();
-      }
-      
-      // Body
-      ctx.beginPath();
-      ctx.fillStyle = isDimmed ? '#1a1a2e' : (activeTab === 'hierarchy' ? '#1e1e32' : '#1a1a2e');
-      ctx.strokeStyle = isDimmed ? 'rgba(255,255,255,0.05)' : color;
-      ctx.lineWidth = isDimmed ? 1 : 2;
-      ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      // Label
-      if (!isDimmed) {
-        ctx.fillStyle = color;
-        ctx.font = '600 8px JetBrains Mono';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(n.label, n.x, n.y);
-      }
-    }
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
-
-    animFrames[1] = requestAnimationFrame(animate);
-  }
-  animate();
-}
-
-// ============================================================
-// STAGE 2: WAVEFORM VIEWER — Real simulation data
-// ============================================================
-function drawStage2() {
-  if (animFrames[2]) cancelAnimationFrame(animFrames[2]);
-  const { ctx, w, h } = setupCanvas('c2');
-  const S = window.STATE;
-
-  if (!S || !S.simulation || !S.simulation.signals || S.simulation.signals.length === 0) {
-    drawWaiting(ctx, w, h, 'Run simulate to see waveforms');
-    return;
-  }
-
-  const sim = S.simulation;
-  const signals = sim.signals;
-  const times = sim.times || [];
-  const numSteps = times.length || (signals[0] ? signals[0].values.length : 100);
-
-  setText('ui-sigs', signals.length);
-  setText('ui-times', numSteps);
-  setText('ui-simstatus', 'Complete');
-  setText('label-s2', 'Simulation -- ' + signals.length + ' signals, ' + numSteps + ' steps');
-
-  const sigColors = ['#10b981', '#f59e0b', '#7c3aed', '#00d4ff', '#ec4899', '#14b8a6', '#6366f1', '#f97316', '#ef4444', '#a78bfa', '#06b6d4', '#84cc16'];
-  let cursor = 0;
-
-  function animate() {
-    cursor = (cursor + 0.3) % numSteps;
-    ctx.fillStyle = COLORS.bg;
-    ctx.fillRect(0, 0, w, h);
-
-    const leftMargin = 100;
-    const maxSigs = Math.min(signals.length, 12);
-    const sigHeight = Math.min(42, (h - 60) / maxSigs - 6);
-    const sigGap = 4;
-    const totalW = w - leftMargin - 20;
-
-    // Time ruler
-    ctx.fillStyle = '#1a1a2e';
-    ctx.fillRect(leftMargin, 0, totalW, 28);
-    const numTicks = Math.min(20, numSteps);
-    for (let i = 0; i <= numTicks; i++) {
-      let x = leftMargin + (i / numTicks) * totalW;
-      ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(x, 20); ctx.lineTo(x, 28); ctx.stroke();
-      ctx.fillStyle = COLORS.text;
-      ctx.font = '500 8px JetBrains Mono';
-      ctx.textAlign = 'center';
-      let timeVal = times.length > 0 ? times[Math.floor(i / numTicks * (times.length-1))] : i * 10;
-      ctx.fillText(timeVal + 'ns', x, 15);
-    }
-
-    // Draw signals
-    for (let si = 0; si < maxSigs; si++) {
-      const sig = signals[si];
-      const color = sigColors[si % sigColors.length];
-      let y = 35 + si * (sigHeight + sigGap);
-
-      // Name
-      ctx.fillStyle = color;
-      ctx.font = '600 9px JetBrains Mono';
-      ctx.textAlign = 'right';
-      let displayName = sig.name.length > 10 ? sig.name.substring(0, 10) : sig.name;
-      ctx.fillText(displayName, leftMargin - 8, y + sigHeight / 2 + 3);
-
-      // Separator
-      ctx.strokeStyle = 'rgba(40,40,65,0.3)'; ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(leftMargin, y + sigHeight + sigGap/2);
-      ctx.lineTo(w - 20, y + sigHeight + sigGap/2);
-      ctx.stroke();
-
-      // Waveform
-      const vals = sig.values || [];
-      if (vals.length === 0) continue;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      for (let i = 0; i < vals.length; i++) {
-        let x = leftMargin + (i / vals.length) * totalW;
-        let v = vals[i];
-        let yVal;
-        if (v === 0) yVal = y + sigHeight - 4;
-        else if (v === 1) yVal = y + 4;
-        else if (v === 2) yVal = y + sigHeight / 2; // X
-        else yVal = y + sigHeight / 2; // Z
-        if (i === 0) ctx.moveTo(x, yVal);
-        else {
-          let prevV = vals[i-1];
-          let prevY;
-          if (prevV === 0) prevY = y + sigHeight - 4;
-          else if (prevV === 1) prevY = y + 4;
-          else prevY = y + sigHeight / 2;
-          if (prevY !== yVal) {
-            ctx.lineTo(x, prevY);
-            ctx.lineTo(x, yVal);
-          }
-          ctx.lineTo(x, yVal);
-        }
-      }
-      ctx.stroke();
-      // Fill
-      ctx.globalAlpha = 0.05;
-      ctx.fillStyle = color;
-      ctx.fill();
-      ctx.globalAlpha = 1;
-    }
-
-    // Cursor
-    let cx = leftMargin + (cursor / numSteps) * totalW;
-    ctx.strokeStyle = '#ffffff80'; ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, h); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = '#fff';
-    ctx.font = '600 10px JetBrains Mono';
-    ctx.textAlign = 'center';
-    ctx.fillText(Math.floor(cursor) + 'ns', cx, h - 10);
-    ctx.textAlign = 'left';
-
-    animFrames[2] = requestAnimationFrame(animate);
-  }
-  animate();
-}
-
-// ============================================================
-// STAGE 3: FORMAL VERIFICATION — Real BMC results
-// ============================================================
-function drawStage3() {
-  if (animFrames[3]) cancelAnimationFrame(animFrames[3]);
-  const { ctx, w, h } = setupCanvas('c3');
-  const S = window.STATE;
-
-  if (!S || !S.formal || !S.formal.properties || S.formal.properties.length === 0) {
-    drawWaiting(ctx, w, h, 'Run formal_bmc to verify properties');
-    return;
-  }
-
-  const props = S.formal.properties;
-  let proved = props.filter(p => p.status === 'proved').length;
-  let failed = props.filter(p => p.status === 'failed').length;
-  setText('ui-props', proved + ' proved, ' + failed + ' failed');
-  setText('ui-bmc-depth', props.length > 0 ? props[0].depth : '--');
-  setText('label-s3', 'BMC -- ' + props.length + ' Properties');
-
-  let frame = 0;
-  function animate() {
-    frame++;
-    ctx.fillStyle = COLORS.bg;
-    ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 0.5;
-    for (let x = 0; x < w; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
-    for (let y = 0; y < h; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
-
-    // Properties panel
-    let px = 40, py = 50;
-    ctx.fillStyle = '#fff'; ctx.font = '700 14px Inter'; ctx.textAlign = 'left';
-    ctx.fillText('SVA Properties (' + props.length + ')', px, py);
-
-    props.forEach((p, i) => {
-      let y = py + 40 + i * 80;
-      let color = p.status === 'proved' ? '#10b981' : '#ef4444';
-      // Card
-      ctx.fillStyle = color + '10';
-      ctx.strokeStyle = color + '40';
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.roundRect(px, y, 350, 60, 8); ctx.fill(); ctx.stroke();
-      // Icon
-      ctx.fillStyle = color;
-      ctx.font = '700 18px Inter';
-      ctx.fillText(p.status === 'proved' ? '\u2713' : '\u2717', px + 15, y + 35);
-      // Name
-      ctx.fillStyle = '#e8e8f0';
-      ctx.font = '600 11px JetBrains Mono';
-      let name = p.name.length > 35 ? p.name.substring(0, 35) + '...' : p.name;
-      ctx.fillText(name, px + 45, y + 25);
-      // Status
-      ctx.fillStyle = color;
-      ctx.font = '500 10px JetBrains Mono';
-      ctx.fillText(
-        p.status === 'proved' ? 'PROVED (depth ' + p.depth + ')' : 'FAILED @ cycle ' + p.cex_cycle,
-        px + 45, y + 45
-      );
-      // Animated progress bar
-      let progress = Math.min(1, frame * 0.015);
-      ctx.fillStyle = '#1a1a2e';
-      ctx.fillRect(px + 15, y + 52, 320, 3);
-      ctx.fillStyle = color;
-      ctx.fillRect(px + 15, y + 52, 320 * progress, 3);
-    });
-
-    // BMC depth visualization (right side)
-    let bx = 450, by = 50;
-    ctx.fillStyle = '#fff'; ctx.font = '700 14px Inter';
-    ctx.fillText('BMC Depth Exploration', bx, by);
-
-    let maxD = props.length > 0 ? Math.max(...props.map(p => p.depth)) : 10;
-    let currentDepth = Math.min(maxD, Math.floor(frame * 0.2));
-
-    for (let d = 0; d <= maxD && d < 20; d++) {
-      let x = bx + (d % 10) * 65;
-      let y = by + 30 + Math.floor(d / 10) * 100;
-      let checked = d <= currentDepth;
-      let isFail = props.some(p => p.status === 'failed' && p.cex_cycle === d);
-
-      ctx.fillStyle = checked ? (isFail ? '#ef444420' : '#10b98120') : '#1a1a2e';
-      ctx.strokeStyle = checked ? (isFail ? '#ef4444' : '#10b981') : '#2a2a3e';
-      ctx.lineWidth = checked ? 2 : 1;
-      ctx.beginPath(); ctx.roundRect(x, y, 50, 50, 6); ctx.fill(); ctx.stroke();
-
-      ctx.fillStyle = checked ? (isFail ? '#ef4444' : '#10b981') : '#555';
-      ctx.font = '700 14px JetBrains Mono';
-      ctx.textAlign = 'center';
-      ctx.fillText('k=' + d, x + 25, y + 25);
-      ctx.font = '500 8px JetBrains Mono';
-      ctx.fillText(isFail ? 'CEX!' : checked ? 'OK' : '...', x + 25, y + 42);
-      ctx.textAlign = 'left';
-    }
-
-    animFrames[3] = requestAnimationFrame(animate);
-  }
-  animate();
-}
-
-// ============================================================
-// STAGE 4: AIG OPTIMIZATION — Real synthesis data
-// ============================================================
-function drawStage4() {
-  if (animFrames[4]) cancelAnimationFrame(animFrames[4]);
-  const { ctx, w, h } = setupCanvas('c4');
-  const S = window.STATE;
-
-  if (!S || !S.synthesis || !S.synthesis.nodes_before) {
-    drawWaiting(ctx, w, h, 'Run synth to see AIG optimization');
-    return;
-  }
-
-  const syn = S.synthesis;
-  const before = syn.nodes_before;
-  const after = syn.nodes_after;
-  const reduction = syn.reduction_pct;
-  const depthBefore = syn.depth_before;
-  const depthAfter = syn.depth_after;
-
-  setText('ui-aig-before', before + ' nodes');
-  setText('ui-aig-after', after + ' nodes');
-  setText('ui-aig-reduction', reduction.toFixed(1) + '%');
-  setText('ui-aig-depth', depthBefore + ' -> ' + depthAfter);
-  setText('label-s4', 'AIG Optimization -- ' + reduction.toFixed(1) + '% reduction');
-
-  let frame = 0;
-  function animate() {
-    frame++;
-    ctx.fillStyle = COLORS.bg;
-    ctx.fillRect(0, 0, w, h);
-
-    // Before/After labels
-    ctx.fillStyle = '#fff'; ctx.font = '700 13px Inter'; ctx.textAlign = 'center';
-    ctx.fillText('BEFORE -- ' + before + ' nodes', w * 0.25, 35);
-    ctx.fillText('AFTER -- ' + after + ' nodes', w * 0.75, 35);
-
-    // Divider
-    ctx.strokeStyle = '#2a2a3e'; ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath(); ctx.moveTo(w / 2, 0); ctx.lineTo(w / 2, h); ctx.stroke();
-    ctx.setLineDash([]);
-
-    // AIG node visualization
-    function drawAIG(ox, oy, count, maxW, isBefore) {
-      let cols = Math.ceil(Math.sqrt(count * 1.5));
-      let rows = Math.ceil(count / cols);
-      let spacing = Math.min(maxW / (cols + 1), 45);
-      for (let i = 0; i < count; i++) {
-        let col = i % cols;
-        let row = Math.floor(i / cols);
-        let x = ox + col * spacing + spacing / 2;
-        let y = oy + row * spacing + spacing / 2;
-        let alpha = 1;
-        if (isBefore && i >= after) {
-          alpha = 0.3 + 0.2 * Math.sin(frame * 0.05 + i * 0.3);
-        }
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = (isBefore && i >= after) ? '#ef4444' : '#00d4ff';
-        ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
-        if (i > 0) {
-          let parent = Math.floor((i - 1) / 2);
-          let px2 = ox + (parent % cols) * spacing + spacing / 2;
-          let py2 = oy + Math.floor(parent / cols) * spacing + spacing / 2;
-          ctx.strokeStyle = (isBefore && i >= after) ? '#ef444430' : '#00d4ff20';
-          ctx.lineWidth = 1;
-          ctx.beginPath(); ctx.moveTo(px2, py2); ctx.lineTo(x, y); ctx.stroke();
-        }
-        ctx.globalAlpha = 1;
-      }
-    }
-
-    let activeTab = document.querySelector('#s4 .viz-toolbar').dataset.activeTab || 'aig';
-
-    if (activeTab === 'aig') {
-      drawAIG(20, 55, before, w / 2 - 40, true);
-      drawAIG(w / 2 + 20, 55, after, w / 2 - 40, false);
-    } else if (activeTab === 'critical') {
-      ctx.fillStyle = COLORS.text; ctx.font = '600 12px JetBrains Mono'; ctx.textAlign = 'center';
-      ctx.fillText('Critical Path Optimization', w/2, 100);
-      
-      let pBefore = { x: w * 0.25, y: 140 };
-      let pAfter =  { x: w * 0.75, y: 140 };
-
-      // Long path before
-      ctx.strokeStyle = '#ef444480'; ctx.lineWidth = 4;
-      ctx.beginPath();
-      for(let k=0; k<=depthBefore; k++){
-        ctx.lineTo(pBefore.x + (Math.sin(k*0.5 + frame*0.1)*15), pBefore.y + k*20);
-      }
-      ctx.stroke();
-
-      // Shorter path after
-      ctx.strokeStyle = '#10b98180'; ctx.lineWidth = 4;
-      ctx.beginPath();
-      for(let k=0; k<=depthAfter; k++){
-        ctx.lineTo(pAfter.x + (Math.sin(k*0.5 + frame*0.1)*5), pAfter.y + k*20);
-      }
-      ctx.stroke();
-    }
-
-    // Stats bar at bottom
-    let gy = h - 140;
-    ctx.fillStyle = '#1a1a2e';
-    ctx.fillRect(40, gy, w - 80, 110);
-    ctx.strokeStyle = '#2a2a3e';
-    ctx.strokeRect(40, gy, w - 80, 110);
-
-    ctx.fillStyle = '#fff';
-    ctx.font = '600 11px JetBrains Mono';
-    ctx.textAlign = 'left';
-    ctx.fillText('Synthesis Results', 60, gy + 22);
-
-    const stats = [
-      ['Nodes Before:', before.toString(), '#f59e0b'],
-      ['Nodes After:', after.toString(), '#10b981'],
-      ['Reduction:', reduction.toFixed(1) + '%', '#00d4ff'],
-      ['Depth Before:', depthBefore.toString(), '#f59e0b'],
-      ['Depth After:', depthAfter.toString(), '#10b981'],
-    ];
-    stats.forEach((s, i) => {
-      let x = 60 + Math.floor(i / 3) * 300;
-      let y = gy + 45 + (i % 3) * 22;
-      ctx.fillStyle = COLORS.text; ctx.font = '500 10px JetBrains Mono';
-      ctx.fillText(s[0], x, y);
-      ctx.fillStyle = s[2]; ctx.font = '700 10px JetBrains Mono';
-      ctx.fillText(s[1], x + 120, y);
-    });
-
-    // Animated reduction bar
-    let barW = w - 160;
-    let animPct = Math.min(reduction, reduction * Math.min(1, frame * 0.01));
-    ctx.fillStyle = '#1a1a2e';
-    ctx.fillRect(60, gy + 95, barW, 8);
-    ctx.fillStyle = '#00d4ff';
-    ctx.fillRect(60, gy + 95, barW * (animPct / 100), 8);
-
-    ctx.textAlign = 'left';
-    animFrames[4] = requestAnimationFrame(animate);
-  }
-  animate();
-}
-
-// ============================================================
-// STAGE 5: DFT / ATPG — Real fault coverage
-// ============================================================
-function drawStage5() {
-  if (animFrames[5]) cancelAnimationFrame(animFrames[5]);
-  const { ctx, w, h } = setupCanvas('c5');
-  const S = window.STATE;
-
-  if (!S || !S.dft || !S.dft.total_faults) {
-    drawWaiting(ctx, w, h, 'Run run_dft for fault coverage analysis');
-    return;
-  }
-
-  const dft = S.dft;
-  setText('ui-faults', dft.total_faults);
-  setText('ui-detected', dft.detected);
-  setText('ui-coverage', dft.coverage_pct.toFixed(2) + '%');
-  setText('ui-patterns', dft.patterns);
-  setText('label-s5', 'PODEM ATPG -- ' + dft.coverage_pct.toFixed(1) + '% Coverage');
-
-  let frame = 0;
-  // Generate coverage heatmap from real percentage
-  let gridW = 20, gridH = 12;
-  let coverage = [];
-  let totalCells = gridW * gridH;
-  let detectedCells = Math.floor(totalCells * dft.coverage_pct / 100);
-  for (let y = 0; y < gridH; y++) {
-    coverage[y] = [];
-    for (let x = 0; x < gridW; x++) {
-      let idx = y * gridW + x;
-      if (idx < detectedCells) {
-        coverage[y][x] = 0.8 + Math.random() * 0.2;
-      } else {
-        coverage[y][x] = 0.2 + Math.random() * 0.4;
-      }
-    }
-  }
-
-  function viridis(t) {
-    let r = Math.floor(lerp(68, 253, t));
-    let g = Math.floor(t < 0.5 ? lerp(1, 200, t * 2) : lerp(200, 231, (t - 0.5) * 2));
-    let b = Math.floor(t < 0.3 ? lerp(84, 140, t / 0.3) : lerp(140, 37, (t - 0.3) / 0.7));
-    return 'rgb(' + r + ',' + g + ',' + b + ')';
-  }
-
-  function animate() {
-    frame++;
-    ctx.fillStyle = COLORS.bg;
-    ctx.fillRect(0, 0, w, h);
-
-    let activeTab = document.querySelector('#s5 .viz-toolbar').dataset.activeTab || 'faults';
-
-    let cellW = (w - 220) / gridW;
-    let cellH = (h - 160) / gridH;
-    let ox = 180, oy = 60;
-
-    if (activeTab === 'faults') {
-      // Title
-      ctx.fillStyle = '#fff'; ctx.font = '700 14px Inter'; ctx.textAlign = 'left';
-      ctx.fillText('Fault Coverage Heatmap', ox, oy - 15);
-
-      // Heatmap
-      for (let y = 0; y < gridH; y++) {
-        for (let x = 0; x < gridW; x++) {
-          let animCov = Math.min(coverage[y][x], coverage[y][x] * Math.min(1, frame * 0.008));
-          ctx.fillStyle = viridis(animCov);
-          ctx.fillRect(ox + x * cellW, oy + y * cellH, cellW - 1, cellH - 1);
-          if (coverage[y][x] < 0.5) {
-            ctx.fillStyle = 'rgba(239,68,68,' + (0.2 + 0.15 * Math.sin(frame * 0.08)) + ')';
-            ctx.fillRect(ox + x * cellW, oy + y * cellH, cellW - 1, cellH - 1);
-          }
-        }
-      }
-    } else if (activeTab === 'patterns') {
-      ctx.fillStyle = '#fff'; ctx.font = '700 14px Inter'; ctx.textAlign = 'left';
-      ctx.fillText('Generated ATPG Patterns (' + dft.patterns + ' total)', ox, oy - 15);
-
-      ctx.fillStyle = '#1a1a2e';
-      ctx.fillRect(ox, oy, w - ox - 40, h - oy - 40);
-      ctx.strokeStyle = '#2a2a3e';
-      ctx.strokeRect(ox, oy, w - ox - 40, h - oy - 40);
-
-      ctx.fillStyle = COLORS.text; ctx.font = '500 12px JetBrains Mono';
-      for (let idx = 0; idx < Math.min(10, dft.patterns); idx++) {
-        let pId = (idx + 1).toString().padStart(4, '0');
-        let pVec = "";
-        for(let j=0; j<16; j++) pVec += Math.random() > 0.5 ? "1" : "0";
-        ctx.fillText('Pattern ' + pId + ': ' + pVec + '_' + pVec, ox + 20, oy + 30 + idx * 25);
-      }
-    }
-
-    // Legend
-    let lx = 20, ly = 80;
-    ctx.fillStyle = '#fff'; ctx.font = '600 11px Inter'; ctx.textAlign = 'left';
-    ctx.fillText('Coverage', lx, ly);
-    for (let i = 0; i < 10; i++) {
-      let t = i / 9;
-      ctx.fillStyle = viridis(t);
-      ctx.fillRect(lx, ly + 15 + i * 20, 20, 18);
-      ctx.fillStyle = COLORS.text;
-      ctx.font = '500 9px JetBrains Mono';
-      ctx.fillText(Math.floor(t * 100) + '%', lx + 25, ly + 28 + i * 20);
-    }
-
-    // Stats summary at bottom
-    let by = h - 80;
-    ctx.fillStyle = '#1a1a2e';
-    ctx.fillRect(ox, by, w - ox - 20, 60);
-    ctx.strokeStyle = '#2a2a3e';
-    ctx.strokeRect(ox, by, w - ox - 20, 60);
-
-    const dftStats = [
-      ['Total Faults:', dft.total_faults, '#f59e0b'],
-      ['Detected:', dft.detected, '#10b981'],
-      ['Coverage:', dft.coverage_pct.toFixed(2) + '%', '#00d4ff'],
-      ['Patterns:', dft.patterns, '#7c3aed'],
-    ];
-    dftStats.forEach((s, i) => {
-      let x = ox + 15 + i * 180;
-      ctx.fillStyle = COLORS.text; ctx.font = '500 10px JetBrains Mono';
-      ctx.fillText(s[0], x, by + 25);
-      ctx.fillStyle = s[2]; ctx.font = '700 12px JetBrains Mono';
-      ctx.fillText('' + s[1], x, by + 45);
-    });
-
-    animFrames[5] = requestAnimationFrame(animate);
-  }
-  animate();
-}
-
-// ============================================================
-// STAGE 6: CELL PLACEMENT — Real physical data
-// ============================================================
-function drawStage6() {
-  if (animFrames[6]) cancelAnimationFrame(animFrames[6]);
-  const { ctx, w, h } = setupCanvas('c6');
-  const S = window.STATE;
-
-  if (!S || !S.physical || !S.physical.cells || S.physical.cells.length === 0) {
-    drawWaiting(ctx, w, h, 'Run floorplan + place to see cell placement');
-    return;
-  }
-
-  const phys = S.physical;
-  const cells = phys.cells;
-  const die = phys.die || { w: 200, h: 200 };
-  setText('ui-cells', cells.length);
-  setText('ui-die', die.w.toFixed(0) + ' x ' + die.h.toFixed(0) + ' um');
-  setText('ui-hpwl', (phys.wirelength || 0).toFixed(0) + ' um');
-  setText('ui-util', ((phys.utilization || 0) * 100).toFixed(1) + '%');
-  setText('label-s6', 'Placement -- ' + cells.length + ' cells on ' + die.w.toFixed(0) + 'x' + die.h.toFixed(0));
-
-  const margin = 60;
-  const scaleX = (w - 2 * margin) / die.w;
-  const scaleY = (h - 2 * margin) / die.h;
-
-  let frame = 0;
-  function animate() {
-    frame++;
-    ctx.fillStyle = COLORS.bg;
-    ctx.fillRect(0, 0, w, h);
-
-    // Die boundary
-    ctx.strokeStyle = '#00d4ff30'; ctx.lineWidth = 2;
-    ctx.setLineDash([6, 4]);
-    ctx.strokeRect(margin, margin/2, w - 2 * margin, h - margin);
-    ctx.setLineDash([]);
-
-    // Row guides
-    let rowH = 10 * scaleY;
-    if (rowH > 3) {
-      for (let ry = 0; ry < die.h; ry += 10) {
-        let y = margin/2 + ry * scaleY;
-        ctx.strokeStyle = 'rgba(40,40,65,0.2)'; ctx.lineWidth = 0.5;
-        ctx.beginPath(); ctx.moveTo(margin, y); ctx.lineTo(w - margin, y); ctx.stroke();
-      }
-    }
-
-    let activeTab = document.querySelector('#s6 .viz-toolbar').dataset.activeTab || 'cells';
-
-    // Cells with animation (only if cells or congestion tab is active, or density has base layer)
-    let t = Math.min(1, frame * 0.01);
-    const typeColors = { 'GATE': '#00d4ff', 'DFF': '#10b981', 'BUF': '#6366f1', 'INV': '#f59e0b' };
-
-    if (activeTab === 'cells' || activeTab === 'congestion') {
-      for (let c of cells) {
-        let cx = margin + c.x * scaleX;
-        let cy = margin/2 + c.y * scaleY;
-        let cw = Math.max(2, c.w * scaleX);
-        let ch = Math.max(2, c.h * scaleY);
-
-        // Animate from center
-        let animX = lerp(w/2, cx, t);
-        let animY = lerp(h/2, cy, t);
-
-        let color = '#00d4ff';
-        if (c.type && c.type.includes('DFF')) color = '#10b981';
-        else if (c.type && c.type.includes('BUF')) color = '#6366f1';
-        else if (c.type && c.type.includes('INV')) color = '#f59e0b';
-
-        ctx.fillStyle = color + (activeTab === 'congestion' ? '20' : '40');
-        ctx.strokeStyle = color + (activeTab === 'congestion' ? '30' : '90');
-        ctx.lineWidth = 1;
-        ctx.fillRect(animX, animY, cw, ch);
-        ctx.strokeRect(animX, animY, cw, ch);
-      }
-    }
-
-    // Density overlay after placement settles
-    if (t > 0.8 && activeTab === 'density') {
-      let gridSize = 50;
-      for (let gx = margin; gx < w - margin; gx += gridSize) {
-        for (let gy = margin/2; gy < h - margin/2; gy += gridSize) {
-          let count = cells.filter(c => {
-            let cx = margin + c.x * scaleX;
-            let cy = margin/2 + c.y * scaleY;
-            return cx >= gx && cx < gx + gridSize && cy >= gy && cy < gy + gridSize;
-          }).length;
-          let density = count / 10;
-          if (density > 0.1) {
-            ctx.fillStyle = 'rgba(239,68,68,' + Math.min(0.8, density * 0.5) + ')';
-            ctx.fillRect(gx, gy, gridSize, gridSize);
-          }
-        }
-      }
-    }
-
-    // Congestion fake overlay
-    if (t > 0.8 && activeTab === 'congestion') {
-      let gridSize = 40;
-      for (let gx = margin; gx < w - margin; gx += gridSize) {
-        for (let gy = margin/2; gy < h - margin/2; gy += gridSize) {
-           let noise = (Math.sin(gx * 0.05 + frame * 0.02) + Math.cos(gy * 0.05)) * 0.5;
-           if (noise > 0.3) {
-             ctx.fillStyle = 'rgba(245,158,11,' + (noise * 0.5) + ')';
-             ctx.fillRect(gx, gy, gridSize, gridSize);
-           }
-        }
-      }
-    }
-
-    animFrames[6] = requestAnimationFrame(animate);
-  }
-  animate();
-}
-
-// ============================================================
-// STAGE 7: 3D ROUTING — Real wire data
-// ============================================================
-function drawStage7() {
-  if (animFrames[7]) cancelAnimationFrame(animFrames[7]);
-  const { ctx, w, h, c: canvas } = setupCanvas('c7');
-  const S = window.STATE;
-
-  if (!S || !S.physical || !S.physical.wires || S.physical.wires.length === 0) {
-    drawWaiting(ctx, w, h, 'Run route to see wire routing');
-    return;
-  }
-
-  const phys = S.physical;
-  const wires = phys.wires;
-  const vias = phys.vias || [];
-  const cells = phys.cells || [];
-  const die = phys.die || { w: 200, h: 200 };
-
-  // ── Dynamic layer detection from real backend data ──
-  const layerMeta = phys.layers || [];
-  const numLayers = phys.num_layers || layerMeta.length || 0;
-
-  // Detect actual layers used by wires (no assumptions!)
-  const usedLayerSet = new Set();
-  wires.forEach(w2 => usedLayerSet.add(w2.layer));
-  vias.forEach(v => { usedLayerSet.add(v.lower); usedLayerSet.add(v.upper); });
-  const maxLayer = usedLayerSet.size > 0 ? Math.max(...usedLayerSet) : 0;
-  const totalLayers = Math.max(numLayers, maxLayer + 1);
-
-  setText('ui-wires', wires.length);
-  setText('ui-vias', vias.length);
-  setText('ui-wirelength', (phys.wirelength || 0).toFixed(0) + ' um');
-  setText('label-s7', 'Routing -- ' + wires.length + ' wires, ' + vias.length + ' vias, ' + totalLayers + ' layers');
-
-  // ── Color palette that scales to 15+ layers ──
-  // Base 15 distinct colors for M1..M15 (all high-contrast on dark background)
-  const layerColorPalette = [
-    '#10b981', // M1  - emerald green
-    '#00d4ff', // M2  - cyan
-    '#7c3aed', // M3  - violet
-    '#f59e0b', // M4  - amber
-    '#ef4444', // M5  - red
-    '#ec4899', // M6  - pink
-    '#06b6d4', // M7  - teal
-    '#8b5cf6', // M8  - purple
-    '#f97316', // M9  - orange
-    '#14b8a6', // M10 - dark teal
-    '#a855f7', // M11 - fuchsia
-    '#eab308', // M12 - yellow
-    '#3b82f6', // M13 - blue
-    '#22c55e', // M14 - lime green
-    '#e11d48', // M15 - rose
-  ];
-  function getLayerColor(idx) {
-    return layerColorPalette[idx % layerColorPalette.length];
-  }
-  function getLayerName(idx) {
-    if (layerMeta[idx] && layerMeta[idx].name) return layerMeta[idx].name;
-    return 'M' + (idx + 1);
-  }
-
-  // ── Interactive state: rotation + zoom + pan ──
-  let rotY = 0.6;       // horizontal rotation (radians)
-  let rotX = 0.5;       // vertical tilt (radians)
-  let zoom = 1.0;
-  let panX = 0, panY = 0;
-  let dragging = false;
-  let lastMX = 0, lastMY = 0;
-  let panning = false;
-
-  // Remove old listeners if any (re-draw safety)
-  canvas._s7listeners && canvas._s7listeners.forEach(([ev, fn]) => canvas.removeEventListener(ev, fn));
-  canvas._s7listeners = [];
-
-  function addEv(ev, fn) { canvas.addEventListener(ev, fn); canvas._s7listeners.push([ev, fn]); }
-
-  addEv('mousedown', function(e) {
-    if (e.button === 1 || e.shiftKey) { panning = true; } else { dragging = true; }
-    lastMX = e.offsetX; lastMY = e.offsetY;
-    e.preventDefault();
+function selectStage(id) {
+  currentStage = id;
+  document.querySelectorAll('.sidebar-item').forEach(function(el) {
+    el.classList.toggle('active', el.dataset.id === id);
   });
-  addEv('mousemove', function(e) {
-    if (dragging) {
-      rotY += (e.offsetX - lastMX) * 0.008;
-      rotX += (e.offsetY - lastMY) * 0.005;
-      rotX = Math.max(-1.2, Math.min(1.2, rotX));
-      lastMX = e.offsetX; lastMY = e.offsetY;
-    }
-    if (panning) {
-      panX += (e.offsetX - lastMX);
-      panY += (e.offsetY - lastMY);
-      lastMX = e.offsetX; lastMY = e.offsetY;
-    }
-  });
-  addEv('mouseup', function() { dragging = false; panning = false; });
-  addEv('mouseleave', function() { dragging = false; panning = false; });
-  addEv('wheel', function(e) {
-    e.preventDefault();
-    zoom *= e.deltaY > 0 ? 0.92 : 1.08;
-    zoom = Math.max(0.3, Math.min(5.0, zoom));
-  });
-  // Touch support
-  let lastTouch = null; let lastTouchDist = 0;
-  addEv('touchstart', function(e) {
-    e.preventDefault();
-    if (e.touches.length === 1) { dragging = true; lastMX = e.touches[0].clientX; lastMY = e.touches[0].clientY; }
-    if (e.touches.length === 2) {
-      let dx = e.touches[0].clientX - e.touches[1].clientX;
-      let dy = e.touches[0].clientY - e.touches[1].clientY;
-      lastTouchDist = Math.sqrt(dx*dx + dy*dy);
-    }
-  });
-  addEv('touchmove', function(e) {
-    e.preventDefault();
-    if (e.touches.length === 1 && dragging) {
-      rotY += (e.touches[0].clientX - lastMX) * 0.008;
-      rotX += (e.touches[0].clientY - lastMY) * 0.005;
-      rotX = Math.max(-1.2, Math.min(1.2, rotX));
-      lastMX = e.touches[0].clientX; lastMY = e.touches[0].clientY;
-    }
-    if (e.touches.length === 2) {
-      let dx = e.touches[0].clientX - e.touches[1].clientX;
-      let dy = e.touches[0].clientY - e.touches[1].clientY;
-      let dist = Math.sqrt(dx*dx + dy*dy);
-      if (lastTouchDist > 0) { zoom *= dist / lastTouchDist; zoom = Math.max(0.3, Math.min(5.0, zoom)); }
-      lastTouchDist = dist;
-    }
-  });
-  addEv('touchend', function() { dragging = false; lastTouchDist = 0; });
-
-  // ── 3D projection with user-controlled angles ──
-  function project(x, y, z) {
-    // Rotate around Y axis (horizontal drag)
-    let cosY = Math.cos(rotY), sinY = Math.sin(rotY);
-    let rx = x * cosY - y * sinY;
-    let ry = x * sinY + y * cosY;
-    // Tilt around X axis (vertical drag)
-    let cosX = Math.cos(rotX), sinX = Math.sin(rotX);
-    let rz = z * cosX - ry * sinX;
-    let ry2 = z * sinX + ry * cosX;
-    // Isometric-like projection with zoom
-    let sx = w/2 + panX + rx * 0.7 * zoom;
-    let sy = h/2 + panY + ry2 * 0.5 * zoom - rz * 0.8 * zoom;
-    return { x: sx, y: sy, depth: ry2 - rz };
-  }
-
-  let frame = 0;
-  function animate() {
-    frame++;
-    ctx.fillStyle = COLORS.bg;
-    ctx.fillRect(0, 0, w, h);
-
-    // Grid
-    ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 0.5;
-    for (let gx = 0; gx < w; gx += 50) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, h); ctx.stroke(); }
-    for (let gy = 0; gy < h; gy += 50) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke(); }
-
-    // Normalize die to [-250, 250]
-    let dieW = die.w || 200, dieH = die.h || 200;
-    let dieMax = Math.max(dieW, dieH);
-    function toChip(cx, cy) { return { x: (cx / dieMax) * 500 - 250, y: (cy / dieMax) * 500 - 250 }; }
-
-    // Die outline (base plane)
-    let corners = [[-250,-250], [250,-250], [250,250], [-250,250]];
-    let diePts = corners.map(([cx, cy]) => project(cx, cy, 0));
-    ctx.fillStyle = '#0d0d1a';
-    ctx.strokeStyle = '#00d4ff30';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(diePts[0].x, diePts[0].y);
-    for (let i = 1; i < 4; i++) ctx.lineTo(diePts[i].x, diePts[i].y);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-
-    // ── Cells on base layer ──
-    let cellColors = { 'GATE': '#00d4ff', 'DFF': '#10b981', 'BUF': '#6366f1', 'INV': '#f59e0b' };
-    for (let c of cells) {
-      let p1 = toChip(c.x, c.y);
-      let p2 = toChip(c.x + c.w, c.y + c.h);
-      let proj1 = project(p1.x, p1.y, 2);
-      let proj2 = project(p2.x, p2.y, 2);
-      let proj3 = project(p2.x, p1.y, 2);
-      let proj4 = project(p1.x, p2.y, 2);
-      let color = '#00d4ff';
-      if (c.type && c.type.includes('DFF')) color = '#10b981';
-      else if (c.type && c.type.includes('BUF')) color = '#6366f1';
-      ctx.fillStyle = color + '50';
-      ctx.strokeStyle = color + '99';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(proj1.x, proj1.y); ctx.lineTo(proj3.x, proj3.y);
-      ctx.lineTo(proj2.x, proj2.y); ctx.lineTo(proj4.x, proj4.y);
-      ctx.closePath(); ctx.fill(); ctx.stroke();
-    }
-
-    // ── Layer planes (dynamic — renders ALL layers from the design) ──
-    // Adaptive Z-spacing: shrink if many layers so they fit visually
-    let layerZSpacing = totalLayers <= 5 ? 50 : (totalLayers <= 10 ? 35 : 25);
-    for (let layer = 0; layer < totalLayers; layer++) {
-      let z = (layer + 1) * layerZSpacing;
-      let c = getLayerColor(layer);
-      let pts = corners.map(([cx, cy]) => project(cx, cy, z));
-      ctx.fillStyle = c + '06';
-      ctx.strokeStyle = c + '20';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < 4; i++) ctx.lineTo(pts[i].x, pts[i].y);
-      ctx.closePath(); ctx.fill(); ctx.stroke();
-      // Layer label
-      let lbl = project(270, -260, z);
-      ctx.fillStyle = c; ctx.font = '700 11px JetBrains Mono'; ctx.textAlign = 'left';
-      let lyrDir = (layerMeta[layer] && layerMeta[layer].horizontal !== undefined)
-        ? (layerMeta[layer].horizontal ? ' H' : ' V') : '';
-      ctx.fillText(getLayerName(layer) + lyrDir, lbl.x, lbl.y);
-    }
-
-    // ── Wires with thick, glowing lines (dynamic layer colors) ──
-    for (let wire of wires) {
-      let lyr = wire.layer;
-      let z = (lyr + 1) * layerZSpacing;
-      let cp1 = toChip(wire.x1, wire.y1);
-      let cp2 = toChip(wire.x2, wire.y2);
-      let p1 = project(cp1.x, cp1.y, z);
-      let p2 = project(cp2.x, cp2.y, z);
-      let c = getLayerColor(lyr);
-
-      // Thick wire with glow
-      ctx.strokeStyle = c;
-      ctx.lineWidth = Math.max(2, 4 * zoom);
-      ctx.shadowColor = c;
-      ctx.shadowBlur = 6 * zoom;
-      ctx.globalAlpha = 0.9;
-      ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
-      ctx.shadowBlur = 0;
-      ctx.globalAlpha = 1;
-
-      // Wire endpoints
-      ctx.fillStyle = c;
-      let dotR = Math.max(2, 3 * zoom);
-      ctx.beginPath(); ctx.arc(p1.x, p1.y, dotR, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(p2.x, p2.y, dotR, 0, Math.PI * 2); ctx.fill();
-
-      // Signal pulse animation
-      let t = ((frame * 0.012 + lyr * 0.2 + wire.x1 * 0.005) % 1);
-      let px = lerp(p1.x, p2.x, t);
-      let py = lerp(p1.y, p2.y, t);
-      ctx.fillStyle = '#fff';
-      ctx.shadowColor = '#fff'; ctx.shadowBlur = 8;
-      ctx.beginPath(); ctx.arc(px, py, Math.max(2, 3 * zoom), 0, Math.PI * 2); ctx.fill();
-      ctx.shadowBlur = 0;
-    }
-
-    // ── Vias (vertical connections between layers) ──
-    for (let v of vias) {
-      let cp = toChip(v.x, v.y);
-      let z1 = ((v.lower || 0) + 1) * layerZSpacing;
-      let z2 = ((v.upper || 1) + 1) * layerZSpacing;
-      let p1 = project(cp.x, cp.y, z1);
-      let p2 = project(cp.x, cp.y, z2);
-      ctx.strokeStyle = '#ffffffaa'; ctx.lineWidth = Math.max(2, 3 * zoom);
-      ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
-      ctx.fillStyle = '#fff';
-      let vr = Math.max(2, 4 * zoom);
-      ctx.beginPath(); ctx.arc(p1.x, p1.y, vr, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(p2.x, p2.y, vr, 0, Math.PI * 2); ctx.fill();
-    }
-
-    // ── HUD: controls hint + layer count ──
-    ctx.fillStyle = '#ffffff40';
-    ctx.font = '500 10px JetBrains Mono';
-    ctx.textAlign = 'right';
-    ctx.fillText('Drag: rotate | Scroll: zoom | Shift+drag: pan', w - 15, h - 10);
-    ctx.fillText(totalLayers + ' metal layers | ' + wires.length + ' wires | ' + vias.length + ' vias', w - 15, h - 24);
-    ctx.textAlign = 'left';
-
-    animFrames[7] = requestAnimationFrame(animate);
-  }
-  animate();
+  renderStage();
 }
 
-// ============================================================
-// STAGE 8: TIMING / POWER / DRC — Real signoff data
-// ============================================================
-function drawStage8() {
-  if (animFrames[8]) cancelAnimationFrame(animFrames[8]);
-  const { ctx, w, h } = setupCanvas('c8');
-  const S = window.STATE;
-
-  if (!S || (!S.timing && !S.power && !S.drc)) {
-    drawWaiting(ctx, w, h, 'Run drc + lvs + sta + power for signoff results');
-    return;
-  }
-
-  const timing = S.timing || {};
-  const power = S.power || {};
-  const drc = S.drc || {};
-  const lvs = S.lvs || {};
-
-  const flow = S.flow_state || {};
-  const isStaDone = flow.is_sta_done;
-  const isPowerDone = flow.is_power_done;
-  const isDrcDone = flow.is_drc_done;
-  const isLvsDone = flow.is_lvs_done;
-
-  setText('ui-wns', (isStaDone && timing.wns !== undefined ? timing.wns.toFixed(3) + 'ns' : '--'));
-  setText('ui-tns', (isStaDone && timing.tns !== undefined ? timing.tns.toFixed(3) + 'ns' : '--'));
-  setText('ui-power', (isPowerDone && power.total_mw !== undefined ? power.total_mw.toFixed(2) + 'mW' : '--'));
-  setText('ui-drc', (isDrcDone && drc.num_violations !== undefined ? drc.num_violations + ' violations' : '--'));
-  setText('ui-lvs', (isLvsDone && lvs.match !== undefined ? (lvs.match ? 'MATCH' : 'MISMATCH') : '--'));
-  setText('label-s8', isStaDone ? 'Signoff -- WNS: ' + (timing.wns || 0).toFixed(3) + 'ns' : 'Signoff -- Awaiting Execution');
-
-  // Style the WNS/TNS/DRC/LVS elements based on values
-  let wnsEl = document.getElementById('ui-wns');
-  if (wnsEl) wnsEl.className = isStaDone && timing.wns >= 0 ? 'good' : (isStaDone ? 'bad' : '');
-  let drcEl = document.getElementById('ui-drc');
-  if (drcEl) drcEl.className = isDrcDone && drc.num_violations === 0 ? 'good' : (isDrcDone ? 'warn' : '');
-  let lvsEl = document.getElementById('ui-lvs');
-  if (lvsEl) lvsEl.className = isLvsDone && lvs.match ? 'good' : (isLvsDone ? 'bad' : '');
-
-  let frame = 0;
-  function animate() {
-    frame++;
-    ctx.fillStyle = COLORS.bg;
-    ctx.fillRect(0, 0, w, h);
-
-    let anim = Math.min(1, frame * 0.008);
-
-    // ---- Timing Section (left half) ----
-    let lx = 40, ly = 40;
-    ctx.fillStyle = '#fff'; ctx.font = '700 14px Inter'; ctx.textAlign = 'left';
-    ctx.fillText('Static Timing Analysis', lx, ly);
-
-    // WNS/TNS cards
-    const timingCards = [
-      ['WNS', timing.wns !== undefined ? timing.wns.toFixed(3) + ' ns' : 'N/A', timing.wns >= 0 ? '#10b981' : '#ef4444'],
-      ['TNS', timing.tns !== undefined ? timing.tns.toFixed(3) + ' ns' : 'N/A', timing.tns >= 0 ? '#10b981' : '#ef4444'],
-      ['Violations', '' + (timing.num_violations || 0), timing.num_violations === 0 ? '#10b981' : '#ef4444'],
-    ];
-    timingCards.forEach((tc, i) => {
-      let x = lx + i * 170, y = ly + 20;
-      ctx.fillStyle = tc[2] + '15';
-      ctx.strokeStyle = tc[2] + '50';
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.roundRect(x, y, 150, 70, 8); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = COLORS.text; ctx.font = '500 10px JetBrains Mono';
-      ctx.fillText(tc[0], x + 12, y + 25);
-      ctx.fillStyle = tc[2]; ctx.font = '700 18px JetBrains Mono';
-      ctx.fillText(tc[1], x + 12, y + 52);
-    });
-
-    // Critical path
-    let cpy = ly + 110;
-    ctx.fillStyle = '#fff'; ctx.font = '600 12px Inter';
-    ctx.fillText('Critical Path', lx, cpy);
-    const critPath = timing.critical_path || [];
-    critPath.slice(0, 6).forEach((cp, i) => {
-      let x = lx + i * 90;
-      let y = cpy + 15;
-      let color = (cp.slack || 0) >= 0 ? '#10b981' : '#ef4444';
-      ctx.fillStyle = color + '15';
-      ctx.strokeStyle = color + '40';
-      ctx.beginPath(); ctx.roundRect(x, y, 80, 55, 4); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#e8e8f0'; ctx.font = '500 8px JetBrains Mono';
-      let gName = (cp.gate || '').substring(0, 8);
-      ctx.fillText(gName, x + 5, y + 15);
-      ctx.fillStyle = color; ctx.font = '500 7px JetBrains Mono';
-      ctx.fillText('arr: ' + (cp.arrival || 0).toFixed(2), x + 5, y + 30);
-      ctx.fillText('slk: ' + (cp.slack || 0).toFixed(2), x + 5, y + 42);
-      // Arrow
-      if (i < critPath.length - 1 && i < 5) {
-        ctx.strokeStyle = color + '60'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(x + 82, y + 27); ctx.lineTo(x + 88, y + 27); ctx.stroke();
-      }
-    });
-
-    // ---- Power Section (right side, top) ----
-    let rx = w/2 + 30, ry = 40;
-    ctx.fillStyle = '#fff'; ctx.font = '700 14px Inter';
-    ctx.fillText('Power Analysis', rx, ry);
-
-    const powerCards = [
-      ['Dynamic', (power.dynamic_mw || 0).toFixed(2) + ' mW', '#00d4ff'],
-      ['Leakage', (power.leakage_mw || 0).toFixed(2) + ' mW', '#f59e0b'],
-      ['Total', (power.total_mw || 0).toFixed(2) + ' mW', '#7c3aed'],
-    ];
-    powerCards.forEach((pc, i) => {
-      let x = rx + i * 155, y = ry + 20;
-      ctx.fillStyle = pc[2] + '15';
-      ctx.strokeStyle = pc[2] + '50';
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.roundRect(x, y, 140, 70, 8); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = COLORS.text; ctx.font = '500 10px JetBrains Mono';
-      ctx.fillText(pc[0], x + 12, y + 25);
-      ctx.fillStyle = pc[2]; ctx.font = '700 18px JetBrains Mono';
-      ctx.fillText(pc[1], x + 12, y + 52);
-    });
-
-    // ---- DRC Section (left bottom) ----
-    let dy = h/2 + 20;
-    ctx.fillStyle = '#fff'; ctx.font = '700 14px Inter'; ctx.textAlign = 'left';
-    ctx.fillText('Design Rule Check', lx, dy);
-
-    let drcColor = !isDrcDone ? '#475569' : ((drc.num_violations || 0) === 0 ? '#10b981' : '#ef4444');
-    ctx.fillStyle = drcColor + '15';
-    ctx.strokeStyle = drcColor + '50';
-    ctx.beginPath(); ctx.roundRect(lx, dy + 15, 250, 60, 8); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = drcColor; ctx.font = '700 22px JetBrains Mono';
-    let drcStr = !isDrcDone ? 'AWAITING' : ((drc.num_violations || 0) === 0 ? 'DRC CLEAN' : drc.num_violations + ' Violations');
-    ctx.fillText(drcStr, lx + 15, dy + 55);
-
-    // DRC violations list
-    const viols = drc.violations || [];
-    viols.slice(0, 5).forEach((v, i) => {
-      let y = dy + 90 + i * 22;
-      ctx.fillStyle = '#ef4444'; ctx.font = '500 9px JetBrains Mono';
-      ctx.fillText((v.rule || 'DRC') + ': ' + (v.message || '').substring(0, 50), lx + 10, y);
-    });
-
-    // ---- LVS Section (right bottom) ----
-    ctx.fillStyle = '#fff'; ctx.font = '700 14px Inter';
-    ctx.fillText('Layout vs Schematic', rx, dy);
-    let lvsColor = !isLvsDone ? '#475569' : (lvs.match ? '#10b981' : '#ef4444');
-    ctx.fillStyle = lvsColor + '15';
-    ctx.strokeStyle = lvsColor + '50';
-    ctx.beginPath(); ctx.roundRect(rx, dy + 15, 250, 60, 8); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = lvsColor; ctx.font = '700 22px JetBrains Mono';
-    let lvsStr = !isLvsDone ? 'AWAITING' : (lvs.match ? 'LVS MATCH' : 'LVS MISMATCH');
-    ctx.fillText(lvsStr, rx + 15, dy + 55);
-
-    if (!lvs.match && lvs.device_mismatches) {
-      ctx.fillStyle = COLORS.text; ctx.font = '500 9px JetBrains Mono';
-      ctx.fillText('Device mismatches: ' + lvs.device_mismatches, rx + 10, dy + 90);
-      ctx.fillText('Net mismatches: ' + (lvs.net_mismatches || 0), rx + 10, dy + 108);
-    }
-
-    animFrames[8] = requestAnimationFrame(animate);
-  }
-  animate();
+function renderStage() {
+  var el = document.getElementById('stage-content');
+  var fn = RENDERERS[currentStage];
+  if (fn) { el.innerHTML = ''; fn(el); }
+  else { el.innerHTML = '<div class="card"><p style="color:var(--text-secondary)">Select a stage.</p></div>'; }
 }
 
-// ============================================================
-// STAGE 9: CROSS SECTION VIEW — Real Used Layers
-// ============================================================
-function drawStage9() {
-  if (animFrames[9]) cancelAnimationFrame(animFrames[9]);
-  const { ctx, w, h } = setupCanvas('c9');
-  let frame = 0;
-  
-  const S = window.STATE;
-  let usedLayers = new Set([0]); // base layer always used
-  if (S && S.physical && S.physical.wires) {
-    S.physical.wires.forEach(wire => usedLayers.add(wire.layer));
-  }
-
-  // Dynamic cross-section: build layer stack from actual backend data
-  const metalColorPalette = [
-    '#10b981', '#00d4ff', '#7c3aed', '#f59e0b', '#ef4444',
-    '#ec4899', '#06b6d4', '#8b5cf6', '#f97316', '#14b8a6',
-    '#a855f7', '#eab308', '#3b82f6', '#22c55e', '#e11d48',
-  ];
-  const layerMeta9 = (S && S.physical && S.physical.layers) || [];
-  const numMetalLayers = (S && S.physical && S.physical.num_layers) || layerMeta9.length || Math.max(0, ...usedLayers) + 1;
-
-  // Base layers (always present in a silicon process)
-  const layers = [
-    { name: 'Substrate', color: '#4a3728', height: 80 },
-    { name: 'p-well / n-well', color: '#5c4033', height: 30 },
-    { name: 'Diffusion', color: '#8b6914', height: 15 },
-    { name: 'Poly', color: '#c41e3a', height: 12 },
-    { name: 'Contact', color: '#777', height: 15, via: true },
-    { name: 'li1 (Local)', color: '#10b981', height: 20 },
-  ];
-
-  // Dynamically add metal layers + vias based on actual design
-  for (let m = 0; m < numMetalLayers; m++) {
-    let mName = (layerMeta9[m] && layerMeta9[m].name) ? layerMeta9[m].name : ('Metal ' + (m + 1));
-    let mColor = metalColorPalette[m % metalColorPalette.length];
-    // Grey out unused layers
-    if (!usedLayers.has(m)) mColor = '#334155';
-    // Via below this metal (except for first metal)
-    if (m > 0) {
-      layers.push({ name: 'Via ' + m + '/' + (m+1), color: usedLayers.has(m) ? '#999' : '#444', height: 10, via: true });
-    } else {
-      layers.push({ name: 'Via (mcon)', color: usedLayers.has(m) ? '#888' : '#444', height: 10, via: true });
-    }
-    // Metal layer (upper layers get slightly thicker for power routing)
-    let mHeight = 22 + Math.min(m * 3, 25);
-    layers.push({ name: mName, color: mColor, height: mHeight });
-  }
-  layers.push({ name: 'Passivation', color: '#334155', height: 18 });
-
-  let totalH = layers.reduce((s, l) => s + l.height, 0);
-  let scale = (h - 100) / totalH;
-  let cumY = h - 40;
-  for (let l of layers) {
-    l.scaledH = l.height * scale;
-    l.y = cumY - l.scaledH;
-    cumY = l.y;
-  }
-
-  function animate() {
-    frame++;
-    ctx.fillStyle = COLORS.bg;
-    ctx.fillRect(0, 0, w, h);
-
-    let ox = 180;
-    let layerW = w - 220;
-    let anim = Math.min(1, frame * 0.006);
-
-    for (let i = 0; i < layers.length; i++) {
-      let l = layers[i];
-      let animW = layerW * Math.min(1, anim * (layers.length / (i + 1)));
-
-      if (l.via) {
-        for (let v = 0; v < 6; v++) {
-          let vx = ox + 60 + v * (animW - 100) / 6;
-          ctx.fillStyle = l.color + 'cc';
-          ctx.fillRect(vx, l.y, 12, l.scaledH);
-          ctx.strokeStyle = l.color; ctx.lineWidth = 1;
-          ctx.strokeRect(vx, l.y, 12, l.scaledH);
-        }
-      } else {
-        ctx.fillStyle = l.color + '90';
-        ctx.strokeStyle = l.color; ctx.lineWidth = 1.5;
-        if (l.name.startsWith('Metal') || l.name.startsWith('li1')) {
-          let numWires = 4 + (i % 3);
-          for (let sw = 0; sw < numWires; sw++) {
-            let wx = ox + 30 + sw * (animW - 60) / numWires;
-            let ww = 20 + (sw % 3) * 15;
-            ctx.fillStyle = l.color + 'bb';
-            ctx.fillRect(wx, l.y, ww, l.scaledH);
-            ctx.strokeRect(wx, l.y, ww, l.scaledH);
-          }
-        } else {
-          ctx.fillRect(ox, l.y, animW, l.scaledH);
-          ctx.strokeRect(ox, l.y, animW, l.scaledH);
-        }
-      }
-
-      // Label
-      ctx.fillStyle = l.color;
-      ctx.font = '500 9px JetBrains Mono';
-      ctx.textAlign = 'right';
-      ctx.fillText(l.name, ox - 10, l.y + l.scaledH / 2 + 3);
-      ctx.textAlign = 'left';
-    }
-
-    // Slice plane
-    let sliceX = ox + (Math.sin(frame * 0.01) * 0.3 + 0.5) * layerW;
-    ctx.strokeStyle = '#ffffff40'; ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath(); ctx.moveTo(sliceX, 20); ctx.lineTo(sliceX, h - 20); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = '#fff'; ctx.font = '600 9px JetBrains Mono'; ctx.textAlign = 'center';
-    ctx.fillText('Slice Plane', sliceX, 15);
-    ctx.textAlign = 'left';
-
-    animFrames[9] = requestAnimationFrame(animate);
-  }
-  animate();
-}
-
-// ============================================================
-// STAGE 10: GDSII 3D CHIP VIEW — Real data counts
-// ============================================================
-function drawStage10() {
-  if (animFrames[10]) cancelAnimationFrame(animFrames[10]);
-  const { ctx, w, h } = setupCanvas('c10');
-  const S = window.STATE;
-  let frame = 0;
-
-  // Update stats from real data
-  if (S && S.physical) {
-    setText('ui-gds-cells', (S.physical.cells || []).length);
-    setText('ui-gds-wires', (S.physical.wires || []).length);
-    let die = S.physical.die || {};
-    setText('ui-gds-die', (die.w || 0).toFixed(0) + ' x ' + (die.h || 0).toFixed(0) + ' um');
-    setText('ui-gds-status', S.flow_state && S.flow_state.is_routed ? 'FAB READY' : 'Incomplete');
-    setText('label-s10', 'GDSII -- ' + (S.physical.cells || []).length + ' cells');
-  }
-
-  const cells = (S && S.physical && S.physical.cells) || [];
-  const wires = (S && S.physical && S.physical.wires) || [];
-  const die = (S && S.physical && S.physical.die) || { w: 200, h: 200 };
-
-  function animate() {
-    frame++;
-    ctx.fillStyle = '#050510';
-    ctx.fillRect(0, 0, w, h);
-
-    let angle = frame * 0.004;
-    let cos = Math.cos(angle), sin = Math.sin(angle);
-
-    function iso(x, y, z) {
-      let rx = x * cos - y * sin;
-      let ry = x * sin + y * cos;
-      return { x: w / 2 + rx * 0.6, y: h / 2 + rx * 0.3 + ry * 0.3 - z * 1.0 };
-    }
-
-    let chipSize = 250;
-
-    // Die substrate
-    let sub = [
-      iso(-chipSize, -chipSize, 0), iso(chipSize, -chipSize, 0),
-      iso(chipSize, chipSize, 0), iso(-chipSize, chipSize, 0)
-    ];
-    ctx.fillStyle = '#1a1520';
-    ctx.beginPath();
-    ctx.moveTo(sub[0].x, sub[0].y);
-    for (let i = 1; i < 4; i++) ctx.lineTo(sub[i].x, sub[i].y);
-    ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = '#00d4ff20'; ctx.lineWidth = 1; ctx.stroke();
-
-    // Real cells or fallback grid
-    let cellColors = ['#10b98140', '#00d4ff40', '#7c3aed40', '#f59e0b40'];
-    if (cells.length > 0) {
-      let scale = 500 / Math.max(die.w, die.h);
-      for (let i = 0; i < cells.length; i++) {
-        let c = cells[i];
-        let cx = (c.x / die.w) * 500 - 250;
-        let cy = (c.y / die.h) * 500 - 250;
-        let cw = Math.max(10, c.w * scale);
-        let cd = Math.max(10, c.h * scale);
-        let ch = 8 + (i % 3) * 4;
-        let color = cellColors[i % cellColors.length];
-        let top = [iso(cx, cy, 5 + ch), iso(cx + cw, cy, 5 + ch), iso(cx + cw, cy + cd, 5 + ch), iso(cx, cy + cd, 5 + ch)];
-        ctx.fillStyle = color;
-        ctx.beginPath(); ctx.moveTo(top[0].x, top[0].y);
-        for (let j = 1; j < 4; j++) ctx.lineTo(top[j].x, top[j].y);
-        ctx.closePath(); ctx.fill();
-      }
-    } else {
-      for (let i = 0; i < 100; i++) {
-        let cx = -220 + (i % 10) * 45;
-        let cy = -220 + Math.floor(i / 10) * 45;
-        let ch = 8 + (i % 3) * 4;
-        let top = [iso(cx, cy, 5 + ch), iso(cx + 35, cy, 5 + ch), iso(cx + 35, cy + 35, 5 + ch), iso(cx, cy + 35, 5 + ch)];
-        ctx.fillStyle = cellColors[i % 4];
-        ctx.beginPath(); ctx.moveTo(top[0].x, top[0].y);
-        for (let j = 1; j < 4; j++) ctx.lineTo(top[j].x, top[j].y);
-        ctx.closePath(); ctx.fill();
-      }
-    }
-
-    // Metal wires (real or fallback)
-    const metalLayers = [
-      { z: 30, color: '#00d4ff', count: 0 },
-      { z: 55, color: '#7c3aed', count: 0 },
-      { z: 80, color: '#f59e0b', count: 0 },
-      { z: 110, color: '#ec4899', count: 0 },
-      { z: 145, color: '#ef4444', count: 0 },
-    ];
-    if (wires.length > 0) {
-      let scale = 500 / Math.max(die.w, die.h);
-      for (let wire of wires) {
-        let lyr = wire.layer % 5;
-        let z = metalLayers[lyr].z;
-        let sx1 = (wire.x1 / die.w) * 500 - 250;
-        let sy1 = (wire.y1 / die.h) * 500 - 250;
-        let sx2 = (wire.x2 / die.w) * 500 - 250;
-        let sy2 = (wire.y2 / die.h) * 500 - 250;
-        let p1 = iso(sx1, sy1, z);
-        let p2 = iso(sx2, sy2, z);
-        ctx.strokeStyle = metalLayers[lyr].color + 'aa';
-        ctx.lineWidth = 2; ctx.shadowColor = metalLayers[lyr].color; ctx.shadowBlur = 3;
-        ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
-        ctx.shadowBlur = 0;
-      }
-    } else {
-      // Fallback demo wires
-      for (let ml of metalLayers) {
-        let cnt = 8;
-        for (let i = 0; i < cnt; i++) {
-          let spread = (i / (cnt - 1)) * 400 - 200;
-          let p1 = iso(-230, spread, ml.z);
-          let p2 = iso(230, spread, ml.z);
-          ctx.strokeStyle = ml.color + 'aa'; ctx.lineWidth = 2;
-          ctx.shadowColor = ml.color; ctx.shadowBlur = 3;
-          ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
-          ctx.shadowBlur = 0;
-        }
-      }
-    }
-
-    // Pad ring
-    for (let side = 0; side < 4; side++) {
-      for (let i = 0; i < 8; i++) {
-        let pos = -200 + i * 55;
-        let pad;
-        if (side === 0) pad = iso(pos, -250, 160);
-        else if (side === 1) pad = iso(250, pos, 160);
-        else if (side === 2) pad = iso(pos, 250, 160);
-        else pad = iso(-250, pos, 160);
-        ctx.fillStyle = '#c0c0c040'; ctx.strokeStyle = '#c0c0c080'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.arc(pad.x, pad.y, 8, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-      }
-    }
-
-    // Title
-    ctx.fillStyle = '#fff'; ctx.font = '700 16px Inter'; ctx.textAlign = 'center';
-    ctx.fillText('SiliconForge -- 3D Chip View', w / 2, h - 20);
-    ctx.textAlign = 'left';
-
-    animFrames[10] = requestAnimationFrame(animate);
-  }
-  animate();
-}
-
-// ============================================================
-// INIT + LAZY LOAD
-// ============================================================
-const initialized = new Set();
-
-function initStage(id, drawFn) {
-  if (initialized.has(id)) return;
-  const section = document.getElementById(id);
-  if (!section) return;
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
-      if (entry.isIntersecting && !initialized.has(id)) {
-        initialized.add(id);
-        drawFn();
-        observer.disconnect();
-      }
-    });
-  }, { threshold: 0.15 });
-  observer.observe(section);
-}
-
-function refreshStage(num) {
-  const drawFns = { 1: drawStage1, 2: drawStage2, 3: drawStage3, 4: drawStage4, 5: drawStage5, 6: drawStage6, 7: drawStage7, 8: drawStage8, 9: drawStage9, 10: drawStage10 };
-  if (drawFns[num]) {
-    initialized.add('s' + num);
-    drawFns[num]();
-  }
-}
-
-function refreshAllStages() {
-  for (let i = 1; i <= 10; i++) refreshStage(i);
-}
-
-// Register lazy loading
-for (let i = 1; i <= 10; i++) {
-  const fns = [null, drawStage1, drawStage2, drawStage3, drawStage4, drawStage5, drawStage6, drawStage7, drawStage8, drawStage9, drawStage10];
-  initStage('s' + i, fns[i]);
-}
-
-// ============================================================
-// REST API: Run Command
-// ============================================================
-function updateUIStats() {
-  if (!window.STATE) return;
-  const setTxt = (id, val) => { let el = document.getElementById(id); if (el) el.innerText = val; };
-  setTxt('ui-nodes', window.STATE.netlist ? window.STATE.netlist.num_gates : 0);
-  setTxt('ui-nets', window.STATE.netlist ? window.STATE.netlist.num_nets : 0);
-  setTxt('ui-cells', window.STATE.physical ? window.STATE.physical.cells.length : 0);
-  setTxt('ui-wires', window.STATE.physical ? window.STATE.physical.wires.length : 0);
-}
-function setText(id, val) {
-  let el = document.getElementById(id);
-  if (el) el.innerText = '' + val;
-}
-
-async function runCommand(cmd) {
-  const term = document.getElementById('sf-term-log');
-  const status = document.getElementById('sf-status');
-  term.innerHTML += '<span style="color:#fff;">' + cmd + '</span>\n';
-  status.innerText = "Running...";
-  status.style.color = "#f59e0b";
-
+// API
+async function apiCommand(cmd) {
+  appendTerminal('> ' + cmd);
   try {
-    const res = await fetch('/api/command', {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: cmd
-    });
-    const data = await res.json();
-
-    // Update global state
-    if (data.state && Object.keys(data.state).length > 0) {
-      window.STATE = data.state;
-      updateUIStats(); // Call updateUIStats after state is updated
-    }
-
-    // Clean output
-    let outStr = (data.output || '').replace(/\x1b\[[0-9;]*m/g, '');
-    term.innerHTML += outStr + '\n<span style="color:#00d4ff;">sf&gt;</span> ';
-    term.scrollTop = term.scrollHeight;
-  } catch (e) {
-    term.innerHTML += '\n<span style="color:#ef4444;">Error: ' + e.message + '</span>\n<span style="color:#00d4ff;">sf&gt;</span> ';
-    term.scrollTop = term.scrollHeight;
-  }
-
-  status.innerText = "Idle";
-  status.style.color = "#10b981";
+    var r = await fetch('/api/command', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({command:cmd}) });
+    var d = await r.json();
+    if (d.output) appendTerminal(d.output);
+    if (d.state) { STATE = d.state; buildSidebar(); renderStage(); }
+    return d;
+  } catch(e) { appendTerminal('[ERROR] ' + e.message); }
 }
 
-async function runStage(cmd, stageNum, followUpCmd) {
-  let btn = document.getElementById('btn-s' + stageNum);
-  if (btn) { btn.disabled = true; btn.classList.add('running'); btn.innerText = 'Running...'; }
-
+async function refreshState() {
   try {
-    await runCommand(cmd);
-    if (followUpCmd) {
-      await runCommand(followUpCmd);
-    }
-    refreshStage(stageNum);
-  } catch(e) {
-    console.error('Stage ' + stageNum + ' error:', e);
-  } finally {
-    if (btn) { btn.disabled = false; btn.classList.remove('running'); btn.innerText = 'Done \u2713'; }
-  }
+    var r = await fetch('/api/state');
+    STATE = await r.json();
+    buildSidebar(); renderStage();
+    appendTerminal('[State refreshed]');
+  } catch(e) { appendTerminal('[ERROR] ' + e.message); }
 }
 
-async function runSignoff() {
-  let btn = document.getElementById('btn-s8');
-  if (btn) { btn.disabled = true; btn.classList.add('running'); btn.innerText = 'Running signoff...'; }
-
+async function uploadFile(input) {
+  var file = input.files[0];
+  if (!file) return;
+  currentDesignFile = file.name;
+  var form = new FormData();
+  form.append('file', file);
   try {
-    await runCommand('drc');
-    await runCommand('lvs');
-    await runCommand('sta');
-    await runCommand('power');
-    refreshStage(8);
-  } catch(e) {
-    console.error('Signoff error:', e);
-  } finally {
-    if (btn) { btn.disabled = false; btn.classList.remove('running'); btn.innerText = 'Done \u2713'; }
-  }
+    await fetch('/api/upload', { method:'POST', body:form });
+    appendTerminal('[Uploaded] ' + file.name);
+    await apiCommand('read_verilog studio/' + file.name);
+  } catch(e) { appendTerminal('[ERROR] ' + e.message); }
 }
 
 async function runFullFlow() {
-  let btn = document.getElementById('run-all-btn');
-  if (btn) { btn.disabled = true; btn.innerText = 'Running Full Flow...'; }
-  flowAborted = false;
+  appendTerminal('[Running full RTL-to-GDSII flow...]');
+  await apiCommand('run_all 200 200');
+}
 
-  try {
-    const steps = [
-      () => runStage('read_verilog ' + currentDesignFile, 1),
-      () => runStage('simulate', 2),
-      () => runStage('formal_bmc 10', 3),
-      () => runStage('synth', 4),
-      () => runStage('run_dft', 5),
-      () => runStage('floorplan 200 200 10', 6, 'place'),
-      () => runCommand('ai_tune'),
-      () => runStage('route', 7),
-      () => runSignoff(),
-      () => runStage('write_gds sf_final_layout.gds', 10),
-    ];
-    for (const step of steps) {
-      if (flowAborted) break;
-      await step();
+function appendTerminal(text) {
+  var el = document.getElementById('terminal-output');
+  el.textContent += text + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+function clearTerminal() { document.getElementById('terminal-output').textContent = ''; }
+function sendTerminalCmd() {
+  var inp = document.getElementById('terminal-input');
+  var cmd = inp.value.trim();
+  if (!cmd) return;
+  inp.value = '';
+  apiCommand(cmd);
+}
+
+// Helpers
+function mc(label, value, cls) {
+  return '<div class="metric"><div class="metric-label">' + label + '</div><div class="metric-value ' + (cls||'') + '">' + value + '</div></div>';
+}
+
+function stageHdr(num, title, cmd) {
+  var s = '<div class="stage-header"><span class="num">#' + num + '</span><h2>' + title + '</h2>';
+  if (cmd) s += '<button class="btn btn-primary" style="margin-left:auto" onclick="apiCommand(\'' + cmd.replace(/'/g,"\\'") + '\')">Run</button>';
+  s += '</div>';
+  return s;
+}
+
+function makeCanvas(id, w, h) {
+  return '<div class="viz-container"><canvas id="' + id + '" width="' + w + '" height="' + h + '"></canvas></div>';
+}
+
+// RENDERERS
+var RENDERERS = {};
+
+RENDERERS.dashboard = function(el) {
+  var fs = STATE.flow_state || {};
+  var allStages = Object.entries(STAGE_STATE_MAP);
+  var doneCount = allStages.filter(function(e) { return fs[e[1]]; }).length;
+  var html = '<div class="stage-header"><h2>Design Overview</h2></div>';
+  html += '<div class="card"><div class="card-title">Flow Progress — ' + doneCount + '/' + allStages.length + ' stages</div><div class="flow-progress">';
+  var allStageList = [];
+  STAGE_GROUPS.forEach(function(g) { g.stages.forEach(function(s) { allStageList.push(s); }); });
+  for (var e of allStages) {
+    var info = allStageList.find(function(s) { return s.id === e[0]; });
+    html += '<span class="flow-chip ' + (fs[e[1]] ? 'done' : '') + '">' + (info ? info.label : e[0]) + '</span>';
+  }
+  html += '</div></div>';
+  var nl = STATE.netlist || {}, t = STATE.timing || {}, p = STATE.power || {}, ph = STATE.physical || {}, drc = STATE.drc || {};
+  html += '<div class="card"><div class="card-title">Key Metrics</div><div class="metric-grid">';
+  html += mc('Gates', nl.num_gates||0) + mc('Nets', nl.num_nets||0) + mc('Flip-Flops', nl.num_ffs||0);
+  html += mc('WNS (ns)', (t.wns||0).toFixed(3), (t.wns||0)>=0?'good':'bad');
+  html += mc('TNS (ns)', (t.tns||0).toFixed(3), (t.tns||0)>=0?'good':'warn');
+  html += mc('Power (mW)', (p.total_mw||0).toFixed(2));
+  html += mc('Cells', ph.num_cells||0) + mc('Wires', ph.num_wires||0);
+  html += mc('DRC Violations', drc.violations||0, (drc.violations||0)===0?'good':'bad');
+  html += '</div></div>';
+  el.innerHTML = html;
+};
+
+RENDERERS.rtl = function(el) {
+  var nl = STATE.netlist || {};
+  var html = stageHdr('01','RTL Design','read_verilog '+currentDesignFile);
+  html += '<div class="card"><div class="card-title">Netlist</div><div class="metric-grid">';
+  html += mc('Gates',nl.num_gates||0)+mc('Nets',nl.num_nets||0)+mc('PIs',nl.num_pis||0)+mc('POs',nl.num_pos||0)+mc('FFs',nl.num_ffs||0);
+  html += '</div></div>';
+  if (nl.gates && nl.gates.length > 0) html += '<div class="card"><div class="card-title">Gate Graph</div>' + makeCanvas('c-rtl',800,350) + '</div>';
+  el.innerHTML = html;
+  if (nl.gates && nl.gates.length > 0) drawRtlGraph(document.getElementById('c-rtl'), nl);
+};
+
+RENDERERS.simulation = function(el) {
+  var sim = STATE.simulation || {};
+  var html = stageHdr('02','Simulation','simulate');
+  if (sim.num_signals > 0) {
+    html += '<div class="card"><div class="card-title">Waveforms — '+sim.num_signals+' signals, '+sim.num_timepoints+' timepoints</div>'+makeCanvas('c-sim',800,Math.max(200,(sim.signals||[]).length*30+40))+'</div>';
+    el.innerHTML = html;
+    drawWaveform(document.getElementById('c-sim'), sim);
+  } else {
+    html += '<div class="card"><p style="color:var(--text-secondary)">No simulation data yet.</p></div>';
+    el.innerHTML = html;
+  }
+};
+
+RENDERERS.formal = function(el) {
+  var f = STATE.formal || {};
+  var html = stageHdr('03','Formal Verification','formal_bmc 10');
+  html += '<div class="card"><div class="card-title">BMC — Depth ' + (f.bmc_depth||0) + '</div>';
+  if (f.properties && f.properties.length) {
+    html += '<table class="data-table"><thead><tr><th>Property</th><th>Status</th><th>Depth</th><th>CEX</th></tr></thead><tbody>';
+    for (var p of f.properties) {
+      var c = p.status==='proved'?'var(--green)':p.status==='failed'?'var(--red)':'var(--orange)';
+      html += '<tr><td>'+p.name+'</td><td style="color:'+c+'">'+p.status+'</td><td>'+p.depth+'</td><td>'+p.cex_cycle+'</td></tr>';
     }
-    if (!flowAborted) refreshAllStages();
-  } catch(e) {
-    console.error('Full flow error:', e);
-  } finally {
-    if (btn) { btn.disabled = false; btn.innerText = flowAborted ? 'Flow Aborted' : 'Flow Complete ✓'; }
+    html += '</tbody></table>';
+  } else html += '<p style="color:var(--text-secondary)">No properties yet.</p>';
+  html += '</div>';
+  el.innerHTML = html;
+};
+
+RENDERERS.synthesis = function(el) {
+  var s = STATE.synthesis || {};
+  var html = stageHdr('04','Logic Synthesis','synthesize');
+  html += '<div class="card"><div class="card-title">Results</div><div class="metric-grid">';
+  html += mc('Nodes Before',s.nodes_before||0)+mc('Nodes After',s.nodes_after||0);
+  html += mc('Depth Before',s.depth_before||0)+mc('Depth After',s.depth_after||0);
+  html += mc('Reduction',(s.reduction_pct||0).toFixed(1)+'%','good');
+  html += '</div></div>';
+  html += '<div class="card"><div class="card-title">Optimization</div>'+makeCanvas('c-synth',500,200)+'</div>';
+  el.innerHTML = html;
+  drawBarComp(document.getElementById('c-synth'),[{l:'Nodes',b:s.nodes_before||0,a:s.nodes_after||0},{l:'Depth',b:s.depth_before||0,a:s.depth_after||0}]);
+};
+
+RENDERERS.dft = function(el) {
+  var d = STATE.dft || {};
+  var html = stageHdr('05','Design for Test','run_dft');
+  html += '<div class="card"><div class="card-title">Fault Coverage</div><div class="metric-grid">';
+  html += mc('Total Faults',d.total_faults||0)+mc('Detected',d.detected||0,'good');
+  html += mc('Coverage',(d.coverage_pct||0).toFixed(1)+'%',(d.coverage_pct||0)>90?'good':'warn');
+  html += mc('Patterns',d.patterns||0);
+  html += '</div></div>';
+  el.innerHTML = html;
+};
+
+RENDERERS.lec = function(el) {
+  var fs = STATE.flow_state || {};
+  var html = stageHdr('06','Logic Equivalence Checking','lec');
+  html += '<div class="card"><div class="card-title">LEC Status</div>';
+  html += '<p style="color:'+(fs.is_lec_done?'var(--green)':'var(--text-secondary)')+';font-size:16px">'+(fs.is_lec_done?'✓ Equivalence verified':'Not run yet')+'</p></div>';
+  el.innerHTML = html;
+};
+
+RENDERERS.placement = function(el) {
+  var ph = STATE.physical || {};
+  var html = stageHdr('07','Cell Placement','floorplan 200 200 10');
+  html += '<div class="card"><div class="card-title">Placement</div><div class="metric-grid">';
+  html += mc('Die',((ph.die||{}).w||0)+' × '+((ph.die||{}).h||0));
+  html += mc('Cells',ph.num_cells||0)+mc('Utilization',((ph.utilization||0)*100).toFixed(1)+'%');
+  html += '</div></div>';
+  if (ph.cells && ph.cells.length) {
+    html += '<div class="card"><div class="card-title">Cell Map</div>'+makeCanvas('c-place',600,500)+'</div>';
+    el.innerHTML = html;
+    drawPlacement(document.getElementById('c-place'), ph);
+  } else el.innerHTML = html;
+};
+
+RENDERERS.cts = function(el) {
+  var c = STATE.cts || {};
+  var html = stageHdr('08','Clock Tree Synthesis','cts');
+  html += '<div class="card"><div class="card-title">CTS Results</div><div class="metric-grid">';
+  html += mc('Buffers',c.buffers_inserted||0)+mc('Wirelength',(c.wirelength||0).toFixed(1));
+  html += mc('Skew (ps)',(c.skew||0).toFixed(2),(c.skew||0)<50?'good':'warn');
+  html += mc('Max Latency',(c.max_latency||0).toFixed(1))+mc('Min Latency',(c.min_latency||0).toFixed(1));
+  html += '</div></div>';
+  el.innerHTML = html;
+};
+
+RENDERERS.routing = function(el) {
+  var ph = STATE.physical || {};
+  var html = stageHdr('09','Routing','route');
+  html += '<div class="card"><div class="card-title">Routing</div><div class="metric-grid">';
+  html += mc('Wires',ph.num_wires||0)+mc('Vias',ph.num_vias||0)+mc('Layers',ph.num_layers||0)+mc('Wirelength',(ph.wirelength||0).toFixed(0));
+  html += '</div></div>';
+  if (ph.wires && ph.wires.length) {
+    html += '<div class="card"><div class="card-title">Route Map</div>'+makeCanvas('c-route',600,500)+'</div>';
+    el.innerHTML = html;
+    drawRouting(document.getElementById('c-route'), ph);
+  } else el.innerHTML = html;
+};
+
+RENDERERS.post_route = function(el) {
+  var pr = STATE.post_route || {};
+  var html = stageHdr('10','Post-Route Optimization','post_route_opt');
+  html += '<div class="card"><div class="card-title">Results</div><div class="metric-grid">';
+  html += mc('WNS Before',(pr.wns_before||0).toFixed(3))+mc('WNS After',(pr.wns_after||0).toFixed(3),(pr.wns_after||0)>=0?'good':'bad');
+  html += mc('Gates Resized',pr.gates_resized||0)+mc('Vt Swapped',pr.cells_vt_swapped||0);
+  html += mc('Buffers',pr.buffers_inserted||0)+mc('Hold Buffers',pr.hold_buffers_inserted||0);
+  html += '</div></div>';
+  html += '<div class="card"><div class="card-title">Before vs After</div>'+makeCanvas('c-popt',500,200)+'</div>';
+  el.innerHTML = html;
+  drawBarComp(document.getElementById('c-popt'),[{l:'WNS',b:pr.wns_before||0,a:pr.wns_after||0},{l:'TNS',b:pr.tns_before||0,a:pr.tns_after||0}]);
+};
+
+RENDERERS.chip = function(el) {
+  var c = STATE.chip || {};
+  var html = stageHdr('11','Chip Assembly','chip_assemble');
+  html += '<div class="card"><div class="card-title">Package</div><div class="metric-grid">';
+  html += mc('Die Size',(c.chip_width||0).toFixed(0)+' × '+(c.chip_height||0).toFixed(0));
+  html += mc('Area (mm²)',(c.chip_area_mm2||0).toFixed(3));
+  html += mc('Total Pads',c.total_pads||0)+mc('Signal Pads',c.signal_pads||0);
+  html += mc('Power Pads',c.power_pads||0)+mc('Bumps',c.total_bumps||0);
+  html += '</div></div>';
+  el.innerHTML = html;
+};
+
+RENDERERS.sta = function(el) {
+  var t = STATE.timing || {};
+  var html = stageHdr('12','Static Timing Analysis','sta');
+  html += '<div class="card"><div class="card-title">Timing</div><div class="metric-grid">';
+  html += mc('WNS (ns)',(t.wns||0).toFixed(3),(t.wns||0)>=0?'good':'bad');
+  html += mc('TNS (ns)',(t.tns||0).toFixed(3),(t.tns||0)>=0?'good':'warn');
+  html += mc('Violations',t.num_violations||0,(t.num_violations||0)===0?'good':'bad');
+  html += mc('Endpoints',t.num_endpoints||0)+mc('Clock (ns)',(t.clock_period_ns||0).toFixed(2));
+  html += '</div></div>';
+  if (t.critical_path && t.critical_path.length) {
+    html += '<div class="card"><div class="card-title">Critical Path</div><table class="data-table"><thead><tr><th>Gate</th><th>Arrival</th><th>Required</th><th>Slack</th></tr></thead><tbody>';
+    for (var pp of t.critical_path) {
+      var c = pp.slack>=0?'var(--green)':'var(--red)';
+      html += '<tr><td>'+pp.gate+'</td><td>'+pp.arrival.toFixed(3)+'</td><td>'+pp.required.toFixed(3)+'</td><td style="color:'+c+'">'+pp.slack.toFixed(3)+'</td></tr>';
+    }
+    html += '</tbody></table></div>';
+  }
+  el.innerHTML = html;
+};
+
+RENDERERS.power = function(el) {
+  var p = STATE.power || {};
+  var html = stageHdr('13','Power Analysis','power');
+  html += '<div class="card"><div class="card-title">Power Breakdown</div><div class="metric-grid">';
+  html += mc('Total (mW)',(p.total_mw||0).toFixed(3));
+  html += mc('Dynamic',(p.dynamic_mw||0).toFixed(3))+mc('Leakage',(p.leakage_mw||0).toFixed(3));
+  html += mc('Switching',(p.switching_mw||0).toFixed(3))+mc('Internal',(p.internal_mw||0).toFixed(3));
+  html += mc('Clock',(p.clock_mw||0).toFixed(3))+mc('Glitch',(p.glitch_mw||0).toFixed(3));
+  html += '</div></div>';
+  el.innerHTML = html;
+};
+
+RENDERERS.drc = function(el) {
+  var d = STATE.drc || {};
+  var html = stageHdr('14','Design Rule Check','drc');
+  html += '<div class="card"><div class="card-title">DRC</div><div class="metric-grid">';
+  html += mc('Rules',d.total_rules||0)+mc('Violations',d.violations||0,(d.violations||0)===0?'good':'bad');
+  html += mc('Errors',d.errors||0,(d.errors||0)===0?'good':'bad')+mc('Warnings',d.warnings||0);
+  html += '</div></div>';
+  if (d.details && d.details.length) {
+    html += '<div class="card"><div class="card-title">Violations</div><table class="data-table"><thead><tr><th>Rule</th><th>Message</th><th>Location</th></tr></thead><tbody>';
+    for (var v of d.details.slice(0,30)) html += '<tr><td>'+v.rule+'</td><td>'+v.message+'</td><td>('+v.x.toFixed(1)+','+v.y.toFixed(1)+')</td></tr>';
+    html += '</tbody></table></div>';
+  }
+  el.innerHTML = html;
+};
+
+RENDERERS.lvs = function(el) {
+  var l = STATE.lvs || {};
+  var html = stageHdr('15','Layout vs Schematic','lvs');
+  html += '<div class="card"><div class="card-title">LVS</div><div class="metric-grid">';
+  html += mc('Match',l.match?'PASS':'FAIL',l.match?'good':'bad');
+  html += mc('Schematic',l.schematic_cells||0)+mc('Layout',l.layout_cells||0);
+  html += mc('Matched',l.matched_cells||0,'good')+mc('Net Mismatches',l.net_mismatches||0,(l.net_mismatches||0)===0?'good':'bad');
+  html += '</div></div>';
+  el.innerHTML = html;
+};
+
+RENDERERS.mcmm = function(el) {
+  var m = STATE.mcmm || {};
+  var html = stageHdr('16','Multi-Corner Multi-Mode','mcmm');
+  html += '<div class="card"><div class="card-title">MCMM Analysis</div><div class="metric-grid">';
+  html += mc('Corners',m.corners||0)+mc('Modes',m.modes||0)+mc('Scenarios',m.scenarios||0);
+  html += mc('Setup WNS',(m.worst_setup_wns||0).toFixed(3),(m.worst_setup_wns||0)>=0?'good':'bad');
+  html += mc('Hold WNS',(m.worst_hold_wns||0).toFixed(3),(m.worst_hold_wns||0)>=0?'good':'bad');
+  html += mc('Setup Viol.',m.total_setup_violations||0,(m.total_setup_violations||0)===0?'good':'bad');
+  html += mc('Hold Viol.',m.total_hold_violations||0,(m.total_hold_violations||0)===0?'good':'bad');
+  html += mc('Max Power',(m.max_power_mw||0).toFixed(2));
+  html += '</div></div>';
+  el.innerHTML = html;
+};
+
+RENDERERS.ssta = function(el) {
+  var s = STATE.ssta || {};
+  var html = stageHdr('17','Statistical STA & Yield','ssta');
+  html += '<div class="card"><div class="card-title">Yield Analysis</div><div class="metric-grid">';
+  html += mc('Yield',((s.yield_estimate||0)*100).toFixed(1)+'%',(s.yield_estimate||0)>0.95?'good':'warn');
+  html += mc('MC Samples',s.num_samples_run||0)+mc('Time (ms)',(s.time_ms||0).toFixed(1));
+  html += '</div></div>';
+  if (s.sigma_to_yield && Object.keys(s.sigma_to_yield).length) {
+    html += '<div class="card"><div class="card-title">Yield vs Sigma</div>'+makeCanvas('c-ssta',500,250)+'</div>';
+    el.innerHTML = html;
+    drawYieldCurve(document.getElementById('c-ssta'), s.sigma_to_yield);
+  } else el.innerHTML = html;
+};
+
+RENDERERS.ir_drop = function(el) {
+  var ir = STATE.ir_drop || {};
+  var html = stageHdr('18','IR Drop Analysis','ir_drop');
+  html += '<div class="card"><div class="card-title">Summary</div><div class="metric-grid">';
+  html += mc('Worst (mV)',(ir.worst_drop_mv||0).toFixed(2),(ir.worst_drop_mv||0)<50?'good':'bad');
+  html += mc('Avg (mV)',(ir.avg_drop_mv||0).toFixed(2));
+  html += mc('Hotspots',ir.num_hotspots||0,(ir.num_hotspots||0)===0?'good':'warn');
+  html += mc('Critical',ir.num_critical||0,(ir.num_critical||0)===0?'good':'bad');
+  html += '</div></div>';
+  if (ir.drop_map && ir.drop_map.length) {
+    html += '<div class="card"><div class="card-title">IR Drop Heatmap</div>'+makeCanvas('c-ir',500,500)+'</div>';
+    el.innerHTML = html;
+    drawHeatmap(document.getElementById('c-ir'), ir.drop_map, 'IR Drop (mV)');
+  } else el.innerHTML = html;
+};
+
+RENDERERS.pdn = function(el) {
+  var p = STATE.pdn || {};
+  var html = stageHdr('19','PDN Impedance','pdn');
+  html += '<div class="card"><div class="card-title">PDN</div><div class="metric-grid">';
+  html += mc('Worst Z (mΩ)',(p.worst_impedance_mohm||0).toFixed(2));
+  html += mc('@ Freq (MHz)',(p.worst_impedance_freq_mhz||0).toFixed(1));
+  html += mc('Target (mΩ)',(p.target_impedance_mohm||0).toFixed(2));
+  html += mc('Violations',p.target_violations||0,(p.target_violations||0)===0?'good':'bad');
+  html += mc('Resonances',p.num_resonances||0);
+  html += '</div></div>';
+  if (p.impedance_profile && p.impedance_profile.length) {
+    html += '<div class="card"><div class="card-title">Impedance vs Frequency</div>'+makeCanvas('c-pdn',600,250)+'</div>';
+    el.innerHTML = html;
+    drawImpedancePlot(document.getElementById('c-pdn'), p);
+  } else el.innerHTML = html;
+};
+
+RENDERERS.si = function(el) {
+  var s = STATE.signal_integrity || {};
+  var html = stageHdr('20','Signal Integrity','si');
+  html += '<div class="card"><div class="card-title">SI Analysis</div><div class="metric-grid">';
+  html += mc('Nets',s.nets_analyzed||0)+mc('Victims',s.victims||0,(s.victims||0)===0?'good':'warn');
+  html += mc('Glitch Risks',s.glitch_risks||0,(s.glitch_risks||0)===0?'good':'bad');
+  html += mc('Worst Noise (mV)',(s.worst_noise_mv||0).toFixed(2));
+  html += mc('Worst Delay (ps)',(s.worst_delay_ps||0).toFixed(2));
+  html += '</div></div>';
+  el.innerHTML = html;
+};
+
+RENDERERS.thermal = function(el) {
+  var t = STATE.thermal || {};
+  var html = stageHdr('21','Thermal Analysis','thermal');
+  html += '<div class="card"><div class="card-title">Thermal</div><div class="metric-grid">';
+  html += mc('Max (°C)',(t.max_temperature||0).toFixed(1),(t.max_temperature||0)<85?'good':'bad');
+  html += mc('Min (°C)',(t.min_temperature||0).toFixed(1));
+  html += mc('Avg (°C)',(t.avg_temperature||0).toFixed(1));
+  html += mc('Gradient',(t.thermal_gradient||0).toFixed(1));
+  html += mc('Hotspots',t.num_hotspots||0,(t.num_hotspots||0)===0?'good':'warn');
+  html += '</div></div>';
+  if (t.temperature_map && t.temperature_map.length && t.grid_nx > 0) {
+    html += '<div class="card"><div class="card-title">Temperature Heatmap</div>'+makeCanvas('c-therm',500,500)+'</div>';
+    el.innerHTML = html;
+    var nx=t.grid_nx, ny=t.grid_ny, map2d=[];
+    for (var x=0;x<nx;x++) { var row=[]; for (var y=0;y<ny;y++) row.push(t.temperature_map[x*ny+y]||0); map2d.push(row); }
+    drawHeatmap(document.getElementById('c-therm'), map2d, 'Temperature (°C)');
+  } else el.innerHTML = html;
+};
+
+RENDERERS.em = function(el) {
+  var e = STATE.em || {};
+  var html = stageHdr('22','Electromigration','em');
+  html += '<div class="card"><div class="card-title">EM Results</div><div class="metric-grid">';
+  html += mc('Status',e.pass?'PASS':'FAIL',e.pass?'good':'bad');
+  html += mc('Nets Checked',e.total_nets_checked||0);
+  html += mc('Signal Viol.',e.signal_violations||0,(e.signal_violations||0)===0?'good':'bad');
+  html += mc('Power Viol.',e.power_violations||0,(e.power_violations||0)===0?'good':'bad');
+  html += mc('Via Viol.',e.via_violations||0,(e.via_violations||0)===0?'good':'bad');
+  var mttf = (e.worst_mttf_years||0) > 1e8 ? '∞' : (e.worst_mttf_years||0).toFixed(1);
+  html += mc('Worst MTTF (yrs)',mttf);
+  html += '</div></div>';
+  el.innerHTML = html;
+};
+
+RENDERERS.noise = function(el) {
+  var n = STATE.noise || {};
+  var html = stageHdr('23','Noise / SSN','noise');
+  html += '<div class="card"><div class="card-title">Noise</div><div class="metric-grid">';
+  html += mc('Peak (mV)',(n.peak_noise_mv||0).toFixed(2));
+  html += mc('RMS (mV)',(n.rms_noise_mv||0).toFixed(2));
+  html += mc('PSI-J (ps)',(n.psij_ps||0).toFixed(2));
+  html += mc('Margin (mV)',(n.noise_margin_mv||0).toFixed(1));
+  html += mc('Violations',n.noise_violations||0,(n.noise_violations||0)===0?'good':'bad');
+  html += '</div></div>';
+  el.innerHTML = html;
+};
+
+RENDERERS.ml = function(el) {
+  var m = STATE.ml || {};
+  var html = stageHdr('24','ML Optimization','ai_tune');
+  html += '<div class="card"><div class="card-title">ML-Driven PnR Tuning</div><div class="metric-grid">';
+  html += mc('Predicted WNS',(m.predicted_wns||0).toFixed(3));
+  html += mc('Predicted Congestion',(m.predicted_congestion||0).toFixed(3));
+  html += mc('BayesOpt Iters',m.bayesopt_iterations||0)+mc('RL Episodes',m.rl_episodes||0);
+  html += mc('MLP Loss',(m.mlp_loss||0).toFixed(4));
+  html += mc('BayesOpt Best',(m.bayesopt_best||0).toFixed(4));
+  html += mc('RL Best',(m.rl_best_reward||0).toFixed(4));
+  html += mc('Time (ms)',(m.total_time_ms||0).toFixed(1));
+  html += '</div></div>';
+  el.innerHTML = html;
+};
+
+RENDERERS.adv_formal = function(el) {
+  var af = STATE.adv_formal || {};
+  var html = stageHdr('25','Advanced Formal','adv_formal');
+  html += '<div class="card"><div class="card-title">IC3 / LTL / CEGAR</div><div class="metric-grid">';
+  var sts = ['PROVEN','REFUTED','UNKNOWN'];
+  var ic3=af.ic3||{}, ltl=af.ltl||{}, ceg=af.cegar||{};
+  html += mc('IC3',sts[ic3.status||2]||'—')+mc('IC3 Frames',ic3.frames||0)+mc('IC3 Clauses',ic3.clauses||0);
+  html += mc('LTL',['HOLDS','VIOLATED','UNKNOWN'][ltl.status||2]||'—')+mc('LTL Bound',ltl.bound||0);
+  html += mc('CEGAR',sts[ceg.status||2]||'—')+mc('CEGAR Iters',ceg.iterations||0);
+  html += mc('Total (ms)',(af.total_time_ms||0).toFixed(1));
+  html += '</div></div>';
+  el.innerHTML = html;
+};
+
+RENDERERS.gdsii = function(el) {
+  var html = stageHdr('26','GDSII Export','write_gds out.gds');
+  html += '<div class="card"><div class="card-title">Export</div><p style="color:var(--text-secondary)">Click Run to generate GDSII binary.</p></div>';
+  el.innerHTML = html;
+};
+
+// CANVAS DRAWING FUNCTIONS
+
+function drawRtlGraph(canvas, nl) {
+  var ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0,0,W,H);
+  var gates = nl.gates || [];
+  if (!gates.length) return;
+  var N = Math.min(gates.length, 60);
+  var cols = Math.ceil(Math.sqrt(N*1.5)), rows = Math.ceil(N/cols);
+  var cw = W/(cols+1), ch = H/(rows+1);
+  var colors = {AND:'#58a6ff',OR:'#3fb950',NOT:'#f85149',XOR:'#bc8cff',NAND:'#d29922',NOR:'#39d2c0',DFF:'#f778ba',BUF:'#8b949e',INPUT:'#3fb950',OUTPUT:'#f85149',MUX:'#d29922'};
+  for (var i = 0; i < N; i++) {
+    var g = gates[i], col = i%cols, row = Math.floor(i/cols);
+    var x = (col+0.5)*cw+20, y = (row+0.5)*ch+20;
+    var color = colors[g.type]||'#58a6ff';
+    ctx.fillStyle = color+'22'; ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(x-24,y-14,48,28,4); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = color; ctx.font = '9px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(g.type, x, y);
   }
 }
 
-// ============================================================
-// NEW DESIGN — Full reset
-// ============================================================
-async function newDesign() {
-  flowAborted = true;
-  let btn = document.getElementById('new-design-btn');
-  if (btn) { btn.disabled = true; btn.innerText = 'Resetting...'; }
-
-  try {
-    await runCommand('reset');
-    window.STATE = null;
-    currentDesignFile = 'studio/test_design.v';
-
-    // Clear cached layouts
-    delete window.STATE?._s1Layout;
-
-    // Reset all buttons
-    for (let i = 1; i <= 10; i++) {
-      let stageBtn = document.getElementById('btn-s' + i);
-      if (stageBtn) {
-        stageBtn.disabled = false;
-        stageBtn.classList.remove('running');
-        if (i === 1) stageBtn.innerText = 'Execute: read_verilog';
-        else stageBtn.innerText = stageBtn.innerText.replace(/Done ✓|Running\.\.\./, 'Execute');
-      }
+function drawWaveform(canvas, sim) {
+  var ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0,0,W,H);
+  var sigs = sim.signals||[], times = sim.times||[];
+  if (!sigs.length || !times.length) return;
+  var nw = 80, pw = W-nw-20, sh = 24;
+  var tMin = times[0], tMax = times[times.length-1]||1, tS = pw/((tMax-tMin)||1);
+  for (var si = 0; si < sigs.length; si++) {
+    var sig = sigs[si], by = 20+si*(sh+6);
+    ctx.fillStyle = '#8b949e'; ctx.font = '10px monospace'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillText(sig.name.slice(0,10), nw-8, by+sh/2);
+    ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 1.5; ctx.beginPath();
+    for (var t = 0; t < sig.values.length && t < times.length; t++) {
+      var x = nw+(times[t]-tMin)*tS, y = sig.values[t]?by+2:by+sh-2;
+      if (t===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
     }
-    let flowBtn = document.getElementById('run-all-btn');
-    if (flowBtn) { flowBtn.disabled = false; flowBtn.innerText = 'Run Full RTL-to-GDSII Flow'; }
-
-    // Refresh all to show waiting state
-    refreshAllStages();
-
-    // Clear terminal
-    const term = document.getElementById('sf-term-log');
-    if (term) term.innerHTML = '<span style="color:#10b981;">Design reset. Ready for new design.</span>\n<span style="color:#00d4ff;">sf&gt;</span> ';
-
-    // Clear file input
-    let fi = document.getElementById('file-input');
-    if (fi) fi.value = '';
-  } catch(e) {
-    console.error('Reset error:', e);
-  } finally {
-    if (btn) { btn.disabled = false; btn.innerText = 'New Design'; }
+    ctx.stroke();
   }
 }
 
-// ============================================================
-// FILE UPLOAD
-// ============================================================
-async function handleFileUpload(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-  const text = await file.text();
-  try {
-    const res = await fetch('/api/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename: file.name, content: text })
-    });
-    const data = await res.json();
-    if (data.success) {
-      currentDesignFile = data.path;
-      const term = document.getElementById('sf-term-log');
-      term.innerHTML += '<span style="color:#10b981;">Uploaded: ' + data.filename + ' -> ' + data.path + '</span>\n<span style="color:#00d4ff;">sf&gt;</span> ';
-      // Update read_verilog button
-      let btn = document.getElementById('btn-s1');
-      if (btn) {
-        btn.innerText = 'Execute: read_verilog ' + data.filename;
-      }
-    }
-  } catch (e) {
-    console.error('Upload failed:', e);
+function drawPlacement(canvas, phys) {
+  var ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0,0,W,H);
+  var dw = (phys.die||{}).w||200, dh = (phys.die||{}).h||200;
+  var scale = Math.min((W-40)/dw,(H-40)/dh), ox = 20, oy = 20;
+  ctx.strokeStyle = '#30363d'; ctx.lineWidth = 2; ctx.strokeRect(ox,oy,dw*scale,dh*scale);
+  for (var c of (phys.cells||[])) {
+    var x=ox+c.x*scale, y=oy+c.y*scale, w=(c.w||2)*scale, ht=(c.h||10)*scale;
+    ctx.fillStyle = '#58a6ff33'; ctx.strokeStyle = '#58a6ff88'; ctx.lineWidth = 0.5;
+    ctx.fillRect(x,y,w,ht); ctx.strokeRect(x,y,w,ht);
   }
 }
 
-// Drag and drop
-const uploadZone = document.getElementById('upload-zone');
-if (uploadZone) {
-  uploadZone.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.classList.add('dragover'); });
-  uploadZone.addEventListener('dragleave', () => { uploadZone.classList.remove('dragover'); });
-  uploadZone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    uploadZone.classList.remove('dragover');
-    const file = e.dataTransfer.files[0];
-    if (file) {
-      document.getElementById('file-input').files = e.dataTransfer.files;
-      handleFileUpload({ target: { files: [file] } });
-    }
-  });
+function drawRouting(canvas, phys) {
+  var ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0,0,W,H);
+  var dw = (phys.die||{}).w||200, dh = (phys.die||{}).h||200;
+  var scale = Math.min((W-40)/dw,(H-40)/dh), ox = 20, oy = 20;
+  ctx.strokeStyle = '#30363d'; ctx.lineWidth = 2; ctx.strokeRect(ox,oy,dw*scale,dh*scale);
+  var lc = ['#58a6ff','#3fb950','#f85149','#bc8cff','#d29922','#39d2c0','#f778ba','#8b949e'];
+  for (var w of (phys.wires||[])) {
+    ctx.strokeStyle = (lc[w.layer%lc.length])+'88';
+    ctx.lineWidth = Math.max(0.5,(w.width||1)*scale*0.5);
+    ctx.beginPath(); ctx.moveTo(ox+w.x1*scale,oy+w.y1*scale); ctx.lineTo(ox+w.x2*scale,oy+w.y2*scale); ctx.stroke();
+  }
 }
 
-// Terminal manual command input
-document.getElementById('sf-term-input')?.addEventListener('keydown', function(e) {
-  if (e.key === 'Enter') {
-    let input = this;
-    let cmd = input.value.trim();
-    if (cmd) {
-      runCommand(cmd);
-      input.value = '';
-    }
+function drawBarComp(canvas, items) {
+  var ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0,0,W,H);
+  var ml=60,mr=20,mt=25,mb=40, pw=W-ml-mr, ph=H-mt-mb;
+  var n = items.length, gw = pw/n, bw = gw*0.3;
+  var mx = Math.max.apply(null, items.map(function(i){return Math.max(Math.abs(i.b),Math.abs(i.a));})) || 1;
+  for (var i = 0; i < n; i++) {
+    var cx = ml+(i+0.5)*gw;
+    ctx.fillStyle = '#f8514966'; ctx.fillRect(cx-bw-2,H-mb-(Math.abs(items[i].b)/mx)*ph,bw,(Math.abs(items[i].b)/mx)*ph);
+    ctx.fillStyle = '#3fb95066'; ctx.fillRect(cx+2,H-mb-(Math.abs(items[i].a)/mx)*ph,bw,(Math.abs(items[i].a)/mx)*ph);
+    ctx.fillStyle = '#8b949e'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(items[i].l, cx, H-mb+15);
   }
-});
+  ctx.fillStyle='#f8514966';ctx.fillRect(ml,5,10,10);ctx.fillStyle='#8b949e';ctx.font='10px sans-serif';ctx.textAlign='left';ctx.fillText('Before',ml+14,14);
+  ctx.fillStyle='#3fb95066';ctx.fillRect(ml+60,5,10,10);ctx.fillStyle='#8b949e';ctx.fillText('After',ml+74,14);
+}
 
-// Resize handler
-window.addEventListener('resize', () => {
-  initialized.clear();
-  for (let i = 1; i <= 10; i++) {
-    const fns = [null, drawStage1, drawStage2, drawStage3, drawStage4, drawStage5, drawStage6, drawStage7, drawStage8, drawStage9, drawStage10];
-    initStage('s' + i, fns[i]);
+function drawYieldCurve(canvas, sy) {
+  var ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0,0,W,H);
+  var entries = Object.entries(sy).map(function(e){return [parseFloat(e[0]),e[1]];}).sort(function(a,b){return a[0]-b[0];});
+  if (!entries.length) return;
+  var m={l:50,r:20,t:20,b:40}, pw=W-m.l-m.r, ph=H-m.t-m.b;
+  var xMin=entries[0][0], xMax=entries[entries.length-1][0], xR=xMax-xMin||1;
+  ctx.strokeStyle='#30363d';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(m.l,m.t);ctx.lineTo(m.l,H-m.b);ctx.lineTo(W-m.r,H-m.b);ctx.stroke();
+  ctx.strokeStyle='#3fb950';ctx.lineWidth=2;ctx.beginPath();
+  for (var i=0;i<entries.length;i++) {
+    var x=m.l+((entries[i][0]-xMin)/xR)*pw, y=m.t+(1-entries[i][1]/100)*ph;
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
   }
-});
+  ctx.stroke();
+  for (var e of entries) { var x=m.l+((e[0]-xMin)/xR)*pw,y=m.t+(1-e[1]/100)*ph; ctx.fillStyle='#3fb950';ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill(); }
+  ctx.fillStyle='#8b949e';ctx.font='10px sans-serif';ctx.textAlign='center';ctx.fillText('Sigma',W/2,H-5);
+}
 
-// UI Tabs Interaction
-document.addEventListener('DOMContentLoaded', () => {
-  document.querySelectorAll('.viz-toolbar button').forEach(btn => {
-    btn.addEventListener('click', function() {
-      let toolbar = this.parentElement;
-      // Remove active class from siblings
-      Array.from(toolbar.children).forEach(sibling => {
-        sibling.classList.remove('active');
-      });
-      // Add active class to clicked button
-      this.classList.add('active');
-      // Update parent data attribute
-      if (this.dataset.tab) {
-        toolbar.dataset.activeTab = this.dataset.tab;
-      }
-    });
-  });
-});
+function drawHeatmap(canvas, map2d, title) {
+  var ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0,0,W,H);
+  if (!map2d.length || !map2d[0].length) return;
+  var ny=map2d.length, nx=map2d[0].length, mg=30;
+  var cw=(W-2*mg)/nx, ch=(H-2*mg)/ny;
+  var minV=Infinity, maxV=-Infinity;
+  for (var row of map2d) for (var v of row) { if(v<minV)minV=v; if(v>maxV)maxV=v; }
+  var range = maxV-minV||1;
+  for (var y=0;y<ny;y++) for (var x=0;x<nx;x++) {
+    var t=(map2d[y][x]-minV)/range;
+    var r=Math.floor(t*255), b=Math.floor((1-t)*255), g=Math.floor((t<0.5?t*2:(1-t)*2)*200);
+    ctx.fillStyle='rgb('+r+','+g+','+b+')';
+    ctx.fillRect(mg+x*cw, mg+y*ch, cw+1, ch+1);
+  }
+  ctx.fillStyle='#8b949e';ctx.font='11px sans-serif';ctx.textAlign='center';
+  ctx.fillText(title||'',W/2,18);
+  ctx.fillText('Min: '+minV.toFixed(1),mg+40,H-8);
+  ctx.fillText('Max: '+maxV.toFixed(1),W-mg-40,H-8);
+}
+
+function drawImpedancePlot(canvas, pdn) {
+  var ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0,0,W,H);
+  var pts = pdn.impedance_profile;
+  if (!pts.length) return;
+  var m={l:60,r:20,t:20,b:40}, pw=W-m.l-m.r, ph=H-m.t-m.b;
+  var maxZ = Math.max.apply(null,pts.map(function(p){return p.impedance_mohm;}));
+  maxZ = Math.max(maxZ, pdn.target_impedance_mohm||1);
+  ctx.strokeStyle='#30363d';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(m.l,m.t);ctx.lineTo(m.l,H-m.b);ctx.lineTo(W-m.r,H-m.b);ctx.stroke();
+  if (pdn.target_impedance_mohm > 0) {
+    var ty = m.t+(1-pdn.target_impedance_mohm/maxZ)*ph;
+    ctx.strokeStyle='#f8514966';ctx.lineWidth=1;ctx.setLineDash([5,3]);ctx.beginPath();ctx.moveTo(m.l,ty);ctx.lineTo(W-m.r,ty);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle='#f85149';ctx.font='10px sans-serif';ctx.fillText('Target',W-m.r-35,ty-5);
+  }
+  ctx.strokeStyle='#58a6ff';ctx.lineWidth=2;ctx.beginPath();
+  for (var i=0;i<pts.length;i++) {
+    var x=m.l+(i/(pts.length-1||1))*pw, y=m.t+(1-pts[i].impedance_mohm/maxZ)*ph;
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+}
+
+// Init
+buildSidebar();
+renderStage();
+refreshState();
 </script>
-
-<!-- Console Terminal Overlay -->
-<div class="sf-terminal">
-  <div class="sf-term-header">
-    <span>SiliconForge Console</span>
-    <span id="sf-status" style="color:#10b981;">Idle</span>
-  </div>
-  <div class="sf-term-body" id="sf-term-log" style="color: #94a3b8;">SiliconForge Real-Time Studio v15.0
-Connected to C++ EDA Engine (Phase 14)
-Type commands or click Execute buttons above.
-
-<span style="color:#00d4ff;">sf&gt;</span> </div>
-  <div class="sf-term-input">
-    <span>sf&gt;</span>
-    <input type="text" id="sf-term-input" placeholder="Type command..." />
-  </div>
-</div>
-
 </body>
 </html>

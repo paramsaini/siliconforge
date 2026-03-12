@@ -25,9 +25,23 @@
 #include "pnr/ai_tuner.hpp"
 #include "pnr/gdsii_writer.hpp"
 #include "pnr/cts.hpp"
+#include "pnr/post_route_opt.hpp"
+#include "pnr/chip_assembler.hpp"
 #include "verify/cdc.hpp"
 #include "verify/reliability.hpp"
 #include "formal/lec.hpp"
+#include "formal/advanced_formal.hpp"
+#include "timing/mcmm.hpp"
+#include "timing/ssta.hpp"
+#include "timing/ir_drop.hpp"
+#include "timing/pdn.hpp"
+#include "timing/signal_integrity.hpp"
+#include "timing/thermal.hpp"
+#include "timing/electromigration.hpp"
+#include "timing/noise.hpp"
+#include "ml/ml_opt.hpp"
+#include "hls/c_parser.hpp"
+#include "dft/jtag_bist.hpp"
 #include "viz/html_export.hpp"
 #include "viz/dashboard.hpp"
 #include "viz/rtl_viz.hpp"
@@ -930,6 +944,7 @@ bool SiliconForge::run_cts() {
 
     CtsEngine cts(pd_);
     auto result = cts.build_clock_tree(clk_source, sink_cells);
+    cts_result_ = result;
 
     // Compute per-DFF clock insertion delays (Manhattan distance × wire delay model)
     cts_insertion_delays_.clear();
@@ -1039,6 +1054,314 @@ bool SiliconForge::optimize_pnr_with_ai() {
     AiTuner tuner(pd_, nl_);
     auto res = tuner.optimize();
     std::cout << "  [PASS] AI Optimization applied. Best WNS: " << res.best_wns << "\n";
+
+    MlOptEngine ml(pd_);
+    ml_result_ = ml.optimize();
+    is_ml_done_ = true;
+    std::cout << "  [PASS] ML Optimization: BayesOpt best=" << ml_result_.bayesopt_best
+              << ", RL best=" << ml_result_.rl_best_reward
+              << " (" << ml_result_.total_time_ms << " ms)\n";
+    return true;
+}
+
+// ── MCMM Analysis ───────────────────────────────────────────────────
+
+bool SiliconForge::run_mcmm() {
+    std::cout << "[SiliconForge] Running Multi-Corner Multi-Mode Analysis...\n";
+    if (!is_sta_done_) {
+        std::cerr << "  [FAIL] Must run STA before MCMM.\n";
+        return false;
+    }
+
+    McmmAnalyzer mcmm(nl_, &lib_, &pd_);
+
+    PvtCorner fast_corner;
+    fast_corner.name = "ff_0p99v_m40c";
+    fast_corner.voltage = 0.99;
+    fast_corner.temperature_c = -40;
+    fast_corner.process = PvtCorner::FAST;
+    fast_corner.delay_scale = 0.8;
+    fast_corner.signoff = SignoffType::HOLD;
+
+    PvtCorner typ_corner;
+    typ_corner.name = "tt_0p90v_25c";
+    typ_corner.voltage = 0.90;
+    typ_corner.temperature_c = 25;
+    typ_corner.process = PvtCorner::TYPICAL;
+    typ_corner.delay_scale = 1.0;
+    typ_corner.signoff = SignoffType::ALL;
+
+    PvtCorner slow_corner;
+    slow_corner.name = "ss_0p81v_125c";
+    slow_corner.voltage = 0.81;
+    slow_corner.temperature_c = 125;
+    slow_corner.process = PvtCorner::SLOW;
+    slow_corner.delay_scale = 1.25;
+    slow_corner.signoff = SignoffType::SETUP;
+
+    mcmm.add_corner(fast_corner);
+    mcmm.add_corner(typ_corner);
+    mcmm.add_corner(slow_corner);
+
+    FunctionalMode func_mode;
+    func_mode.name = "func";
+    func_mode.clock_freq_mhz = 500;
+    func_mode.switching_activity = 0.1;
+
+    FunctionalMode scan_mode;
+    scan_mode.name = "scan";
+    scan_mode.clock_freq_mhz = 100;
+    scan_mode.switching_activity = 0.5;
+
+    mcmm.add_mode(func_mode);
+    mcmm.add_mode(scan_mode);
+
+    mcmm_result_ = mcmm.analyze();
+    is_mcmm_done_ = true;
+
+    std::cout << "  [PASS] MCMM: " << mcmm_result_.scenarios << " scenarios, "
+              << "setup WNS=" << mcmm_result_.worst_setup_wns
+              << " hold WNS=" << mcmm_result_.worst_hold_wns
+              << " (" << mcmm_result_.time_ms << " ms)\n";
+    return true;
+}
+
+// ── SSTA / Yield ────────────────────────────────────────────────────
+
+bool SiliconForge::run_ssta() {
+    std::cout << "[SiliconForge] Running Statistical STA (Monte Carlo)...\n";
+    if (!is_sta_done_) {
+        std::cerr << "  [FAIL] Must run STA before SSTA.\n";
+        return false;
+    }
+
+    SstaEngine ssta(nl_, &lib_);
+    SstaConfig cfg;
+    cfg.num_samples = 500;
+    cfg.global_variation_pct = 5.0;
+    cfg.local_variation_pct = 3.0;
+    cfg.spatial_correlation_length_um = 50.0;
+    ssta.set_config(cfg);
+    ssta.set_clock_period(timing_result_.clock_period_ns * 1000.0);
+
+    ssta_result_ = ssta.run_monte_carlo();
+    is_ssta_done_ = true;
+
+    std::cout << "  [PASS] SSTA: yield=" << (ssta_result_.yield_estimate * 100.0)
+              << "%, samples=" << ssta_result_.num_samples_run
+              << " (" << ssta_result_.time_ms << " ms)\n";
+    return true;
+}
+
+// ── IR Drop Analysis ────────────────────────────────────────────────
+
+bool SiliconForge::run_ir_drop() {
+    std::cout << "[SiliconForge] Running IR Drop Analysis...\n";
+    if (!has_floorplan_) {
+        std::cerr << "  [FAIL] Must have floorplan for IR drop.\n";
+        return false;
+    }
+
+    IrDropAnalyzer ir(pd_);
+    double power_mw = is_power_done_ ? power_result_.total_mw : 10.0;
+    ir_drop_result_ = ir.analyze(power_mw);
+    is_ir_drop_done_ = true;
+
+    std::cout << "  [PASS] IR Drop: worst=" << ir_drop_result_.worst_drop_mv
+              << " mV, avg=" << ir_drop_result_.avg_drop_mv
+              << " mV, hotspots=" << ir_drop_result_.num_hotspots << "\n";
+    return true;
+}
+
+// ── PDN Impedance Analysis ──────────────────────────────────────────
+
+bool SiliconForge::run_pdn() {
+    std::cout << "[SiliconForge] Running PDN Impedance Analysis...\n";
+    if (!has_floorplan_) {
+        std::cerr << "  [FAIL] Must have floorplan for PDN analysis.\n";
+        return false;
+    }
+
+    PdnAnalyzer pdn(pd_);
+    pdn_result_ = pdn.analyze();
+    is_pdn_done_ = true;
+
+    std::cout << "  [PASS] PDN: worst impedance=" << pdn_result_.worst_impedance_mohm
+              << " mΩ @ " << pdn_result_.worst_impedance_freq_mhz
+              << " MHz, resonances=" << pdn_result_.num_resonances << "\n";
+    return true;
+}
+
+// ── Signal Integrity Analysis ───────────────────────────────────────
+
+bool SiliconForge::run_signal_integrity() {
+    std::cout << "[SiliconForge] Running Signal Integrity Analysis...\n";
+    if (!is_routed_) {
+        std::cerr << "  [FAIL] Must route before SI analysis.\n";
+        return false;
+    }
+
+    SignalIntegrityAnalyzer si(pd_);
+    si_result_ = si.analyze();
+    is_si_done_ = true;
+
+    std::cout << "  [PASS] SI: " << si_result_.nets_analyzed << " nets, "
+              << si_result_.victims << " victims, worst noise="
+              << si_result_.worst_noise_mv << " mV\n";
+    return true;
+}
+
+// ── Thermal Analysis ────────────────────────────────────────────────
+
+bool SiliconForge::run_thermal() {
+    std::cout << "[SiliconForge] Running Thermal Analysis...\n";
+    if (!has_floorplan_) {
+        std::cerr << "  [FAIL] Must have floorplan for thermal analysis.\n";
+        return false;
+    }
+
+    ThermalConfig tcfg;
+    tcfg.die_width_um = pd_.die_area.width();
+    tcfg.die_height_um = pd_.die_area.height();
+    ThermalAnalyzer thermal(tcfg);
+
+    double total_power = is_power_done_ ? power_result_.total_mw / 1000.0 : 0.01;
+    thermal.set_uniform_power(total_power);
+
+    thermal_result_ = thermal.solve_steady_state();
+    is_thermal_done_ = true;
+
+    std::cout << "  [PASS] Thermal: max=" << thermal_result_.max_temperature
+              << "°C, avg=" << thermal_result_.avg_temperature
+              << "°C, hotspots=" << thermal_result_.num_hotspots << "\n";
+    return true;
+}
+
+// ── Electromigration Analysis ───────────────────────────────────────
+
+bool SiliconForge::run_em() {
+    std::cout << "[SiliconForge] Running Electromigration Analysis...\n";
+    if (!is_routed_) {
+        std::cerr << "  [FAIL] Must route before EM analysis.\n";
+        return false;
+    }
+
+    EmAnalyzer em;
+    EmConfig em_cfg;
+    em_result_ = em.analyze(nl_, pd_, em_cfg);
+    is_em_done_ = true;
+
+    std::cout << "  [PASS] EM: " << (em_result_.pass ? "PASS" : "FAIL")
+              << ", signal_viol=" << em_result_.signal_violations
+              << ", power_viol=" << em_result_.power_violations
+              << ", worst MTTF=" << em_result_.worst_mttf_years << " yrs\n";
+    return true;
+}
+
+// ── Noise / SSN Analysis ────────────────────────────────────────────
+
+bool SiliconForge::run_noise() {
+    std::cout << "[SiliconForge] Running Noise/SSN Analysis...\n";
+    if (!is_routed_) {
+        std::cerr << "  [FAIL] Must route before noise analysis.\n";
+        return false;
+    }
+
+    NoiseAnalyzer noise(pd_);
+    noise_result_ = noise.analyze();
+    is_noise_done_ = true;
+
+    std::cout << "  [PASS] Noise: peak=" << noise_result_.peak_noise_mv
+              << " mV, rms=" << noise_result_.rms_noise_mv
+              << " mV, violations=" << noise_result_.noise_violations << "\n";
+    return true;
+}
+
+// ── Post-Route Optimization ─────────────────────────────────────────
+
+bool SiliconForge::run_post_route_opt() {
+    std::cout << "[SiliconForge] Running Post-Route Optimization...\n";
+    if (!is_routed_) {
+        std::cerr << "  [FAIL] Must route before post-route opt.\n";
+        return false;
+    }
+
+    PostRouteOptimizer opt(nl_, pd_, &lib_);
+    post_route_result_ = opt.optimize(0);
+    is_post_route_done_ = true;
+
+    std::cout << "  [PASS] Post-Route Opt: WNS " << post_route_result_.wns_before
+              << " → " << post_route_result_.wns_after
+              << ", resized=" << post_route_result_.gates_resized
+              << " (" << post_route_result_.time_ms << " ms)\n";
+    return true;
+}
+
+// ── Chip Assembly (I/O pads, bumps) ─────────────────────────────────
+
+bool SiliconForge::run_chip_assemble() {
+    std::cout << "[SiliconForge] Running Chip Assembly...\n";
+    if (!has_floorplan_) {
+        std::cerr << "  [FAIL] Must have floorplan for chip assembly.\n";
+        return false;
+    }
+
+    ChipAssembler assembler(pd_);
+    ChipConfig ccfg;
+    ccfg.pad_pitch = 50.0;
+    ccfg.seal_ring_width = 5.0;
+    assembler.set_config(ccfg);
+
+    for (auto pi : nl_.primary_inputs()) {
+        assembler.add_pad(nl_.net(pi).name, nl_.net(pi).name, IoPad::SIGNAL, IoPad::SOUTH);
+    }
+    for (auto po : nl_.primary_outputs()) {
+        assembler.add_pad(nl_.net(po).name, nl_.net(po).name, IoPad::SIGNAL, IoPad::NORTH);
+    }
+
+    chip_result_ = assembler.assemble();
+    is_chip_assembled_ = true;
+
+    std::cout << "  [PASS] Chip: " << chip_result_.chip_width << "×"
+              << chip_result_.chip_height << " ("
+              << chip_result_.chip_area_mm2 << " mm²), "
+              << chip_result_.total_pads << " pads\n";
+    return true;
+}
+
+// ── Advanced Formal Verification (IC3/LTL/CEGAR) ───────────────────
+
+bool SiliconForge::run_adv_formal() {
+    std::cout << "[SiliconForge] Running Advanced Formal Verification...\n";
+    if (!has_netlist_) {
+        std::cerr << "  [FAIL] No netlist loaded.\n";
+        return false;
+    }
+
+    AigGraph aig;
+    std::vector<AigLit> input_lits;
+    for (size_t i = 0; i < nl_.num_gates(); ++i) {
+        auto& g = nl_.gate(static_cast<GateId>(i));
+        if (g.type == GateType::INPUT) {
+            input_lits.push_back(aig.create_input(g.name));
+        }
+    }
+    // Build a simple property output from first two inputs
+    if (input_lits.size() >= 2) {
+        AigLit prop = aig.create_and(input_lits[0], input_lits[1]);
+        aig.add_output(prop, "prop0");
+    } else if (input_lits.size() == 1) {
+        aig.add_output(input_lits[0], "prop0");
+    } else {
+        aig.add_output(AIG_FALSE, "prop0");
+    }
+
+    AdvancedFormalEngine adv(aig);
+    adv_formal_result_ = adv.verify_all(0);
+    is_adv_formal_done_ = true;
+
+    std::cout << "  [PASS] Advanced Formal: " << adv_formal_result_.summary
+              << " (" << adv_formal_result_.total_time_ms << " ms)\n";
     return true;
 }
 
@@ -1194,7 +1517,22 @@ bool SiliconForge::write_full_json(const std::string& filename) const {
     os << "    \"is_drc_done\": " << (is_drc_done_ ? "true" : "false") << ",\n";
     os << "    \"is_lvs_done\": " << (is_lvs_done_ ? "true" : "false") << ",\n";
     os << "    \"is_sta_done\": " << (is_sta_done_ ? "true" : "false") << ",\n";
-    os << "    \"is_power_done\": " << (is_power_done_ ? "true" : "false") << "\n";
+    os << "    \"is_power_done\": " << (is_power_done_ ? "true" : "false") << ",\n";
+    os << "    \"is_cdc_done\": " << (is_cdc_done_ ? "true" : "false") << ",\n";
+    os << "    \"is_cts_done\": " << (is_cts_done_ ? "true" : "false") << ",\n";
+    os << "    \"is_lec_done\": " << (is_lec_done_ ? "true" : "false") << ",\n";
+    os << "    \"is_mcmm_done\": " << (is_mcmm_done_ ? "true" : "false") << ",\n";
+    os << "    \"is_ssta_done\": " << (is_ssta_done_ ? "true" : "false") << ",\n";
+    os << "    \"is_ir_drop_done\": " << (is_ir_drop_done_ ? "true" : "false") << ",\n";
+    os << "    \"is_pdn_done\": " << (is_pdn_done_ ? "true" : "false") << ",\n";
+    os << "    \"is_si_done\": " << (is_si_done_ ? "true" : "false") << ",\n";
+    os << "    \"is_thermal_done\": " << (is_thermal_done_ ? "true" : "false") << ",\n";
+    os << "    \"is_em_done\": " << (is_em_done_ ? "true" : "false") << ",\n";
+    os << "    \"is_noise_done\": " << (is_noise_done_ ? "true" : "false") << ",\n";
+    os << "    \"is_post_route_done\": " << (is_post_route_done_ ? "true" : "false") << ",\n";
+    os << "    \"is_chip_assembled\": " << (is_chip_assembled_ ? "true" : "false") << ",\n";
+    os << "    \"is_ml_done\": " << (is_ml_done_ ? "true" : "false") << ",\n";
+    os << "    \"is_adv_formal_done\": " << (is_adv_formal_done_ ? "true" : "false") << "\n";
     os << "  },\n";
 
     // ── Netlist ──────────────────────────────────────────────────────
@@ -1447,6 +1785,194 @@ bool SiliconForge::write_full_json(const std::string& filename) const {
     os << "    \"unmatched_schematic\": " << lvs_result_.unmatched_schematic << ",\n";
     os << "    \"unmatched_layout\": " << lvs_result_.unmatched_layout << ",\n";
     os << "    \"net_mismatches\": " << lvs_result_.net_mismatches << "\n";
+    os << "  },\n";
+
+    // ── CTS Results ──────────────────────────────────────────────────
+    os << "  \"cts\": {\n";
+    os << "    \"buffers_inserted\": " << cts_result_.buffers_inserted << ",\n";
+    os << "    \"wirelength\": " << cts_result_.wirelength << ",\n";
+    os << "    \"skew\": " << cts_result_.skew << ",\n";
+    os << "    \"max_latency\": " << cts_result_.max_latency_ps << ",\n";
+    os << "    \"min_latency\": " << cts_result_.min_latency_ps << ",\n";
+    os << "    \"time_ms\": " << cts_result_.time_ms << "\n";
+    os << "  },\n";
+
+    // ── Post-Route Optimization Results ──────────────────────────────
+    os << "  \"post_route\": {\n";
+    os << "    \"wns_before\": " << post_route_result_.wns_before << ",\n";
+    os << "    \"wns_after\": " << post_route_result_.wns_after << ",\n";
+    os << "    \"tns_before\": " << post_route_result_.tns_before << ",\n";
+    os << "    \"tns_after\": " << post_route_result_.tns_after << ",\n";
+    os << "    \"gates_resized\": " << post_route_result_.gates_resized << ",\n";
+    os << "    \"vias_doubled\": " << post_route_result_.vias_doubled << ",\n";
+    os << "    \"wires_widened\": " << post_route_result_.wires_widened << ",\n";
+    os << "    \"cells_vt_swapped\": " << post_route_result_.cells_vt_swapped << ",\n";
+    os << "    \"buffers_inserted\": " << post_route_result_.buffers_inserted << ",\n";
+    os << "    \"hold_buffers_inserted\": " << post_route_result_.hold_buffers_inserted << ",\n";
+    os << "    \"time_ms\": " << post_route_result_.time_ms << "\n";
+    os << "  },\n";
+
+    // ── MCMM Results ─────────────────────────────────────────────────
+    os << "  \"mcmm\": {\n";
+    os << "    \"corners\": " << mcmm_result_.corners << ",\n";
+    os << "    \"modes\": " << mcmm_result_.modes << ",\n";
+    os << "    \"scenarios\": " << mcmm_result_.scenarios << ",\n";
+    os << "    \"worst_setup_wns\": " << mcmm_result_.worst_setup_wns << ",\n";
+    os << "    \"worst_setup_tns\": " << mcmm_result_.worst_setup_tns << ",\n";
+    os << "    \"worst_hold_wns\": " << mcmm_result_.worst_hold_wns << ",\n";
+    os << "    \"worst_hold_tns\": " << mcmm_result_.worst_hold_tns << ",\n";
+    os << "    \"worst_setup_scenario\": \"" << json_escape(mcmm_result_.worst_setup_scenario) << "\",\n";
+    os << "    \"worst_hold_scenario\": \"" << json_escape(mcmm_result_.worst_hold_scenario) << "\",\n";
+    os << "    \"total_setup_violations\": " << mcmm_result_.total_setup_violations << ",\n";
+    os << "    \"total_hold_violations\": " << mcmm_result_.total_hold_violations << ",\n";
+    os << "    \"max_power_mw\": " << mcmm_result_.max_power_mw << ",\n";
+    os << "    \"time_ms\": " << mcmm_result_.time_ms << "\n";
+    os << "  },\n";
+
+    // ── SSTA Results ─────────────────────────────────────────────────
+    os << "  \"ssta\": {\n";
+    os << "    \"yield_estimate\": " << ssta_result_.yield_estimate << ",\n";
+    os << "    \"num_samples_run\": " << ssta_result_.num_samples_run << ",\n";
+    os << "    \"time_ms\": " << ssta_result_.time_ms << ",\n";
+    os << "    \"sigma_to_yield\": {";
+    { size_t idx = 0;
+      for (auto& [sigma, yield] : ssta_result_.sigma_to_yield) {
+        os << "\"" << sigma << "\":" << yield;
+        if (++idx < ssta_result_.sigma_to_yield.size()) os << ",";
+      }
+    }
+    os << "}\n";
+    os << "  },\n";
+
+    // ── IR Drop Results ──────────────────────────────────────────────
+    os << "  \"ir_drop\": {\n";
+    os << "    \"worst_drop_mv\": " << ir_drop_result_.worst_drop_mv << ",\n";
+    os << "    \"avg_drop_mv\": " << ir_drop_result_.avg_drop_mv << ",\n";
+    os << "    \"num_hotspots\": " << ir_drop_result_.num_hotspots << ",\n";
+    os << "    \"num_critical\": " << ir_drop_result_.num_critical << ",\n";
+    os << "    \"converged\": " << (ir_drop_result_.converged ? "true" : "false") << ",\n";
+    os << "    \"worst_timing_derate_pct\": " << ir_drop_result_.worst_timing_derate_pct << ",\n";
+    // Export drop map (2D grid)
+    os << "    \"drop_map\": [";
+    for (size_t y = 0; y < ir_drop_result_.drop_map.size(); ++y) {
+        os << "[";
+        for (size_t x = 0; x < ir_drop_result_.drop_map[y].size(); ++x) {
+            os << ir_drop_result_.drop_map[y][x];
+            if (x + 1 < ir_drop_result_.drop_map[y].size()) os << ",";
+        }
+        os << "]";
+        if (y + 1 < ir_drop_result_.drop_map.size()) os << ",";
+    }
+    os << "]\n";
+    os << "  },\n";
+
+    // ── PDN Results ──────────────────────────────────────────────────
+    os << "  \"pdn\": {\n";
+    os << "    \"worst_drop_mv\": " << pdn_result_.worst_drop_mv << ",\n";
+    os << "    \"worst_drop_pct\": " << pdn_result_.worst_drop_pct << ",\n";
+    os << "    \"em_violations\": " << pdn_result_.em_violations << ",\n";
+    os << "    \"worst_impedance_mohm\": " << pdn_result_.worst_impedance_mohm << ",\n";
+    os << "    \"worst_impedance_freq_mhz\": " << pdn_result_.worst_impedance_freq_mhz << ",\n";
+    os << "    \"target_impedance_mohm\": " << pdn_result_.target_impedance_mohm << ",\n";
+    os << "    \"target_violations\": " << pdn_result_.target_violations << ",\n";
+    os << "    \"num_resonances\": " << pdn_result_.num_resonances << ",\n";
+    os << "    \"impedance_profile\": [";
+    for (size_t i = 0; i < pdn_result_.impedance_profile.size(); ++i) {
+        auto& p = pdn_result_.impedance_profile[i];
+        os << "{\"freq_mhz\":" << p.freq_mhz << ",\"impedance_mohm\":" << p.magnitude_mohm << "}";
+        if (i + 1 < pdn_result_.impedance_profile.size()) os << ",";
+    }
+    os << "]\n";
+    os << "  },\n";
+
+    // ── Signal Integrity Results ─────────────────────────────────────
+    os << "  \"signal_integrity\": {\n";
+    os << "    \"nets_analyzed\": " << si_result_.nets_analyzed << ",\n";
+    os << "    \"victims\": " << si_result_.victims << ",\n";
+    os << "    \"glitch_risks\": " << si_result_.glitch_risks << ",\n";
+    os << "    \"worst_noise_mv\": " << si_result_.worst_noise_mv << ",\n";
+    os << "    \"worst_delay_ps\": " << si_result_.worst_delay_ps << ",\n";
+    os << "    \"worst_cid_ps\": " << si_result_.worst_cid_ps << ",\n";
+    os << "    \"time_ms\": " << si_result_.time_ms << "\n";
+    os << "  },\n";
+
+    // ── Thermal Results ──────────────────────────────────────────────
+    os << "  \"thermal\": {\n";
+    os << "    \"max_temperature\": " << thermal_result_.max_temperature << ",\n";
+    os << "    \"min_temperature\": " << thermal_result_.min_temperature << ",\n";
+    os << "    \"avg_temperature\": " << thermal_result_.avg_temperature << ",\n";
+    os << "    \"thermal_gradient\": " << thermal_result_.thermal_gradient << ",\n";
+    os << "    \"num_hotspots\": " << thermal_result_.num_hotspots << ",\n";
+    os << "    \"converged\": " << (thermal_result_.converged ? "true" : "false") << ",\n";
+    os << "    \"grid_nx\": " << thermal_result_.grid_nx << ",\n";
+    os << "    \"grid_ny\": " << thermal_result_.grid_ny << ",\n";
+    os << "    \"temperature_map\": [";
+    for (size_t i = 0; i < thermal_result_.temperature_map.size(); ++i) {
+        os << thermal_result_.temperature_map[i];
+        if (i + 1 < thermal_result_.temperature_map.size()) os << ",";
+    }
+    os << "]\n";
+    os << "  },\n";
+
+    // ── Electromigration Results ─────────────────────────────────────
+    os << "  \"em\": {\n";
+    os << "    \"pass\": " << (em_result_.pass ? "true" : "false") << ",\n";
+    os << "    \"total_nets_checked\": " << em_result_.total_nets_checked << ",\n";
+    os << "    \"signal_violations\": " << em_result_.signal_violations << ",\n";
+    os << "    \"power_violations\": " << em_result_.power_violations << ",\n";
+    os << "    \"via_violations\": " << em_result_.via_violations << ",\n";
+    os << "    \"worst_mttf_years\": " << em_result_.worst_mttf_years << ",\n";
+    os << "    \"max_current_density\": " << em_result_.max_current_density << "\n";
+    os << "  },\n";
+
+    // ── Noise / SSN Results ──────────────────────────────────────────
+    os << "  \"noise\": {\n";
+    os << "    \"peak_noise_mv\": " << noise_result_.peak_noise_mv << ",\n";
+    os << "    \"rms_noise_mv\": " << noise_result_.rms_noise_mv << ",\n";
+    os << "    \"psij_ps\": " << noise_result_.psij_ps << ",\n";
+    os << "    \"noise_margin_mv\": " << noise_result_.noise_margin_mv << ",\n";
+    os << "    \"noise_violations\": " << noise_result_.noise_violations << ",\n";
+    os << "    \"time_ms\": " << noise_result_.time_ms << "\n";
+    os << "  },\n";
+
+    // ── ML Optimization Results ──────────────────────────────────────
+    os << "  \"ml\": {\n";
+    os << "    \"predicted_wns\": " << ml_result_.predicted_wns << ",\n";
+    os << "    \"predicted_congestion\": " << ml_result_.predicted_congestion << ",\n";
+    os << "    \"bayesopt_iterations\": " << ml_result_.bayesopt_iterations << ",\n";
+    os << "    \"rl_episodes\": " << ml_result_.rl_episodes << ",\n";
+    os << "    \"mlp_loss\": " << ml_result_.mlp_loss << ",\n";
+    os << "    \"bayesopt_best\": " << ml_result_.bayesopt_best << ",\n";
+    os << "    \"rl_best_reward\": " << ml_result_.rl_best_reward << ",\n";
+    os << "    \"total_time_ms\": " << ml_result_.total_time_ms << "\n";
+    os << "  },\n";
+
+    // ── Advanced Formal Results ──────────────────────────────────────
+    os << "  \"adv_formal\": {\n";
+    os << "    \"total_time_ms\": " << adv_formal_result_.total_time_ms << ",\n";
+    os << "    \"summary\": \"" << json_escape(adv_formal_result_.summary) << "\",\n";
+    os << "    \"ic3\": {\"status\":" << (int)adv_formal_result_.ic3.status
+       << ",\"frames\":" << adv_formal_result_.ic3.frames_used
+       << ",\"clauses\":" << adv_formal_result_.ic3.clauses_learned
+       << ",\"time_ms\":" << adv_formal_result_.ic3.time_ms << "},\n";
+    os << "    \"ltl\": {\"status\":" << (int)adv_formal_result_.ltl.status
+       << ",\"bound\":" << adv_formal_result_.ltl.bound_checked
+       << ",\"time_ms\":" << adv_formal_result_.ltl.time_ms << "},\n";
+    os << "    \"cegar\": {\"status\":" << (int)adv_formal_result_.cegar.status
+       << ",\"iterations\":" << adv_formal_result_.cegar.refinement_iterations
+       << ",\"abstract_latches\":" << adv_formal_result_.cegar.abstract_latches
+       << ",\"time_ms\":" << adv_formal_result_.cegar.time_ms << "}\n";
+    os << "  },\n";
+
+    // ── Chip Assembly Results ────────────────────────────────────────
+    os << "  \"chip\": {\n";
+    os << "    \"chip_width\": " << chip_result_.chip_width << ",\n";
+    os << "    \"chip_height\": " << chip_result_.chip_height << ",\n";
+    os << "    \"chip_area_mm2\": " << chip_result_.chip_area_mm2 << ",\n";
+    os << "    \"total_pads\": " << chip_result_.total_pads << ",\n";
+    os << "    \"signal_pads\": " << chip_result_.signal_pads << ",\n";
+    os << "    \"power_pads\": " << chip_result_.power_pads << ",\n";
+    os << "    \"total_bumps\": " << chip_result_.total_bumps << "\n";
     os << "  }\n";
 
     os << "}\n";
@@ -1470,6 +1996,22 @@ void SiliconForge::reset() {
     is_lvs_done_ = false;
     is_sta_done_ = false;
     is_power_done_ = false;
+    is_cdc_done_ = false;
+    is_cts_done_ = false;
+    is_reliability_done_ = false;
+    is_lec_done_ = false;
+    is_mcmm_done_ = false;
+    is_ssta_done_ = false;
+    is_ir_drop_done_ = false;
+    is_pdn_done_ = false;
+    is_si_done_ = false;
+    is_thermal_done_ = false;
+    is_em_done_ = false;
+    is_noise_done_ = false;
+    is_post_route_done_ = false;
+    is_chip_assembled_ = false;
+    is_ml_done_ = false;
+    is_adv_formal_done_ = false;
     synth_result_ = {};
     formal_result_ = {};
     dft_result_ = {};
@@ -1478,6 +2020,19 @@ void SiliconForge::reset() {
     drc_result_ = {};
     lvs_result_ = {};
     sim_trace_ = {};
+    mcmm_result_ = {};
+    ssta_result_ = {};
+    ir_drop_result_ = {};
+    pdn_result_ = {};
+    si_result_ = {};
+    thermal_result_ = {};
+    em_result_ = {};
+    noise_result_ = {};
+    cts_result_ = {};
+    post_route_result_ = {};
+    chip_result_ = {};
+    ml_result_ = {};
+    adv_formal_result_ = {};
     std::cout << "  [DONE] All state cleared. Ready for new design.\n";
 }
 
