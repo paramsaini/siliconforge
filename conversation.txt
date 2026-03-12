@@ -493,3 +493,174 @@ TIER 2 SUMMARY — ALL COMPLETE
 Phases 26-30: Lint, TCL, HLS, JTAG/BIST, Memory Compiler
 Total new/modified LOC: ~4,500+
 All 30 test phases passing (30/30 CTest PASS)
+
+================================================================================
+TIER 3: CRITICAL + IMPORTANT GAPS
+================================================================================
+
+TIER 3 ROADMAP (from deep research):
+────────────────────────────────────
+🔴 CRITICAL (Blocks production signoff):
+  1. IR Drop Analysis — ~50 LOC stub, no solver → HIGH
+  2. PDN (Power Delivery Network) — ~60 LOC placeholder → HIGH
+  3. Signal Integrity / Advanced Crosstalk — ~50 LOC simplified → MED-HIGH
+  4. Advanced DRC Rules (width-dependent spacing, PRL, density) → MEDIUM
+
+🟡 IMPORTANT (Advanced nodes 5nm–14nm):
+  5. SSTA (Statistical STA) — Not started → HIGH
+  6. Chiplet/Multi-Die — TSV manager only → HIGH
+  7. Thermal Analysis — Not started → HIGH
+
+🟢 NICE-TO-HAVE (Competitive edge):
+  8. Real ML-Based Optimization — Analytical placeholder → MEDIUM
+  9. Advanced CTS (multi-level, gating-aware) — Partial → MEDIUM
+  10. Advanced Formal Verification — Missing → HIGH
+
+================================================================================
+PHASE 35: IR Drop Industrial Upgrade (COMPLETED ✅)
+================================================================================
+Files: src/timing/ir_drop.hpp (+164 -19), src/timing/ir_drop.cpp (+436 -20)
+BEFORE: Simple distance-to-pad model (I × R × distance), fixed 0.1Ω resistance
+AFTER:
+- IrDropConfig: grid_resolution, VDD, max_iterations, convergence threshold,
+  pad placement, dynamic toggle rate, timing derating, signoff limits
+- IrDropPad struct: configurable power pad locations with per-pad resistance
+- Gauss-Seidel iterative sparse solver with configurable convergence (1e-6)
+- Multi-source power grid with user-defined pad placement
+- Dynamic IR drop: toggle-rate-based current estimation
+- Timing derating: IR-drop → voltage → delay impact factor
+- Signoff evaluation: pass/fail against configurable limits
+- IrDropResult: worst_drop_mv, avg_drop_mv, drop_map, hotspots,
+  dynamic results, timing impact, signoff pass/fail, convergence info
+Tests: test_phase35.cpp (22 tests)
+Result: 35/35 CTest PASS
+
+================================================================================
+PHASE 36: PDN Industrial Upgrade (COMPLETED ✅)
+================================================================================
+Files: src/timing/pdn.hpp (+165 -8), src/timing/pdn.cpp (+244 -31)
+BEFORE: Simple stripe topology, nearest_stripe_resistance model
+AFTER:
+- PdnConfig: target impedance, frequency range, decap modeling, via arrays
+- FrequencyImpedance: impedance vs frequency analysis
+- Decap modeling: explicit + intrinsic capacitance for resonance damping
+- Via array modeling: resistance reduction from via array configurations
+- Resonance detection: LC resonance frequency identification
+- PdnResult: impedance profile, resonance frequencies, decap effectiveness,
+  via resistance, EM violations, target impedance pass/fail
+Tests: test_phase36.cpp (18 tests)
+Result: 36/36 CTest PASS
+
+================================================================================
+PHASE 37: Signal Integrity Industrial Upgrade (COMPLETED ✅)
+================================================================================
+Files: src/timing/signal_integrity.hpp, src/timing/signal_integrity.cpp
+BEFORE: O(N²) coupling cap, simple Vnoise model, no transient/SSN/glitch
+AFTER:
+- SiConfig: configurable thresholds, coupling distance, Miller factor
+- AggressorVictim: detailed pair analysis with timing windows
+- Miller factor-aware coupling: Cc_eff = Cc × (1 ± Miller)
+- Transient coupling: timing-window overlap detection
+- SSN (Simultaneous Switching Noise): multi-aggressor superposition
+- Glitch propagation: glitch width/amplitude through gate chains
+- SiResult: coupling pairs, SSN events, glitch propagation, noise margin
+Tests: test_phase37.cpp (20 tests)
+Result: 37/37 CTest PASS
+Committed: 90847b8
+
+================================================================================
+PHASE 38: DRC Advanced Rules Upgrade (COMPLETED ✅)
+================================================================================
+Files: src/verify/drc.hpp, src/verify/drc.cpp
+BEFORE: Missing EM rules, multi-patterning, CDV, stress/voiding
+AFTER:
+- EM-aware width rules: current density based minimum width
+- Multi-patterning color assignment checks
+- Stress voiding detection
+- ESD spacing rules
+- Guard ring latchup detection
+- Reliability-driven minimum width (lifetime-aware)
+- Temperature-dependent spacing rules
+Tests: test_phase38.cpp (20 tests)
+Result: 38/38 CTest PASS
+
+================================================================================
+PHASE 39: SSTA Industrial Upgrade (COMPLETED ✅)
+================================================================================
+Date: 2026-03-12
+Files: src/timing/ssta.hpp (173 LOC), src/timing/ssta.cpp (525 LOC) — NEW
+Tests: tests/test_phase39.cpp (22 tests) — NEW
+
+NOTE: Previous session SSH connection dropped mid-implementation. The ssta.hpp
+and ssta.cpp were fully written but test_phase39.cpp was never created.
+New session verified code integrity, created test suite, build fixed.
+
+IMPLEMENTATION:
+- SstaConfig: num_samples, n_sigma, global/local variation %, spatial
+  correlation length, seed, confidence level
+- ProcessVariation: gate_length/vth/tox/wire_width/wire_thickness sigma %,
+  global/local fraction split (default 60/40)
+- StatisticalDelay: mean, sigma, min, max, percentile values (1/5/10/25/50/
+  75/90/95/99), raw MC samples, compute_from_samples()
+- StatisticalPath: per-endpoint delay distribution, yield probability,
+  worst/best sample delays, percentile delays
+- SstaEngine: Monte Carlo sampling with:
+  * Nominal gate delay model (Liberty lookup + heuristic fallback)
+  * Per-sample variation: delay = nominal × (1 + global_var + local_var)
+  * Spatial correlation via exponential decay: exp(-dist/corr_length)
+  * Correlated local variations via nearest-neighbor blending
+  * Forward propagation through topological order per sample
+  * WNS/TNS distribution, yield at each sigma level (1σ–6σ)
+  * Critical path tracking (top 5 endpoints by worst mean delay)
+  * Path-to-path correlation coefficients
+- compute_yield(target_period): MC yield at specific clock target
+- get_statistical_wns(): cached statistical WNS distribution
+- sensitivity_analysis(): per-parameter impact (global, local, gate_length,
+  vth, wire_width) via 50% perturbation method
+  * Identifies dominant variation parameter
+
+Reference: Blaauw et al., "Statistical Timing Analysis: From Basic Principles
+           to State of the Art", IEEE TCAD 2008
+
+Test Coverage (22 tests):
+  1. config_defaults — all SstaConfig fields
+  2. process_variation_defaults — all ProcessVariation fields
+  3. statistical_delay_compute — mean/sigma/min/max/percentiles from samples
+  4. ssta_result_fields — default SstaResult values
+  5. statistical_path_fields — default StatisticalPath values
+  6. basic_mc_analysis — 500-sample MC on 6-gate chain
+  7. yield_estimation — loose vs tight period yield comparison
+  8. compute_yield_api — yield at specific target periods
+  9. sigma_to_yield_table — sigma-to-yield mapping (1σ–6σ)
+  10. seed_reproducibility — same seed → identical results
+  11. different_seeds_differ — different seeds → different samples
+  12. critical_paths_populated — path names, delays, percentiles, yield
+  13. path_correlations — correlation coefficients in [-1, 1]
+  14. spatial_correlation_effect — correlated vs uncorrelated analysis
+  15. variation_impact — high variation → wider spread
+  16. custom_process_variation — custom PV parameters applied
+  17. sensitivity_analysis — 5 parameters tested, dominant identified
+  18. pipeline_ssta — pipelined design with DFFs
+  19. empty_netlist — graceful handling
+  20. single_gate — trivial circuit, high yield
+  21. get_statistical_wns — cached WNS distribution API
+  22. e2e_full_ssta_flow — full flow: config→PV→MC→paths→sensitivity
+
+Result: 39/39 CTest PASS (0.35 sec total)
+
+================================================================================
+TIER 3 CRITICAL — ALL 4 COMPLETE ✅
+================================================================================
+Phase 35: IR Drop Industrial — Gauss-Seidel solver, multi-source pads
+Phase 36: PDN Industrial — Frequency impedance, decap, resonance
+Phase 37: Signal Integrity Industrial — Miller coupling, SSN, glitch
+Phase 38: DRC Advanced Rules — EM, multi-patterning, stress, ESD
+
+TIER 3 IMPORTANT — 1 of 3 COMPLETE
+================================================================================
+Phase 39: SSTA Industrial — Monte Carlo, spatial correlation, yield ✅
+Phase 40: Chiplet/Multi-Die — PENDING
+Phase 41: Thermal Analysis — PENDING
+
+All changes backward-compatible. 39/39 CTest PASS.
+================================================================================
