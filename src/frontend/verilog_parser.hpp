@@ -99,6 +99,10 @@ private:
             PACKAGE_KW,          // package
             ENDPACKAGE_KW,       // endpackage
             IMPORT_KW,           // import
+            // SystemVerilog IEEE 1800 — Phase 3 keywords
+            INTERFACE_KW,        // interface
+            ENDINTERFACE_KW,     // endinterface
+            MODPORT_KW,          // modport
             END
         };
         Type type;
@@ -220,6 +224,26 @@ private:
     size_t parse_package(const std::vector<Token>& t, size_t pos);
     size_t parse_import(const std::vector<Token>& t, size_t pos);
     bool resolve_sv_type(const std::string& name, int& width) const;
+
+    // SystemVerilog Phase 3 — interfaces
+    struct SvInterfaceSignal {
+        std::string name;
+        int width = 1;
+    };
+    struct SvModport {
+        std::string name;
+        std::vector<std::pair<std::string, std::string>> signals; // {dir, signal_name}
+    };
+    struct SvInterface {
+        std::string name;
+        std::vector<SvInterfaceSignal> signals;
+        std::unordered_map<std::string, SvModport> modports;
+    };
+    std::unordered_map<std::string, SvInterface> sv_interfaces_;
+
+    size_t parse_interface(const std::vector<Token>& t, size_t pos);
+    void expand_interface_port(const std::string& iface_name, const std::string& modport_name,
+                               const std::string& port_name, Netlist& nl, VerilogParseResult& r);
 };
 
 } // namespace sf

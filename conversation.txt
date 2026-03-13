@@ -1979,4 +1979,91 @@ CUMULATIVE STATUS:
 
 PENDING COMMIT (not pushed — Rule 7):
   All Tier 0-3 + SV Phase 1-2 changes are local.
+
+================================================================================
+SESSION 16 — SystemVerilog Phase 3: Interfaces & Modports (IEEE 1800)
+================================================================================
+
+OBJECTIVE: Add SystemVerilog interface/endinterface and modport support for
+  signal bundling, directional views, and interface-as-port expansion.
+
+IMPLEMENTATION:
+
+1. Token Types: INTERFACE_KW, ENDINTERFACE_KW, MODPORT_KW
+
+2. Data Structures (verilog_parser.hpp):
+   - SvInterfaceSignal: {name, width}
+   - SvModport: {name, signals[{dir, signal_name}]}
+   - SvInterface: {name, signals[], modports{}}
+   - sv_interfaces_: interface registry
+
+3. parse_interface() — Full interface body parser:
+   - Signal declarations: logic/bit/wire/reg with [range], byte/shortint/int/longint
+   - Multiple signals per declaration (logic pin0, pin1, pin2;)
+   - modport definitions with input/output/inout directions
+   - Parameters in interface body (skip gracefully)
+   - Handles empty interfaces
+
+4. expand_interface_port() — Interface-to-signals expansion:
+   - With modport: creates port_name + "_" + signal_name with modport directions
+   - Without modport: creates wires for all interface signals
+   - Supports mixed widths (1-bit to 256-bit)
+
+5. ANSI Port List Integration:
+   - Interface names detected via sv_interfaces_ lookup
+   - Dot notation parsed: iface_name.modport_name
+   - Signals expanded inline with correct input/output directions
+
+6. Pass 1.5 Updated: Now parses interface definitions alongside packages/typedefs
+
+BUILD & TEST:
+  Release build: ✅ Clean (0 errors)
+  Phase 51 tests: ✅ 25/25 PASS
+  Full regression: ✅ 50/50 PASS (0.86s)
+  ASAN build+test: ✅ 50/50 PASS, zero memory errors (352.71s)
+
+TEST COVERAGE (test_phase51.cpp — 25 tests):
+  Tests 1-2:   Basic interface def + modport (no crash)
+  Tests 3-4:   Interface port master/slave directions
+  Test 5:      Interface port without modport (wire expansion)
+  Test 6:      Mixed signal widths (102-bit)
+  Test 7:      Multiple modports in one interface
+  Test 8:      Interface + regular ports combined
+  Test 9:      Interface with byte type signal
+  Test 10:     Empty interface (edge case)
+  Test 11:     Two interfaces in same file
+  Test 12:     Interface + package + typedef combined
+  Test 13:     Interface with inout direction
+  Test 14:     Modport multi-signal per direction
+  Test 15:     Interface with always_ff
+  Test 16:     Wide bus interface (289-bit)
+  Test 17:     Interface + enum typedef combo
+  Tests 18-19: Scalar signals, sender/receiver views
+  Test 20:     Multi-signal declaration line
+  Test 21:     Full Phase 1+2+3 integration (CPU core with mem_bus)
+  Test 22:     Interface with parameter
+  Test 23:     Two interface ports in one module
+  Test 24:     Interface + struct packed port
+  Test 25:     Interface with bit type signals
+
+FILES MODIFIED:
+  src/frontend/verilog_parser.hpp — 3 tokens, 3 data structures, 2 methods
+  src/frontend/verilog_parser.cpp — ~160 lines added
+
+FILES CREATED:
+  tests/test_phase51.cpp — 25 interface tests (~600 lines)
+  tests/CMakeLists.txt — registered test_phase51
+
+CUMULATIVE STATUS:
+  ✅ Tier 0: 4/4 gaps complete
+  ✅ Tier 1: 5/5 gaps complete
+  ✅ Tier 2: 7/7 gaps complete
+  ✅ Tier 3: 11/11 gaps complete
+  ✅ SV Phase 1: Core keywords (always_ff/comb/latch, 6 types, unique/priority)
+  ✅ SV Phase 2: Type system (typedef enum/logic/struct packed, package, import)
+  ✅ SV Phase 3: Interfaces & modports (interface, modport, port expansion)
+  Total test phases: 51 (50 active + Phase44 SAT excluded from quick regression)
+
+PENDING COMMIT (not pushed — Rule 7):
+  All Tier 0-3 + SV Phase 1-3 changes are local.
 ================================================================================

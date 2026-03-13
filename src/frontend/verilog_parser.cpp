@@ -320,6 +320,9 @@ std::vector<VerilogParser::Token> VerilogParser::tokenize(const std::string& src
             else if (ident == "package") tokens.push_back({Token::PACKAGE_KW, ident, line});
             else if (ident == "endpackage") tokens.push_back({Token::ENDPACKAGE_KW, ident, line});
             else if (ident == "import") tokens.push_back({Token::IMPORT_KW, ident, line});
+            else if (ident == "interface") tokens.push_back({Token::INTERFACE_KW, ident, line});
+            else if (ident == "endinterface") tokens.push_back({Token::ENDINTERFACE_KW, ident, line});
+            else if (ident == "modport") tokens.push_back({Token::MODPORT_KW, ident, line});
             else tokens.push_back({Token::IDENT, ident, line});
         }
         else i++;
@@ -1257,6 +1260,25 @@ size_t VerilogParser::parse_module(const std::vector<Token>& t, size_t pos, Netl
                     pos++;
                     if (pos < t.size() && t[pos].type == Token::COMMA) { pos++; break; }
                 }
+            } else if (t[pos].type == Token::INTERFACE_KW) {
+                // Skip bare 'interface' keyword in port list
+                pos++;
+            } else if (t[pos].type == Token::IDENT && sv_interfaces_.count(t[pos].value)) {
+                // SV Phase 3: interface port — iface.modport port_name
+                std::string iface_name = t[pos].value;
+                std::string modport_name;
+                pos++;
+                // Check for .modport_name
+                if (pos + 1 < t.size() && t[pos].type == Token::DOT && t[pos+1].type == Token::IDENT) {
+                    modport_name = t[pos+1].value;
+                    pos += 2;
+                }
+                // Port name(s)
+                while (pos < t.size() && t[pos].type == Token::IDENT) {
+                    expand_interface_port(iface_name, modport_name, t[pos].value, nl, r);
+                    pos++;
+                    if (pos < t.size() && t[pos].type == Token::COMMA) { pos++; break; }
+                }
             } else if (t[pos].type == Token::IDENT && is_sv_net_type(t[pos].value)) {
                 pos++;
             } else if (t[pos].type == Token::SIGNED_KW) {
@@ -1619,6 +1641,7 @@ VerilogParseResult VerilogParser::parse_tokens(const std::vector<Token>& t, Netl
     module_defs_.clear();
     sv_typedefs_.clear();
     sv_packages_.clear();
+    sv_interfaces_.clear();
     hierarchy_depth_ = 0;
 
     // === Pass 1: Collect all module definitions (token ranges) ===
@@ -1653,7 +1676,7 @@ VerilogParseResult VerilogParser::parse_tokens(const std::vector<Token>& t, Netl
         }
     }
 
-    // === Pass 1.5: Parse packages and file-level typedefs ===
+    // === Pass 1.5: Parse packages, interfaces, and file-level typedefs ===
     {
         size_t pos = 0;
         while (pos < t.size() && t[pos].type != Token::END) {
@@ -1662,6 +1685,8 @@ VerilogParseResult VerilogParser::parse_tokens(const std::vector<Token>& t, Netl
             } else if (t[pos].type == Token::TYPEDEF_KW) {
                 // File-level typedef (outside any module/package)
                 pos = parse_typedef(t, pos);
+            } else if (t[pos].type == Token::INTERFACE_KW) {
+                pos = parse_interface(t, pos);
             } else {
                 pos++;
             }
@@ -2330,6 +2355,180 @@ bool VerilogParser::resolve_sv_type(const std::string& name, int& width) const {
     if (it == sv_typedefs_.end()) return false;
     width = it->second.width;
     return true;
+}
+
+// =============================================================================
+// SystemVerilog Phase 3: interface parsing
+// =============================================================================
+// Handles:
+//   interface iface_name;
+//     logic [N:0] signal_name;
+//     modport master (input sig1, output sig2);
+//   endinterface
+size_t VerilogParser::parse_interface(const std::vector<Token>& t, size_t pos) {
+    pos++; // skip 'interface'
+    SvInterface iface;
+    if (pos < t.size() && t[pos].type == Token::IDENT) {
+        iface.name = t[pos].value;
+        pos++;
+    }
+    // Skip optional parameter list #(...)
+    if (pos < t.size() && t[pos].type == Token::HASH) {
+        pos++;
+        if (pos < t.size() && t[pos].type == Token::LPAREN) {
+            int depth = 1; pos++;
+            while (pos < t.size() && depth > 0) {
+                if (t[pos].type == Token::LPAREN) depth++;
+                if (t[pos].type == Token::RPAREN) depth--;
+                pos++;
+            }
+        }
+    }
+    // Skip optional port list (...)
+    if (pos < t.size() && t[pos].type == Token::LPAREN) {
+        int depth = 1; pos++;
+        while (pos < t.size() && depth > 0) {
+            if (t[pos].type == Token::LPAREN) depth++;
+            if (t[pos].type == Token::RPAREN) depth--;
+            pos++;
+        }
+    }
+    if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+
+    // Parse interface body until endinterface
+    while (pos < t.size() && t[pos].type != Token::ENDINTERFACE_KW && t[pos].type != Token::END) {
+        if (t[pos].type == Token::IDENT &&
+            (t[pos].value == "logic" || t[pos].value == "bit" || t[pos].value == "wire" || t[pos].value == "reg")) {
+            // Signal declaration: logic [N:0] name;
+            int sig_w = sv_type_width(t[pos].value);
+            if (sig_w == 0) sig_w = 1;
+            pos++;
+            // Optional [range]
+            if (pos < t.size() && t[pos].type == Token::LBRACKET) {
+                auto range = parse_bus_range(t, pos);
+                if (range.first >= 0)
+                    sig_w = std::abs(range.first - range.second) + 1;
+            }
+            // Signal name(s)
+            while (pos < t.size() && t[pos].type == Token::IDENT) {
+                SvInterfaceSignal sig;
+                sig.name = t[pos].value;
+                sig.width = sig_w;
+                iface.signals.push_back(sig);
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::COMMA) pos++;
+            }
+            if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+        }
+        else if (t[pos].type == Token::IDENT && is_sv_net_type(t[pos].value) &&
+                 t[pos].value != "logic" && t[pos].value != "bit" && t[pos].value != "wire" && t[pos].value != "reg") {
+            // byte/shortint/int/longint signal
+            int sig_w = sv_type_width(t[pos].value);
+            pos++;
+            while (pos < t.size() && t[pos].type == Token::IDENT) {
+                SvInterfaceSignal sig;
+                sig.name = t[pos].value;
+                sig.width = sig_w;
+                iface.signals.push_back(sig);
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::COMMA) pos++;
+            }
+            if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+        }
+        else if (t[pos].type == Token::MODPORT_KW) {
+            // modport name (input sig1, sig2, output sig3, ...);
+            pos++; // skip 'modport'
+            SvModport mp;
+            if (pos < t.size() && t[pos].type == Token::IDENT) {
+                mp.name = t[pos].value;
+                pos++;
+            }
+            if (pos < t.size() && t[pos].type == Token::LPAREN) {
+                pos++; // skip '('
+                std::string cur_dir;
+                while (pos < t.size() && t[pos].type != Token::RPAREN) {
+                    if (t[pos].type == Token::IDENT &&
+                        (t[pos].value == "input" || t[pos].value == "output" || t[pos].value == "inout")) {
+                        cur_dir = t[pos].value;
+                        pos++;
+                    } else if (t[pos].type == Token::IDENT && !cur_dir.empty()) {
+                        mp.signals.push_back({cur_dir, t[pos].value});
+                        pos++;
+                    } else {
+                        pos++;
+                    }
+                    if (pos < t.size() && t[pos].type == Token::COMMA) pos++;
+                }
+                if (pos < t.size() && t[pos].type == Token::RPAREN) pos++;
+            }
+            if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            if (!mp.name.empty())
+                iface.modports[mp.name] = std::move(mp);
+        }
+        else if (t[pos].type == Token::PARAMETER_KW) {
+            // Skip parameters in interface
+            pos++;
+            while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+            if (pos < t.size()) pos++;
+        }
+        else {
+            pos++;
+        }
+    }
+    if (pos < t.size() && t[pos].type == Token::ENDINTERFACE_KW) pos++;
+
+    if (!iface.name.empty())
+        sv_interfaces_[iface.name] = std::move(iface);
+    return pos;
+}
+
+// =============================================================================
+// SystemVerilog Phase 3: expand interface port to constituent signals
+// =============================================================================
+void VerilogParser::expand_interface_port(const std::string& iface_name,
+                                           const std::string& modport_name,
+                                           const std::string& port_name,
+                                           Netlist& nl, VerilogParseResult& r) {
+    auto it = sv_interfaces_.find(iface_name);
+    if (it == sv_interfaces_.end()) return;
+    const auto& iface = it->second;
+
+    if (!modport_name.empty() && iface.modports.count(modport_name)) {
+        // Expand using modport directions
+        const auto& mp = iface.modports.at(modport_name);
+        for (auto& [dir, sig_name] : mp.signals) {
+            // Find signal width
+            int w = 1;
+            for (auto& sig : iface.signals) {
+                if (sig.name == sig_name) { w = sig.width; break; }
+            }
+            std::string full_name = port_name + "_" + sig_name;
+            if (w > 1) {
+                auto bits = get_or_create_bus(nl, full_name, w - 1, 0);
+                for (auto nid : bits) {
+                    if (dir == "input") { nl.mark_input(nid); r.num_inputs++; }
+                    else { nl.mark_output(nid); r.num_outputs++; }
+                }
+            } else {
+                NetId nid = get_or_create_net(nl, full_name);
+                if (dir == "input") { nl.mark_input(nid); r.num_inputs++; }
+                else { nl.mark_output(nid); r.num_outputs++; }
+            }
+        }
+    } else {
+        // No modport — expand all signals as inout (treat as wires)
+        for (auto& sig : iface.signals) {
+            std::string full_name = port_name + "_" + sig.name;
+            if (sig.width > 1) {
+                auto bits = get_or_create_bus(nl, full_name, sig.width - 1, 0);
+                for (auto nid : bits)
+                    r.num_wires++;
+            } else {
+                get_or_create_net(nl, full_name);
+                r.num_wires++;
+            }
+        }
+    }
 }
 
 size_t VerilogParser::parse_statement_block(const std::vector<Token>& t, size_t pos, std::shared_ptr<AstNode> parent) {
