@@ -82,15 +82,97 @@ size_t SdcParser::parse_command(const std::vector<Token>& t, size_t pos,
                 if (pos < t.size() && t[pos].value == "}") pos++;
             }
             else if (t[pos].value[0] == '-') { pos += 2; } // skip unknown flags
-            else if (t[pos].value[0] == '[') { // skip expressions
+            else if (t[pos].value[0] == '[') { // [get_ports xxx] expression
+                pos++; // skip '['
+                // Try to extract port from get_ports/get_pins expression
+                if (pos < t.size() && (t[pos].value == "get_ports" || t[pos].value == "get_pins" ||
+                    t[pos].value == "get_clocks" || t[pos].value == "get_nets")) {
+                    pos++; // skip command name
+                    if (pos < t.size() && t[pos].value != "]") {
+                        if (clk.port.empty()) clk.port = t[pos].value;
+                        if (clk.name.empty()) clk.name = t[pos].value;
+                    }
+                }
                 while (pos < t.size() && t[pos].value != "]") pos++;
-                pos++;
+                if (pos < t.size()) pos++; // skip ']'
+            }
+            else if (t[pos].value == "create_clock" || t[pos].value == "create_generated_clock" ||
+                     t[pos].value == "set_false_path" || t[pos].value == "set_multicycle_path" ||
+                     t[pos].value == "set_input_delay" || t[pos].value == "set_output_delay" ||
+                     t[pos].value == "set_max_delay" || t[pos].value == "set_min_delay" ||
+                     t[pos].value == "set_clock_groups" || t[pos].value == "set_clock_latency") {
+                break; // next command — don't consume
             }
             else { // port name
                 if (clk.port.empty()) clk.port = t[pos].value;
                 if (clk.name.empty()) clk.name = t[pos].value;
                 pos++;
                 break;
+            }
+        }
+        sdc.clocks.push_back(clk);
+        r.num_constraints++;
+    }
+    else if (cmd == "create_generated_clock") {
+        pos++;
+        SdcClock clk;
+        clk.is_generated = true;
+        while (pos < t.size()) {
+            if (t[pos].value == "-name" && pos+1 < t.size()) { clk.name = t[++pos].value; pos++; }
+            else if (t[pos].value == "-source" && pos+1 < t.size()) {
+                pos++;
+                if (t[pos].value == "[") {
+                    pos++; // skip '['
+                    if (pos < t.size() && (t[pos].value == "get_ports" || t[pos].value == "get_pins" ||
+                        t[pos].value == "get_clocks")) {
+                        pos++; // skip command
+                        if (pos < t.size() && t[pos].value != "]")
+                            clk.source = t[pos].value;
+                    }
+                    while (pos < t.size() && t[pos].value != "]") pos++;
+                    if (pos < t.size()) pos++; // skip ']'
+                } else {
+                    clk.source = t[pos].value;
+                    pos++;
+                }
+            }
+            else if (t[pos].value == "-divide_by" && pos+1 < t.size()) {
+                try { clk.divide_by = std::stoi(t[++pos].value); } catch (...) {}
+                pos++;
+            }
+            else if (t[pos].value == "-multiply_by" && pos+1 < t.size()) {
+                try { clk.multiply_by = std::stoi(t[++pos].value); } catch (...) {}
+                pos++;
+            }
+            else if (t[pos].value == "-duty_cycle" && pos+1 < t.size()) {
+                try { clk.duty_cycle = std::stod(t[++pos].value); } catch (...) {}
+                pos++;
+            }
+            else if (t[pos].value == "-invert") { clk.invert = true; pos++; }
+            else if (t[pos].value == "-edges") {
+                pos++;
+                if (pos < t.size() && t[pos].value == "{") pos++;
+                while (pos < t.size() && t[pos].value != "}") {
+                    try { clk.edges.push_back(std::stoi(t[pos].value)); } catch (...) {}
+                    pos++;
+                }
+                if (pos < t.size()) pos++;
+            }
+            else if (t[pos].value[0] == '[') { while (pos < t.size() && t[pos].value != "]") pos++; pos++; }
+            else if (t[pos].value[0] == '-') { pos += 2; }
+            else {
+                if (clk.port.empty()) clk.port = t[pos].value;
+                if (clk.name.empty()) clk.name = t[pos].value;
+                pos++;
+                break;
+            }
+        }
+        // Compute period from source clock
+        if (!clk.source.empty()) {
+            auto* src = sdc.find_clock(clk.source);
+            if (src) {
+                clk.period_ns = src->period_ns * clk.divide_by / clk.multiply_by;
+                clk.waveform_fall = clk.period_ns * clk.duty_cycle / 100.0;
             }
         }
         sdc.clocks.push_back(clk);
@@ -132,10 +214,11 @@ size_t SdcParser::parse_command(const std::vector<Token>& t, size_t pos,
     }
     else if (cmd == "set_false_path") {
         pos++;
-        SdcException ex{SdcException::FALSE_PATH, "", "", 0, 0};
+        SdcException ex{SdcException::FALSE_PATH, "", "", 0, 0, "", true};
         while (pos < t.size()) {
             if (t[pos].value == "-from" && pos+1 < t.size()) { ex.from = t[++pos].value; pos++; }
             else if (t[pos].value == "-to" && pos+1 < t.size()) { ex.to = t[++pos].value; pos++; }
+            else if (t[pos].value == "-through" && pos+1 < t.size()) { ex.through = t[++pos].value; pos++; }
             else if (t[pos].value[0] == '[') { while (pos < t.size() && t[pos].value != "]") pos++; pos++; }
             else if (t[pos].value[0] == '-') { pos += 2; }
             else { pos++; break; }
@@ -145,10 +228,13 @@ size_t SdcParser::parse_command(const std::vector<Token>& t, size_t pos,
     }
     else if (cmd == "set_multicycle_path") {
         pos++;
-        SdcException ex{SdcException::MULTICYCLE_PATH, "", "", 0, 2};
+        SdcException ex{SdcException::MULTICYCLE_PATH, "", "", 0, 2, "", true};
         while (pos < t.size()) {
             if (t[pos].value == "-from" && pos+1 < t.size()) { ex.from = t[++pos].value; pos++; }
             else if (t[pos].value == "-to" && pos+1 < t.size()) { ex.to = t[++pos].value; pos++; }
+            else if (t[pos].value == "-through" && pos+1 < t.size()) { ex.through = t[++pos].value; pos++; }
+            else if (t[pos].value == "-setup") { ex.is_setup = true; pos++; }
+            else if (t[pos].value == "-hold") { ex.is_setup = false; pos++; }
             else if (t[pos].value[0] == '-') { pos += 2; }
             else {
                 try { ex.multiplier = std::stoi(t[pos].value); pos++; }
@@ -160,10 +246,11 @@ size_t SdcParser::parse_command(const std::vector<Token>& t, size_t pos,
     }
     else if (cmd == "set_max_delay") {
         pos++;
-        SdcException ex{SdcException::MAX_DELAY, "", "", 0, 1};
+        SdcException ex{SdcException::MAX_DELAY, "", "", 0, 1, "", true};
         while (pos < t.size()) {
             if (t[pos].value == "-from" && pos+1 < t.size()) { ex.from = t[++pos].value; pos++; }
             else if (t[pos].value == "-to" && pos+1 < t.size()) { ex.to = t[++pos].value; pos++; }
+            else if (t[pos].value == "-through" && pos+1 < t.size()) { ex.through = t[++pos].value; pos++; }
             else if (t[pos].value[0] == '-') { pos += 2; }
             else {
                 try { ex.value = std::stod(t[pos].value); pos++; }
@@ -171,6 +258,50 @@ size_t SdcParser::parse_command(const std::vector<Token>& t, size_t pos,
             }
         }
         sdc.exceptions.push_back(ex);
+        r.num_constraints++;
+    }
+    else if (cmd == "set_min_delay") {
+        pos++;
+        SdcException ex{SdcException::MIN_DELAY, "", "", 0, 1, "", true};
+        while (pos < t.size()) {
+            if (t[pos].value == "-from" && pos+1 < t.size()) { ex.from = t[++pos].value; pos++; }
+            else if (t[pos].value == "-to" && pos+1 < t.size()) { ex.to = t[++pos].value; pos++; }
+            else if (t[pos].value == "-through" && pos+1 < t.size()) { ex.through = t[++pos].value; pos++; }
+            else if (t[pos].value[0] == '-') { pos += 2; }
+            else {
+                try { ex.value = std::stod(t[pos].value); pos++; }
+                catch (...) { pos++; break; }
+            }
+        }
+        sdc.exceptions.push_back(ex);
+        r.num_constraints++;
+    }
+    else if (cmd == "set_clock_groups") {
+        pos++;
+        SdcClockGroup cg;
+        while (pos < t.size()) {
+            if (t[pos].value == "-name" && pos+1 < t.size()) { cg.name = t[++pos].value; pos++; }
+            else if (t[pos].value == "-asynchronous") { cg.relation = SdcClockGroup::ASYNC; pos++; }
+            else if (t[pos].value == "-exclusive") { cg.relation = SdcClockGroup::EXCLUSIVE; pos++; }
+            else if (t[pos].value == "-physically_exclusive") { cg.relation = SdcClockGroup::PHYSICALLY_EXCLUSIVE; pos++; }
+            else if (t[pos].value == "-group") {
+                pos++;
+                std::vector<std::string> group;
+                if (pos < t.size() && t[pos].value == "{") {
+                    pos++;
+                    while (pos < t.size() && t[pos].value != "}") {
+                        group.push_back(t[pos].value); pos++;
+                    }
+                    if (pos < t.size()) pos++; // skip }
+                } else if (pos < t.size()) {
+                    group.push_back(t[pos].value); pos++;
+                }
+                cg.groups.push_back(group);
+            }
+            else if (t[pos].value[0] == '-') { pos += 2; }
+            else { pos++; break; }
+        }
+        sdc.clock_groups.push_back(cg);
         r.num_constraints++;
     }
     else if (cmd == "set_max_fanout") {

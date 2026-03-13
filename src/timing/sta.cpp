@@ -551,13 +551,39 @@ std::vector<TimingPath> StaEngine::extract_paths(int count, bool include_hold) {
     auto get_multicycle = [&](const std::string& start, const std::string& end) -> int {
         if (!sdc_) return 1;
         for (auto& exc : sdc_->exceptions) {
-            if (exc.type == SdcException::MULTICYCLE_PATH) {
+            if (exc.type == SdcException::MULTICYCLE_PATH && exc.is_setup) {
                 bool from_match = exc.from.empty() || start.find(exc.from) != std::string::npos;
                 bool to_match = exc.to.empty() || end.find(exc.to) != std::string::npos;
                 if (from_match && to_match) return exc.multiplier;
             }
         }
         return 1;
+    };
+
+    // Helper: get max_delay constraint for a path (returns -1 if none)
+    auto get_max_delay = [&](const std::string& start, const std::string& end) -> double {
+        if (!sdc_) return -1;
+        for (auto& exc : sdc_->exceptions) {
+            if (exc.type == SdcException::MAX_DELAY) {
+                bool from_match = exc.from.empty() || start.find(exc.from) != std::string::npos;
+                bool to_match = exc.to.empty() || end.find(exc.to) != std::string::npos;
+                if (from_match && to_match) return exc.value;
+            }
+        }
+        return -1;
+    };
+
+    // Helper: get min_delay constraint for a path (returns -1 if none)
+    auto get_min_delay = [&](const std::string& start, const std::string& end) -> double {
+        if (!sdc_) return -1;
+        for (auto& exc : sdc_->exceptions) {
+            if (exc.type == SdcException::MIN_DELAY) {
+                bool from_match = exc.from.empty() || start.find(exc.from) != std::string::npos;
+                bool to_match = exc.to.empty() || end.find(exc.to) != std::string::npos;
+                if (from_match && to_match) return exc.value;
+            }
+        }
+        return -1;
     };
 
     struct EndpointSlack {
@@ -632,16 +658,26 @@ std::vector<TimingPath> StaEngine::extract_paths(int count, bool include_hold) {
         // SDC: skip false paths
         if (is_false_path(path.startpoint, path.endpoint)) continue;
 
-        // SDC: adjust slack for multicycle paths
+        // SDC: adjust slack for multicycle paths using actual clock period
         int mc = get_multicycle(path.startpoint, path.endpoint);
         if (mc > 1 && !path.is_hold) {
-            // Multicycle relaxes the required time by (mc-1) clock periods
-            double clock_p = pin_timing_.empty() ? 1.0 :
-                (pin_timing_.begin()->second.required_rise < 1e9 ?
-                 pin_timing_.begin()->second.required_rise : 1.0);
-            // Use the actual clock period from the result context
-            // The slack gets (mc-1)*clock_period additional margin
-            path.slack += (mc - 1) * path.delay * 0.2; // approximate relaxation
+            // Multicycle relaxes required time by (mc-1) clock periods
+            double clock_p = last_clock_period_;
+            path.slack += (mc - 1) * clock_p;
+        }
+
+        // SDC: enforce set_max_delay — override slack based on explicit constraint
+        double max_d = get_max_delay(path.startpoint, path.endpoint);
+        if (max_d >= 0 && !path.is_hold) {
+            // Slack = max_delay_constraint - actual_delay
+            path.slack = max_d - path.delay;
+        }
+
+        // SDC: enforce set_min_delay — for hold paths
+        double min_d = get_min_delay(path.startpoint, path.endpoint);
+        if (min_d >= 0 && path.is_hold) {
+            // Hold slack = actual_delay - min_delay_constraint
+            path.slack = path.delay - min_d;
         }
 
         paths.push_back(path);
@@ -1020,7 +1056,8 @@ MultiClockStaResult run_multi_clock_sta(
     const LibertyLibrary* lib,
     const PhysicalDesign* pd,
     double clock_period,
-    int num_paths) {
+    int num_paths,
+    const SdcConstraints* sdc) {
 
     MultiClockStaResult result;
 
@@ -1105,8 +1142,21 @@ MultiClockStaResult run_multi_clock_sta(
         }
     }
 
+    // Overlay SDC generated clock definitions (more accurate than auto-detection)
+    if (sdc) {
+        for (auto& sdc_clk : sdc->clocks) {
+            if (!sdc_clk.is_generated) continue;
+            auto it = domain_map.find(sdc_clk.name);
+            if (it != domain_map.end()) {
+                it->second.is_generated = true;
+                it->second.divide_ratio = sdc_clk.divide_by;
+            }
+        }
+    }
+
     // Step 4: Run STA and partition paths by domain
     StaEngine sta(nl, lib, pd);
+    if (sdc) sta.set_sdc_constraints(*sdc);
     auto sta_result = sta.analyze(clock_period, num_paths * 2);
 
     // For each timing path, determine its source and destination domains
@@ -1159,7 +1209,25 @@ MultiClockStaResult run_multi_clock_sta(
             icp.src_domain = src_dom;
             icp.dst_domain = dst_dom;
             icp.slack = path.slack;
-            icp.is_async = true; // default
+            // Check SDC clock groups for async/exclusive classification
+            icp.is_async = true; // default to async unless SDC says otherwise
+            if (sdc) {
+                for (auto& grp : sdc->clock_groups) {
+                    // If src and dst are in the same sub-group, they're synchronous
+                    for (auto& sub : grp.groups) {
+                        bool src_in = false, dst_in = false;
+                        for (auto& gclk : sub) {
+                            if (gclk == src_dom) src_in = true;
+                            if (gclk == dst_dom) dst_in = true;
+                        }
+                        if (src_in && dst_in) {
+                            icp.is_async = false;
+                            break;
+                        }
+                    }
+                    if (!icp.is_async) break;
+                }
+            }
             icp.endpoint = path.endpoint;
             result.inter_domain_paths.push_back(icp);
         }

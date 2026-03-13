@@ -9,6 +9,7 @@ int PhysicalDesign::add_cell(const std::string& name, const std::string& type,
                               double w, double h) {
     int id = (int)cells.size();
     cells.push_back({id, name, type, w, h, {0,0}, false});
+    cell_name_map[name] = id;
     return id;
 }
 

@@ -40,17 +40,38 @@ struct LibertyTiming {
     NldmTable nldm_fall_tr;  // fall_transition table
 };
 
+struct LibertyPower {
+    std::string related_pin;
+    std::string when; // conditional power (input vector)
+    double rise_power = 0.0;
+    double fall_power = 0.0;
+
+    // NLDM-style 2D power tables
+    LibertyTiming::NldmTable power_rise_table;
+    LibertyTiming::NldmTable power_fall_table;
+};
+
+struct LibertyLeakage {
+    std::string when; // input vector condition (e.g., "!A & B")
+    double value = 0.0;
+};
+
 struct LibertyCell {
     std::string name;
     double area = 0.0;
     double leakage_power = 0.0;
     std::vector<LibertyPin> pins;
     std::vector<LibertyTiming> timings;
+    std::vector<LibertyPower> internal_powers;
+    std::vector<LibertyLeakage> leakage_powers;
 
     // Quick lookup
     const LibertyPin* find_pin(const std::string& name) const;
     std::string output_function() const; // Returns the Boolean function of the output pin
     int num_inputs() const;
+
+    // Total internal power at given slew/load (average rise+fall)
+    double internal_power_at(double input_slew, double output_load) const;
 };
 
 class LibertyLibrary {
@@ -63,6 +84,13 @@ public:
     std::string cap_unit = "1pF";
 
     std::vector<LibertyCell> cells;
+
+    // lu_table_template storage: template_name → {index_1, index_2}
+    struct TableTemplate {
+        std::vector<double> index_1;
+        std::vector<double> index_2;
+    };
+    std::unordered_map<std::string, TableTemplate> table_templates;
 
     // Parse a Liberty file
     bool parse(const std::string& filename);
@@ -91,8 +119,17 @@ private:
                        const std::string& parent);
     size_t parse_cell(const std::vector<Token>& tokens, size_t pos);
     size_t parse_pin(const std::vector<Token>& tokens, size_t pos, LibertyCell& cell);
-    size_t parse_timing(const std::vector<Token>& tokens, size_t pos, LibertyCell& cell);
+    size_t parse_timing(const std::vector<Token>& tokens, size_t pos, LibertyCell& cell,
+                        const std::string& pin_name);
+    size_t parse_internal_power(const std::vector<Token>& tokens, size_t pos,
+                                LibertyCell& cell);
+    size_t parse_nldm_table(const std::vector<Token>& tokens, size_t pos,
+                            LibertyTiming::NldmTable& table);
+    size_t parse_lu_table_template(const std::vector<Token>& tokens, size_t pos);
     size_t skip_group(const std::vector<Token>& tokens, size_t pos);
+
+    // Helper: parse comma-separated numbers from a string like "0.01, 0.02, 0.05"
+    static std::vector<double> parse_number_list(const std::string& s);
 };
 
 } // namespace sf

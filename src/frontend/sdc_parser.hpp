@@ -17,6 +17,14 @@ struct SdcClock {
     double waveform_rise = 0;   // rising edge time
     double waveform_fall = 0;   // falling edge time
     double uncertainty = 0;     // jitter
+    bool is_generated = false;  // true for generated clocks
+    std::string source;         // source clock for generated clocks
+    int divide_by = 1;          // clock divider ratio
+    int multiply_by = 1;       // clock multiplier ratio
+    double duty_cycle = 50.0;  // duty cycle percentage
+    bool invert = false;        // inverted clock
+    double phase_shift = 0;    // phase offset in ns
+    std::vector<int> edges;     // edge list for generated clocks
 };
 
 struct SdcInputDelay {
@@ -39,6 +47,14 @@ struct SdcException {
     std::string to;             // end point
     double value = 0;           // multiplier for multicycle, ns for max/min
     int multiplier = 1;         // for multicycle paths
+    std::string through;        // optional through point
+    bool is_setup = true;       // setup or hold for multicycle
+};
+
+struct SdcClockGroup {
+    std::string name;
+    enum Relation { ASYNC, EXCLUSIVE, PHYSICALLY_EXCLUSIVE } relation = ASYNC;
+    std::vector<std::vector<std::string>> groups; // each inner vector is a group of clock names
 };
 
 struct SdcConstraints {
@@ -46,6 +62,7 @@ struct SdcConstraints {
     std::vector<SdcInputDelay> input_delays;
     std::vector<SdcOutputDelay> output_delays;
     std::vector<SdcException> exceptions;
+    std::vector<SdcClockGroup> clock_groups;
     std::unordered_map<std::string, double> max_fanout;
     std::unordered_map<std::string, double> max_transition;
     std::unordered_map<std::string, double> max_capacitance;

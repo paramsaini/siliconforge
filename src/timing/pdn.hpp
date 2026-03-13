@@ -206,6 +206,25 @@ struct PdnPackageModel {
     double board_capacitance_uf = 10.0;
 };
 
+// ── IR-Aware Stripe Fix Config/Result ────────────────────────────────
+struct IrFixConfig {
+    double target_drop_pct = 5.0;  // max allowed IR drop %
+    int max_iterations = 5;        // max fix iterations
+    double stripe_width = 2.0;     // added stripe width (um)
+    double stripe_r_per_um = 0.01; // resistance of added stripes
+    int stripe_layer = 2;          // metal layer for new stripes
+    double hotspot_threshold = 0.8;// fraction of worst drop to trigger fix
+};
+
+struct IrFixResult {
+    int iterations = 0;
+    int stripes_added = 0;
+    double initial_drop_pct = 0;
+    double final_drop_pct = 0;
+    bool converged = false;
+    std::string message;
+};
+
 // ── Analyzer ─────────────────────────────────────────────────────────────
 
 class PdnAnalyzer {
@@ -259,6 +278,10 @@ private:
 
     // Spatial voltage analysis
     void spatial_analysis(int grid_res, PdnResult& r);
+
+public:
+    // IR-aware stripe insertion: iterate analysis → add stripes at hotspots → re-analyze
+    IrFixResult fix_ir_hotspots(IrFixConfig fix_cfg = IrFixConfig{}, int grid_res = 10);
 };
 
 } // namespace sf

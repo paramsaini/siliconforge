@@ -488,4 +488,82 @@ PdnResult PdnAnalyzer::run_enhanced() {
     return r;
 }
 
+// ── IR-Aware Stripe Insertion ────────────────────────────────────────
+
+IrFixResult PdnAnalyzer::fix_ir_hotspots(IrFixConfig fix_cfg, int grid_res) {
+    IrFixResult fix;
+
+    // Initial analysis
+    PdnResult r = analyze(grid_res);
+    fix.initial_drop_pct = r.worst_drop_pct;
+
+    if (r.worst_drop_pct <= fix_cfg.target_drop_pct) {
+        fix.converged = true;
+        fix.final_drop_pct = r.worst_drop_pct;
+        fix.message = "IR drop already meets target";
+        return fix;
+    }
+
+    for (int iter = 0; iter < fix_cfg.max_iterations; ++iter) {
+        fix.iterations = iter + 1;
+
+        // Find hotspot nodes: nodes with voltage drop > threshold × worst_drop
+        double drop_threshold = fix_cfg.hotspot_threshold * r.worst_drop_mv;
+        double die_w = pd_.die_area.width();
+        double die_h = pd_.die_area.height();
+
+        // Collect hotspot y-coords for horizontal stripes, x-coords for vertical
+        bool add_horizontal = (fix.iterations % 2 == 1);
+        std::vector<double> hotspot_coords;
+
+        for (auto& node : r.nodes) {
+            double node_drop = cfg_.vdd * 1000.0 - node.voltage * 1000.0;
+            if (node_drop >= drop_threshold) {
+                double coord = add_horizontal ? node.y : node.x;
+                // Quantize to grid to avoid duplicate stripes
+                double quantized = std::round(coord * 10.0) / 10.0;
+                bool dup = false;
+                for (double c : hotspot_coords) {
+                    if (std::abs(c - quantized) < fix_cfg.stripe_width * 2) {
+                        dup = true;
+                        break;
+                    }
+                }
+                if (!dup) hotspot_coords.push_back(quantized);
+            }
+        }
+
+        if (hotspot_coords.empty()) break;
+
+        // Add stripes at hotspot locations
+        for (double coord : hotspot_coords) {
+            PdnStripe stripe;
+            stripe.direction = add_horizontal ? PdnStripe::HORIZONTAL : PdnStripe::VERTICAL;
+            stripe.offset = coord;
+            stripe.width = fix_cfg.stripe_width;
+            stripe.layer = fix_cfg.stripe_layer;
+            stripe.resistance_per_um = fix_cfg.stripe_r_per_um;
+            cfg_.stripes.push_back(stripe);
+            fix.stripes_added++;
+        }
+
+        // Re-analyze with added stripes
+        r = analyze(grid_res);
+        fix.final_drop_pct = r.worst_drop_pct;
+
+        if (r.worst_drop_pct <= fix_cfg.target_drop_pct) {
+            fix.converged = true;
+            break;
+        }
+    }
+
+    fix.message = "IR fix: " + std::to_string(fix.stripes_added) + " stripes added over " +
+                  std::to_string(fix.iterations) + " iterations, drop " +
+                  std::to_string(fix.initial_drop_pct) + "% -> " +
+                  std::to_string(fix.final_drop_pct) + "%";
+    if (fix.converged) fix.message += " (CONVERGED)";
+    else fix.message += " (NOT CONVERGED)";
+    return fix;
+}
+
 } // namespace sf

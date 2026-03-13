@@ -19,6 +19,7 @@ struct ParasiticNet {
         double length;
         double resistance;
         double capacitance;
+        int layer = -1; // routing layer (-1 = estimated)
     };
     std::vector<RCSegment> segments;
 
@@ -29,6 +30,7 @@ struct ParasiticNet {
     };
     std::vector<CouplingCap> coupling;
     double total_coupling_ff = 0;
+    int via_count = 0;
 };
 
 struct ParasiticResult {

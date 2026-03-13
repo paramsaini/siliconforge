@@ -80,18 +80,92 @@ struct Via {
     int lower_layer, upper_layer;
 };
 
+// Routing blockage
+struct RoutingBlockage {
+    int layer = -1; // -1 = all layers (placement blockage)
+    Rect rect;
+    std::string type; // "ROUTING", "PLACEMENT", "FILL"
+};
+
+// Routing track definition
+struct TrackDef {
+    std::string direction; // "X" (vertical) or "Y" (horizontal)
+    double start = 0;
+    int count = 0;
+    double step = 0;
+    std::vector<std::string> layer_names;
+};
+
+// IO Pin definition
+struct IoPin {
+    std::string name;
+    std::string direction; // "INPUT", "OUTPUT", "INOUT"
+    std::string net_name;
+    int layer = -1;
+    Point position;
+    bool placed = false;
+};
+
+// Via definition (from VIAS section)
+struct ViaDef {
+    std::string name;
+    struct ViaLayer {
+        std::string layer_name;
+        Rect rect;
+    };
+    std::vector<ViaLayer> layers;
+};
+
+// Special net (power/ground)
+struct SpecialNet {
+    std::string name;
+    std::string use; // "POWER", "GROUND", "CLOCK"
+    struct SpecialWire {
+        std::string layer_name;
+        double width = 0;
+        Point start, end;
+        std::string shape; // "STRIPE", "RING", "FOLLOWPIN"
+    };
+    std::vector<SpecialWire> wires;
+};
+
+// Region definition
+struct Region {
+    std::string name;
+    std::string type; // "FENCE", "GUIDE"
+    std::vector<Rect> rects;
+};
+
+// Group definition
+struct Group {
+    std::string name;
+    std::string region_name;
+    std::vector<std::string> members; // cell names or patterns
+};
+
 // Complete physical design
 class PhysicalDesign {
 public:
     Rect die_area;
     double row_height = 10.0;
     double site_width = 1.0;
+    double dbu_per_micron = 1000.0;
 
     std::vector<CellInstance> cells;
     std::vector<PhysNet> nets;
     std::vector<RoutingLayer> layers;
     std::vector<WireSegment> wires;
     std::vector<Via> vias;
+    std::vector<RoutingBlockage> blockages;
+    std::vector<TrackDef> tracks;
+    std::vector<IoPin> io_pins;
+    std::vector<ViaDef> via_defs;
+    std::vector<SpecialNet> special_nets;
+    std::vector<Region> regions;
+    std::vector<Group> groups;
+
+    // Cell name → index lookup
+    std::unordered_map<std::string, int> cell_name_map;
 
     int add_cell(const std::string& name, const std::string& type, double w, double h);
     int add_net(const std::string& name, const std::vector<int>& cell_ids);

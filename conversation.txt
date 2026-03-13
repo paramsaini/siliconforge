@@ -1264,3 +1264,242 @@ FILES MODIFIED THIS SESSION:
 PENDING COMMIT (not pushed — Rule 7):
   All changes are local. User was given commit commands.
 ================================================================================
+
+================================================================================
+SESSION 10 — TIER 0 INDUSTRIAL GAP CLOSURE
+================================================================================
+Date: 2025-07-17
+Researcher: PhD-level semiconductor researcher
+
+OBJECTIVE:
+  Complete Tier 0 (Architectural/Foundational) gaps identified in deep gap
+  analysis comparing SiliconForge against Cadence/Synopsys/Siemens commercial
+  EDA tools. 53 total gaps identified across 5 tiers; Tier 0 had 4 gaps.
+
+GAP ANALYSIS SUMMARY (53 gaps, 5 tiers):
+  Tier 0 (Architectural):  4 gaps — Liberty, NLDM, DEF, Hierarchy
+  Tier 1 (Critical):       5 gaps — Parasitic, SDC, Multi-clock STA, IR, Metal fill
+  Tier 2 (Major):         25 gaps — Congestion, Pattern routing, ILP, SVA, etc.
+  Tier 3 (Enhancement):   11 gaps — Power domains, ECO, IO pads, etc.
+  Tier 4 (Depth):          8 gaps — Multigrid thermal, parallel SAT, deep learning
+  Overall industrial readiness: ~70% (corrected from prior 95% claim)
+
+TIER 0 WORK COMPLETED (4/4 gaps closed):
+
+1. LIBERTY PARSER UPGRADE [t0-liberty] ✓
+   Files: src/core/liberty_parser.hpp, src/core/liberty_parser.cpp
+   Changes (~250 new lines):
+   - parse_timing() — full timing group parsing (cell_rise, cell_fall,
+     rise_transition, fall_transition as NLDM 2D tables)
+   - parse_nldm_table() — reads "values" rows, inherits index_1/index_2
+     from lu_table_template via template name
+   - parse_lu_table_template() — stores templates in LibertyLibrary
+   - parse_internal_power() — rise_power/fall_power NLDM tables
+   - Leakage power: per-vector leakage_power groups, cell_leakage_power scalar
+   - New structs: LibertyPower (internal power), LibertyLeakage
+   - Extended LibertyCell with internal_powers, leakage_powers, internal_power_at()
+   - Previously: parse_pin() skipped timing() with "skip timing group for now"
+   - Now: full recursive descent through timing → NLDM table → interpolation
+
+2. NLDM TABLE INTERPOLATION [t0-nldm] ✓
+   Files: (no changes needed — STA already correct)
+   Key finding: NldmTable::interpolate() already implemented correct bilinear
+   interpolation (liberty_parser.cpp:289-316). STA's gate_delay() and
+   output_slew() already use NLDM tables with candidate name lookup chain.
+   The bottleneck was the Liberty parser not populating the tables — now fixed.
+
+3. DEF PARSER UPGRADE [t0-def] ✓
+   Files: src/core/def_parser.cpp, src/pnr/physical.hpp, src/pnr/physical.cpp
+   Changes (~200 new lines):
+   - UNITS DISTANCE MICRONS parsing (proper DBU conversion)
+   - TRACKS section → TrackDef structs (direction, start, count, step, layers)
+   - VIAS section → ViaDef structs (multi-layer via definitions)
+   - PINS section → IoPin structs (name, direction, net, layer, position)
+   - BLOCKAGES section → RoutingBlockage structs (ROUTING/PLACEMENT types)
+   - SPECIALNETS section → SpecialNet structs (VDD/VSS with wire geometry)
+   - REGIONS section → Region structs (FENCE/GUIDE with rects)
+   - GROUPS section → Group structs (member cells + region binding)
+   - Cell name map: O(1) lookup via cell_name_map (was O(n) per net)
+   - Orientation mapping: DEF string (N/S/W/E/FN/FS/FW/FE) → int
+   - New structs in physical.hpp: RoutingBlockage, TrackDef, IoPin, ViaDef,
+     SpecialNet, Region, Group
+
+4. HIERARCHICAL DESIGN SUPPORT [t0-hier] ✓
+   Files: src/core/hierarchy.hpp, src/core/hierarchy.cpp
+   Changes (~200 new lines in .cpp, ~100 new lines in .hpp):
+   - ModuleInstance struct: instance_name, module_name, params, port_map,
+     placement_rect, is_flattened
+   - ModulePort struct: name, direction (IN/OUT/INOUT), width, net_id
+   - HierTimingArc struct: from_port, to_port, delay_ps, slew_ps
+   - BlockModel struct: ports, timing_arcs, area, power (static + dynamic)
+   - ParamValue struct: variant-like (int/double/string) for parameters
+   - FlattenOptions: FLATTEN_ALL / DEPTH_LIMITED / SELECTIVE policies
+   - instantiate() now creates proper ModuleInstance entries (backward compat)
+   - instantiate_with_params() — parameterized instantiation with default merging
+   - connect_port() — wire instance ports to parent nets
+   - add_timing_arc() / set_block_power() — block abstraction
+   - generate_block_model() — extract/generate timing model
+   - instance_count() / get_instances_of() — instance queries
+   - flatten(top, opts) — selective flattening with preserve/depth policies
+   - Backward compatible: test_phase10 passes unchanged
+
+TESTING:
+  New: tests/test_phase45.cpp — 35 tests
+    Liberty Parser (14): cell parsing, pins, lu_table_template, NLDM tables,
+      bilinear interpolation (corner/midpoint/clamp), internal_power,
+      leakage_power, cells_by_function
+    DEF Parser (11): die area, components, cell_name_map, nets, PINS,
+      BLOCKAGES, TRACKS, VIAS, SPECIALNETS, REGIONS, GROUPS
+    Hierarchy (10): instance tree, instance_count, ports, block model,
+      parameterized instantiation, port connections, analyze, selective
+      flatten, preserve modules, tree visualization
+  
+  Added to tests/CMakeLists.txt: test_phase45 target
+  CTest: 45/45 PASS (phases 1-45, Phase 44 SAT ~477s)
+  ASAN: 35/35 PASS — zero memory errors (phase 45)
+  ASAN: phase 10 (hierarchy), phase 1 (core) also clean
+
+FILES MODIFIED (this session):
+  src/core/liberty_parser.hpp    — LibertyPower, LibertyLeakage, table_templates
+  src/core/liberty_parser.cpp    — ~250 lines: timing/power/template parsing
+  src/core/def_parser.cpp        — ~200 lines: 8 new DEF sections, orientation
+  src/pnr/physical.hpp           — 7 new structs, extended PhysicalDesign
+  src/pnr/physical.cpp           — cell_name_map maintenance
+  src/core/hierarchy.hpp         — ~100 lines: ModuleInstance, ModulePort, etc.
+  src/core/hierarchy.cpp         — ~200 lines: instance tree, abstraction, params
+  tests/test_phase45.cpp         — 35 tests (NEW)
+  tests/CMakeLists.txt           — phase 45 registration
+
+PENDING COMMIT (not pushed — Rule 7):
+  All changes are local. User needs to provide commit/push commands.
+================================================================================
+
+================================================================================
+SESSION 11 — TIER 1 CRITICAL GAP IMPLEMENTATION
+================================================================================
+Date: 2025-01-XX (continued from Session 10)
+Role: PhD-level semiconductor researcher (Rule 4)
+
+OBJECTIVE:
+  Implement all 5 Tier 1 (Critical/Tapeout-blocking) gaps identified in the
+  53-gap industrial parity analysis against Cadence/Synopsys/Siemens tools.
+
+RESEARCH PHASE:
+  Deep analysis of each subsystem's current code vs commercial tool capabilities.
+  Identified exact code locations, missing features, and implementation strategy
+  for each of the 5 gaps before writing any code.
+
+─── GAP 1: PARASITIC EXTRACTION (t1-parasitic) ────────────────────────────
+Problem: extract_net() used global wire_res/wire_cap for all layers, empty via
+  loop, simple R*C Elmore instead of proper RC-ladder delay.
+Solution:
+  • Per-layer R/C from TechParams.layers[] with fallback to global defaults
+  • Real via counting from pd_.vias (matching net wires by position/layer)
+  • Elmore RC-ladder: Σ R_i × C_downstream (proper distributed RC model)
+  • Layer-aware SPEF output with layer annotation per segment
+  • Added `layer` field to RCSegment, `via_count` to ParasiticNet
+Files modified:
+  src/timing/parasitics.hpp     — RCSegment.layer, ParasiticNet.via_count
+  src/timing/parasitics.cpp     — Rewrote extract_net(), via counting, Elmore
+
+─── GAP 2: SDC EXCEPTIONS (t1-sdc) ────────────────────────────────────────
+Problem: SDC parser only handled create_clock, set_false_path, set_multicycle_path,
+  set_input_delay, set_output_delay. Missing: set_max_delay, set_min_delay,
+  set_clock_groups, create_generated_clock. Multicycle used approximate
+  path.delay * 0.2 instead of actual clock period.
+Solution:
+  • Added set_max_delay, set_min_delay parsing → SdcException::MAX_DELAY/MIN_DELAY
+  • Added set_clock_groups parsing → SdcClockGroup struct (ASYNC/EXCLUSIVE/
+    PHYSICALLY_EXCLUSIVE)
+  • Added create_generated_clock parsing with -source [get_ports], -divide_by,
+    -multiply_by, -duty_cycle, -invert, -edges support
+  • Auto-compute generated clock period from source clock
+  • Fixed [get_ports xxx] expression parsing in create_clock (was consuming next
+    command as port name — bug that caused only first clock to be parsed)
+  • Fixed create_generated_clock -source to handle [get_ports xxx] expressions
+  • Added SdcException.through (string), SdcException.is_setup (bool)
+  • STA: Fixed multicycle to use last_clock_period_ instead of path.delay * 0.2
+  • STA: Added MAX_DELAY/MIN_DELAY enforcement in extract_paths()
+Files modified:
+  src/frontend/sdc_parser.hpp   — SdcClockGroup struct, SdcClock generated fields,
+                                  SdcException.through/.is_setup
+  src/frontend/sdc_parser.cpp   — ~120 new lines: set_min_delay, set_clock_groups,
+                                  create_generated_clock, fixed [get_ports] parsing
+  src/timing/sta.cpp            — Fixed multicycle, added max/min delay enforcement
+
+─── GAP 3: MULTI-CLOCK STA (t1-multi-clock) ───────────────────────────────
+Problem: run_multi_clock_sta() auto-detected clocks from netlist but ignored SDC
+  constraints. No SDC generated clock overlay, no clock groups for inter-domain
+  classification. All crossings marked async by default.
+Solution:
+  • Extended function signature: added optional SdcConstraints* parameter
+  • SDC generated clock overlay: overrides auto-detected divide ratios with SDC
+  • SDC clock groups integration: inter-domain paths classified using
+    set_clock_groups (clocks in same sub-group → synchronous, not async)
+  • STA engine receives SDC constraints via set_sdc_constraints() before analysis
+Files modified:
+  src/timing/sta.hpp            — run_multi_clock_sta() signature + SdcConstraints*
+  src/timing/sta.cpp            — SDC overlay, clock group classification
+
+─── GAP 4: IR-AWARE POWER GRID (t1-power-grid) ────────────────────────────
+Problem: PDN analyzer could compute IR drop but had no feedback loop to fix
+  hotspots by adding power stripes.
+Solution:
+  • Added IrFixConfig struct: target_drop_pct, max_iterations, stripe_width,
+    stripe_r_per_um, stripe_layer, hotspot_threshold
+  • Added IrFixResult struct: iterations, stripes_added, initial/final drop,
+    converged flag
+  • Implemented fix_ir_hotspots(): iterative analyze → identify hotspot nodes →
+    add PdnStripes at hotspot coordinates → re-analyze loop
+  • Alternates horizontal/vertical stripes across iterations
+  • Quantized hotspot coordinates to avoid duplicate stripe placement
+Files modified:
+  src/timing/pdn.hpp            — IrFixConfig, IrFixResult, fix_ir_hotspots()
+  src/timing/pdn.cpp            — ~70 new lines: fix_ir_hotspots() implementation
+
+─── GAP 5: SI-AWARE METAL FILL (t1-metal-fill) ────────────────────────────
+Problem: MetalFillEngine only did simple grid-based solid fill with no awareness
+  of timing-critical nets, no fill patterns, no cross-layer coupling avoidance.
+Solution:
+  • FillPattern enum: SOLID, CHECKERBOARD, STAGGERED, SLOTTED
+  • SI-aware critical net avoidance: enlarged keepout zone near critical nets
+  • Cross-layer awareness: skip fills that couple to adjacent layer wires
+  • Checkerboard: alternating grid (better CMP uniformity)
+  • Staggered: offset rows by half-step (Calibre-style)
+  • Slotted: two narrow rectangles per position with gap (reduces coupling)
+  • MetalFillResult tracks fills_skipped_critical, fills_skipped_cross_layer
+Files modified:
+  src/pnr/metal_fill.hpp        — FillPattern, SI/cross-layer config, critical nets
+  src/pnr/metal_fill.cpp        — ~100 new lines: patterns, SI/cross-layer avoidance
+
+─── TESTING ────────────────────────────────────────────────────────────────
+test_phase46.cpp — 25 tests covering all 5 Tier 1 features:
+  Parasitic (4), SDC (5), Multi-Clock (3), PDN IR (4), Metal Fill (9)
+Results:
+  Normal build:  45/45 PASS (excluding Phase44 SAT)
+  ASAN build:    45/45 PASS — zero memory errors
+
+─── BUG FIXES DISCOVERED ──────────────────────────────────────────────────
+1. SDC [get_ports] parsing: create_clock consumed next command as port name.
+   Fixed by extracting port from expression + command keyword detection.
+2. create_generated_clock -source [get_ports]: set source to literal "[".
+   Fixed by handling expression inside -source flag.
+
+─── FILES MODIFIED (TIER 1) ───────────────────────────────────────────────
+src/timing/parasitics.hpp/.cpp  — per-layer RC, via counting, Elmore RC-ladder
+src/frontend/sdc_parser.hpp/.cpp — clock groups, generated clocks, max/min delay
+src/timing/sta.hpp/.cpp         — multicycle fix, max/min delay, SDC multi-clock
+src/timing/pdn.hpp/.cpp         — IR-aware stripe insertion
+src/pnr/metal_fill.hpp/.cpp    — pattern fills, SI/cross-layer avoidance
+tests/test_phase46.cpp          — NEW: 25 Tier 1 tests
+tests/CMakeLists.txt            — phase 46 registration
+
+CUMULATIVE STATUS:
+  Tier 0: 4/4 CLOSED ✓  |  Tier 1: 5/5 CLOSED ✓
+  Tier 2-4: Not started
+  Test phases: 46 (1-43 + 44 SAT + 45 Tier0 + 46 Tier1)
+  Total LOC added: ~800+ (Tier 0 + Tier 1 combined)
+
+PENDING COMMIT (not pushed — Rule 7):
+  All Tier 0 + Tier 1 changes are local.
+================================================================================

@@ -441,6 +441,7 @@ MultiClockStaResult run_multi_clock_sta(
     const LibertyLibrary* lib,
     const PhysicalDesign* pd,
     double clock_period,
-    int num_paths = 5);
+    int num_paths = 5,
+    const SdcConstraints* sdc = nullptr);
 
 } // namespace sf
