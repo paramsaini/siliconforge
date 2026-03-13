@@ -85,6 +85,12 @@ private:
             CASE_EQ, CASE_NEQ,   // === !==
             PLUS_COLON, MINUS_COLON, // +: -:
             AUTOMATIC_KW,        // automatic
+            // SystemVerilog IEEE 1800 — Phase 1 keywords
+            ALWAYS_FF_KW,        // always_ff
+            ALWAYS_COMB_KW,      // always_comb
+            ALWAYS_LATCH_KW,     // always_latch
+            UNIQUE_KW,           // unique (case/if synthesis directive)
+            PRIORITY_KW,         // priority (case/if synthesis directive)
             END
         };
         Type type;
@@ -108,6 +114,7 @@ private:
 
     // Behavioral block parsers
     size_t parse_always(const std::vector<Token>& t, size_t pos, std::shared_ptr<AstNode> parent);
+    size_t parse_always_sv(const std::vector<Token>& t, size_t pos, std::shared_ptr<AstNode> parent);
     size_t parse_statement_block(const std::vector<Token>& t, size_t pos, std::shared_ptr<AstNode> block);
     size_t parse_statement(const std::vector<Token>& t, size_t pos, std::shared_ptr<AstNode> parent);
     size_t parse_case(const std::vector<Token>& t, size_t pos, std::shared_ptr<AstNode> parent);

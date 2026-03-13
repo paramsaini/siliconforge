@@ -11,6 +11,21 @@
 
 namespace sf {
 
+// SystemVerilog: check if identifier is a net/variable type keyword
+static bool is_sv_net_type(const std::string& v) {
+    return v == "wire" || v == "reg" || v == "logic" || v == "bit" ||
+           v == "byte" || v == "shortint" || v == "int" || v == "longint";
+}
+
+// SystemVerilog: get implicit bus width for integer types (0 = use explicit range)
+static int sv_type_width(const std::string& v) {
+    if (v == "byte")     return 8;
+    if (v == "shortint") return 16;
+    if (v == "int")      return 32;
+    if (v == "longint")  return 64;
+    return 0; // wire, reg, logic, bit — use explicit range
+}
+
 // Forward declarations
 static uint64_t parse_verilog_number(const std::string& s);
 
@@ -292,6 +307,12 @@ std::vector<VerilogParser::Token> VerilogParser::tokenize(const std::string& src
             else if (ident == "disable") tokens.push_back({Token::DISABLE_KW, ident, line});
             else if (ident == "defparam") tokens.push_back({Token::DEFPARAM_KW, ident, line});
             else if (ident == "automatic") tokens.push_back({Token::AUTOMATIC_KW, ident, line});
+            // SystemVerilog IEEE 1800 — always_ff, always_comb, always_latch
+            else if (ident == "always_ff") tokens.push_back({Token::ALWAYS_FF_KW, ident, line});
+            else if (ident == "always_comb") tokens.push_back({Token::ALWAYS_COMB_KW, ident, line});
+            else if (ident == "always_latch") tokens.push_back({Token::ALWAYS_LATCH_KW, ident, line});
+            else if (ident == "unique") tokens.push_back({Token::UNIQUE_KW, ident, line});
+            else if (ident == "priority") tokens.push_back({Token::PRIORITY_KW, ident, line});
             else tokens.push_back({Token::IDENT, ident, line});
         }
         else i++;
@@ -1198,12 +1219,16 @@ size_t VerilogParser::parse_module(const std::vector<Token>& t, size_t pos, Netl
         while (pos < t.size() && t[pos].type != Token::RPAREN) {
             if (t[pos].type == Token::IDENT && (t[pos].value == "input" || t[pos].value == "output" || t[pos].value == "inout")) {
                 current_dir = t[pos].value; pos++;
+                int sv_tw = 0;
                 if (pos < t.size() && t[pos].type == Token::IDENT &&
-                    (t[pos].value == "wire" || t[pos].value == "reg" || t[pos].value == "logic")) {
+                    is_sv_net_type(t[pos].value)) {
+                    sv_tw = sv_type_width(t[pos].value);
                     pos++;
                 }
                 if (pos < t.size() && t[pos].type == Token::SIGNED_KW) pos++;
                 auto range = parse_bus_range(t, pos);
+                if (range.first < 0 && sv_tw > 0)
+                    range = {sv_tw - 1, 0};
                 while (pos < t.size() && t[pos].type == Token::IDENT) {
                     std::string name = t[pos].value;
                     if (range.first >= 0 && range.first != range.second) {
@@ -1220,7 +1245,7 @@ size_t VerilogParser::parse_module(const std::vector<Token>& t, size_t pos, Netl
                     pos++;
                     if (pos < t.size() && t[pos].type == Token::COMMA) { pos++; break; }
                 }
-            } else if (t[pos].type == Token::IDENT && (t[pos].value == "wire" || t[pos].value == "reg" || t[pos].value == "logic")) {
+            } else if (t[pos].type == Token::IDENT && is_sv_net_type(t[pos].value)) {
                 pos++;
             } else if (t[pos].type == Token::SIGNED_KW) {
                 pos++;
@@ -1245,6 +1270,9 @@ size_t VerilogParser::parse_module(const std::vector<Token>& t, size_t pos, Netl
     while (pos < t.size() && !(t[pos].type == Token::IDENT && t[pos].value == "endmodule")) {
         // Skip non-keyword tokens
         if (t[pos].type != Token::IDENT && t[pos].type != Token::ALWAYS &&
+            t[pos].type != Token::ALWAYS_FF_KW && t[pos].type != Token::ALWAYS_COMB_KW &&
+            t[pos].type != Token::ALWAYS_LATCH_KW && t[pos].type != Token::UNIQUE_KW &&
+            t[pos].type != Token::PRIORITY_KW &&
             t[pos].type != Token::PARAMETER_KW && t[pos].type != Token::INTEGER_KW &&
             t[pos].type != Token::GENERATE_KW && t[pos].type != Token::GENVAR_KW &&
             t[pos].type != Token::FUNCTION_KW && t[pos].type != Token::TASK_KW &&
@@ -1327,6 +1355,70 @@ size_t VerilogParser::parse_module(const std::vector<Token>& t, size_t pos, Netl
         else if (kw == "notif0") pos = parse_gate_inst(t, pos, nl, r, GateType::NOTIF0);
         else if (kw == "notif1") pos = parse_gate_inst(t, pos, nl, r, GateType::NOTIF1);
         else if (kw == "always") pos = parse_always(t, pos, ast.root);
+        // SystemVerilog always_ff/always_comb/always_latch
+        else if (t[pos].type == Token::ALWAYS_FF_KW ||
+                 t[pos].type == Token::ALWAYS_COMB_KW ||
+                 t[pos].type == Token::ALWAYS_LATCH_KW) {
+            pos = parse_always_sv(t, pos, ast.root);
+        }
+        // SystemVerilog: unique/priority before case/if — skip qualifier, parse normally
+        else if (t[pos].type == Token::UNIQUE_KW || t[pos].type == Token::PRIORITY_KW) {
+            pos++; // skip unique/priority — treated as synthesis hint, parse next token
+        }
+        // SystemVerilog: logic/bit — treat like reg (support memory arrays)
+        else if (kw == "logic" || kw == "bit") {
+            size_t saved_pos = pos;
+            int tw = sv_type_width(kw);
+            pos++; // skip type keyword
+            if (pos < t.size() && t[pos].type == Token::SIGNED_KW) {
+                signed_signals_.insert("__next_reg__"); pos++;
+            }
+            std::pair<int,int> word_range = {-1, -1};
+            if (pos < t.size() && t[pos].type == Token::LBRACKET) {
+                word_range = parse_bus_range(t, pos);
+            } else if (tw > 0) {
+                word_range = {tw - 1, 0};
+            }
+            if (pos < t.size() && t[pos].type == Token::IDENT) {
+                std::string var_name = t[pos].value;
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::LBRACKET) {
+                    auto mem_range = parse_bus_range(t, pos);
+                    if (mem_range.first >= 0) {
+                        int word_w = (word_range.first >= 0) ?
+                            std::abs(word_range.first - word_range.second) + 1 : 1;
+                        int depth = std::abs(mem_range.first - mem_range.second) + 1;
+                        memory_arrays_[var_name] = {word_w, depth};
+                        if (word_range.first >= 0) bus_ranges_[var_name] = word_range;
+                        if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+                        continue;
+                    }
+                }
+                pos = saved_pos;
+            } else {
+                pos = saved_pos;
+            }
+            pos = parse_port_decl(t, pos, nl, r, "wire");
+        }
+        // SystemVerilog: byte/shortint/int/longint — fixed-width types
+        else if (kw == "byte" || kw == "shortint" || kw == "longint") {
+            int tw = sv_type_width(kw);
+            pos++; // skip type
+            if (pos < t.size() && t[pos].type == Token::SIGNED_KW) pos++;
+            while (pos < t.size() && t[pos].type == Token::IDENT) {
+                std::string name = t[pos].value;
+                if (tw > 1) {
+                    get_or_create_bus(nl, name, tw - 1, 0);
+                    bus_ranges_[name] = {tw - 1, 0};
+                } else {
+                    get_or_create_net(nl, name);
+                }
+                r.num_wires++;
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::COMMA) pos++;
+            }
+            if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+        }
         else if (t[pos].type == Token::PARAMETER_KW) pos = parse_parameter(t, pos);
         else if (t[pos].type == Token::INTEGER_KW) {
             pos++;
@@ -1845,6 +1937,55 @@ size_t VerilogParser::parse_always(const std::vector<Token>& t, size_t pos, std:
     return pos;
 }
 
+// ── SystemVerilog: always_ff, always_comb, always_latch ──────────────
+size_t VerilogParser::parse_always_sv(const std::vector<Token>& t, size_t pos, std::shared_ptr<AstNode> parent) {
+    auto always = std::make_shared<AstNode>();
+    Token::Type kw_type = t[pos].type;
+    pos++; // skip always_ff / always_comb / always_latch
+
+    if (kw_type == Token::ALWAYS_COMB_KW) {
+        // always_comb — no sensitivity list, purely combinational
+        always->type = AstNodeType::ALWAYS_COMB;
+        always->value = "*";
+    } else if (kw_type == Token::ALWAYS_LATCH_KW) {
+        // always_latch — infers latches, treat as combinational for AST
+        always->type = AstNodeType::ALWAYS_COMB;
+        always->value = "*_latch";
+    } else {
+        // always_ff — must have @(posedge clk) or @(negedge clk)
+        always->type = AstNodeType::ALWAYS_POS_CLK; // default
+        if (pos < t.size() && t[pos].type == Token::AT) pos++;
+        if (pos < t.size() && t[pos].type == Token::LPAREN) {
+            pos++;
+            if (pos < t.size() && t[pos].type == Token::POSEDGE) {
+                always->type = AstNodeType::ALWAYS_POS_CLK;
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::IDENT) {
+                    always->value = t[pos].value; pos++;
+                }
+            } else if (pos < t.size() && t[pos].type == Token::NEGEDGE) {
+                always->type = AstNodeType::ALWAYS_NEG_CLK;
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::IDENT) {
+                    always->value = t[pos].value; pos++;
+                }
+            }
+            // Skip rest of sensitivity list (e.g., "or negedge rst")
+            while (pos < t.size() && t[pos].type != Token::RPAREN) pos++;
+            if (pos < t.size() && t[pos].type == Token::RPAREN) pos++;
+        }
+    }
+
+    // Parse the body
+    if (pos < t.size()) {
+        pos = parse_statement(t, pos, always);
+    }
+
+    parent->add(always);
+    has_behavioral_blocks = true;
+    return pos;
+}
+
 size_t VerilogParser::parse_statement_block(const std::vector<Token>& t, size_t pos, std::shared_ptr<AstNode> parent) {
     auto block = std::make_shared<AstNode>();
     block->type = AstNodeType::BLOCK_BEGIN_END;
@@ -1858,8 +1999,8 @@ size_t VerilogParser::parse_statement_block(const std::vector<Token>& t, size_t 
 
     while (pos < t.size() && t[pos].type != Token::END_KW) {
         // Parse local reg/wire declarations with bus range support
-        if (t[pos].type == Token::IDENT && (t[pos].value == "reg" || t[pos].value == "wire")) {
-            pos++; // skip reg/wire
+        if (t[pos].type == Token::IDENT && (t[pos].value == "reg" || t[pos].value == "wire" ||
+                                              t[pos].value == "logic" || t[pos].value == "bit")) {            pos++; // skip reg/wire
             if (pos < t.size() && t[pos].type == Token::SIGNED_KW) pos++;
             auto range = parse_bus_range(t, pos);
             while (pos < t.size() && t[pos].type != Token::SEMI) {
@@ -1887,6 +2028,11 @@ size_t VerilogParser::parse_statement_block(const std::vector<Token>& t, size_t 
 
 size_t VerilogParser::parse_statement(const std::vector<Token>& t, size_t pos, std::shared_ptr<AstNode> parent) {
     if (pos >= t.size()) return pos;
+
+    // SystemVerilog: unique/priority qualifier before if/case — skip, parse next
+    if (t[pos].type == Token::UNIQUE_KW || t[pos].type == Token::PRIORITY_KW) {
+        pos++; // skip qualifier — synthesis treats as full_case/parallel_case hint
+    }
 
     if (t[pos].type == Token::IF) {
         auto if_node = AstNode::make(AstNodeType::IF_ELSE);
@@ -2377,6 +2523,7 @@ size_t VerilogParser::parse_generate_for(const std::vector<Token>& t, size_t pos
                 const std::string& gkw = t[bp].value;
                 if (gkw == "assign") { bp = parse_assign(t, bp, nl, r); }
                 else if (gkw == "wire" || gkw == "reg" ||
+                         gkw == "logic" || gkw == "bit" ||
                          gkw == "tri" || gkw == "wand" || gkw == "wor" ||
                          gkw == "tri0" || gkw == "tri1" ||
                          gkw == "supply0" || gkw == "supply1") { bp = parse_port_decl(t, bp, nl, r, "wire"); }
@@ -2388,6 +2535,10 @@ size_t VerilogParser::parse_generate_for(const std::vector<Token>& t, size_t pos
                 else { bp++; }
             } else if (t[bp].type == Token::ALWAYS) {
                 bp = parse_always(t, bp, ast.root);
+            } else if (t[bp].type == Token::ALWAYS_FF_KW ||
+                       t[bp].type == Token::ALWAYS_COMB_KW ||
+                       t[bp].type == Token::ALWAYS_LATCH_KW) {
+                bp = parse_always_sv(t, bp, ast.root);
             } else { bp++; }
         }
     }
@@ -2445,6 +2596,8 @@ size_t VerilogParser::parse_generate_if(const std::vector<Token>& t, size_t pos,
         while (bp < true_end) {
             if (t[bp].type == Token::IDENT && t[bp].value == "assign") bp = parse_assign(t, bp, nl, r);
             else if (t[bp].type == Token::ALWAYS) bp = parse_always(t, bp, ast.root);
+            else if (t[bp].type == Token::ALWAYS_FF_KW || t[bp].type == Token::ALWAYS_COMB_KW ||
+                     t[bp].type == Token::ALWAYS_LATCH_KW) bp = parse_always_sv(t, bp, ast.root);
             else bp++;
         }
     } else if (false_end > false_start) {
@@ -2452,6 +2605,8 @@ size_t VerilogParser::parse_generate_if(const std::vector<Token>& t, size_t pos,
         while (bp < false_end) {
             if (t[bp].type == Token::IDENT && t[bp].value == "assign") bp = parse_assign(t, bp, nl, r);
             else if (t[bp].type == Token::ALWAYS) bp = parse_always(t, bp, ast.root);
+            else if (t[bp].type == Token::ALWAYS_FF_KW || t[bp].type == Token::ALWAYS_COMB_KW ||
+                     t[bp].type == Token::ALWAYS_LATCH_KW) bp = parse_always_sv(t, bp, ast.root);
             else bp++;
         }
     }
@@ -2497,8 +2652,7 @@ size_t VerilogParser::parse_function_def(const std::vector<Token>& t, size_t pos
                 pos++;
             }
             if (pos < t.size()) pos++;
-        } else if (t[pos].type == Token::IDENT && (t[pos].value == "reg" || t[pos].value == "wire")) {
-            while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+        } else if (t[pos].type == Token::IDENT && is_sv_net_type(t[pos].value)) {            while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
             if (pos < t.size()) pos++;
         } else if (t[pos].type == Token::BEGIN_KW) {
             // Capture body tokens: find matching end, store assign expression
@@ -2578,7 +2732,7 @@ size_t VerilogParser::parse_task_def(const std::vector<Token>& t, size_t pos) {
             }
             if (pos < t.size()) pos++;
         } else if (!in_body && t[pos].type == Token::IDENT &&
-                   (t[pos].value == "reg" || t[pos].value == "wire" || t[pos].value == "integer")) {
+                   (is_sv_net_type(t[pos].value) || t[pos].value == "integer")) {
             while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
             if (pos < t.size()) pos++;
         } else {
@@ -2660,6 +2814,9 @@ size_t VerilogParser::parse_generate_case(const std::vector<Token>& t, size_t po
                         bp = parse_assign(t, bp, nl, r);
                     else if (t[bp].type == Token::ALWAYS)
                         bp = parse_always(t, bp, ast.root);
+                    else if (t[bp].type == Token::ALWAYS_FF_KW || t[bp].type == Token::ALWAYS_COMB_KW ||
+                             t[bp].type == Token::ALWAYS_LATCH_KW)
+                        bp = parse_always_sv(t, bp, ast.root);
                     else bp++;
                 }
             }
@@ -2673,6 +2830,9 @@ size_t VerilogParser::parse_generate_case(const std::vector<Token>& t, size_t po
                 bp = parse_assign(t, bp, nl, r);
             else if (t[bp].type == Token::ALWAYS)
                 bp = parse_always(t, bp, ast.root);
+            else if (t[bp].type == Token::ALWAYS_FF_KW || t[bp].type == Token::ALWAYS_COMB_KW ||
+                     t[bp].type == Token::ALWAYS_LATCH_KW)
+                bp = parse_always_sv(t, bp, ast.root);
             else bp++;
         }
     }

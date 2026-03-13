@@ -1781,4 +1781,109 @@ TIER STATUS:
 
 PENDING COMMIT (not pushed — Rule 7):
   All Tier 0 + Tier 1 + Tier 2 + Tier 3 changes are local.
+
+================================================================================
+SESSION 14 — SystemVerilog Phase 1: Core Keywords (IEEE 1800)
+================================================================================
+
+OBJECTIVE: Add SystemVerilog core keyword support to the Verilog parser for
+  always_ff, always_comb, always_latch, logic/bit/byte/shortint/int/longint
+  types, and unique/priority case/if qualifiers.
+
+RESEARCH PHASE:
+  - Deep-read verilog_parser.hpp (195 lines) and verilog_parser.cpp (3432→3600+ lines)
+  - Mapped all dispatch points: tokenizer, ANSI ports, module body, generate blocks,
+    function/task defs, statement parsing
+  - Identified 7 locations needing SV always dispatch (2 in generate-if, 2 in
+    generate-case, 1 in generate-for, plus module body and parse_statement)
+
+IMPLEMENTATION:
+
+1. Token Types (verilog_parser.hpp lines 88-93):
+   - ALWAYS_FF_KW, ALWAYS_COMB_KW, ALWAYS_LATCH_KW, UNIQUE_KW, PRIORITY_KW
+
+2. Tokenizer (verilog_parser.cpp ~line 295-300):
+   - String-match keywords: always_ff, always_comb, always_latch, unique, priority
+
+3. Static Helpers (verilog_parser.cpp lines 15-28):
+   - is_sv_net_type(): checks wire/reg/logic/bit/byte/shortint/int/longint
+   - sv_type_width(): returns implicit width (byte=8, shortint=16, int=32, longint=64)
+
+4. ANSI Port Parsing (~line 1222-1249):
+   - All SV types recognized via is_sv_net_type() with implicit width from sv_type_width()
+
+5. Module Body Dispatch (~line 1357-1413):
+   - always_ff/comb/latch → parse_always_sv()
+   - unique/priority → skip qualifier token, continue dispatch
+   - logic/bit declarations with [range] and memory array [0:N] support
+   - byte/shortint/int/longint declarations with implicit widths
+
+6. parse_always_sv() (~line 1941-1987):
+   - always_ff @(posedge clk) → ALWAYS_POS_CLK AST node
+   - always_ff @(negedge clk) → ALWAYS_NEG_CLK AST node
+   - always_comb → ALWAYS_COMB with value "*"
+   - always_latch → ALWAYS_COMB with value "*_latch"
+   - Handles sensitivity list with "or negedge rst" etc.
+
+7. Statement Parsing (~line 2033):
+   - unique/priority qualifiers skipped before if/case dispatch
+
+8. Block-Local Declarations (~line 2002):
+   - logic/bit recognized as block-local variable types
+
+9. Generate Blocks (7 dispatch points updated):
+   - generate-for, generate-if (true+false), generate-case (match+default)
+   - All now handle ALWAYS_FF_KW/ALWAYS_COMB_KW/ALWAYS_LATCH_KW
+
+10. Function/Task Defs (~line 2655, 2735):
+    - is_sv_net_type() used for return type and parameter type checking
+
+BUILD & TEST:
+  Release build: ✅ Clean (0 errors, 0 warnings)
+  Phase 49 tests: ✅ 25/25 PASS
+  Full regression: ✅ 48/48 PASS (0.87s)
+  ASAN build+test: ✅ 48/48 PASS, zero memory errors (338.92s)
+
+TEST COVERAGE (test_phase49.cpp — 25 tests):
+  Tests 1-3:   always_ff (posedge, negedge, async reset)
+  Tests 4-5:   always_comb (single statement, begin-end block with case)
+  Test 6:      always_latch
+  Tests 7-8:   logic type (scalar, bus)
+  Tests 9-10:  bit type (scalar, bus)
+  Tests 11-14: byte/shortint/int/longint ports (implicit widths verified)
+  Tests 15-16: logic wire/bus declarations in module body
+  Tests 17-18: unique case / priority case
+  Tests 19-20: unique if / priority if
+  Test 21:     Mixed SV + Verilog-2001 in same module
+  Test 22:     always_ff multi-assignment
+  Test 23:     byte/shortint/longint body declarations
+  Test 24:     logic memory array with always_ff
+  Test 25:     All 6 SV types as ports (122 input bits verified)
+
+FILES MODIFIED:
+  src/frontend/verilog_parser.hpp — 5 token types + parse_always_sv() declaration
+  src/frontend/verilog_parser.cpp — ~170 lines added (helpers, tokenizer, dispatch, parser)
+
+FILES CREATED:
+  tests/test_phase49.cpp — 25 SV Phase 1 tests (~420 lines)
+  tests/CMakeLists.txt — registered test_phase49
+
+DESIGN DECISIONS:
+  - bit treated as logic (2-state vs 4-state distinction irrelevant for synthesis)
+  - always_latch maps to ALWAYS_COMB with "*_latch" value (behavioral synth can
+    distinguish via value string for latch inference)
+  - unique/priority are synthesis hints only — skipped as qualifiers, no AST impact
+  - int (SV 32-bit) handled separately from integer (Verilog-2001 32-bit) to
+    maintain backward compatibility
+
+CUMULATIVE STATUS:
+  ✅ Tier 0: 4/4 gaps complete
+  ✅ Tier 1: 5/5 gaps complete
+  ✅ Tier 2: 7/7 gaps complete
+  ✅ Tier 3: 11/11 gaps complete
+  ✅ SV Phase 1: Core keywords complete (always_ff/comb/latch, 6 types, unique/priority)
+  Total test phases: 49 (48 active + Phase44 SAT excluded from quick regression)
+
+PENDING COMMIT (not pushed — Rule 7):
+  All Tier 0-3 + SV Phase 1 changes are local.
 ================================================================================
