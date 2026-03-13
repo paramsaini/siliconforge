@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <set>
 
 namespace sf {
@@ -31,6 +32,21 @@ public:
     VerilogParseResult parse_string(const std::string& src, Netlist& nl);
     VerilogParseResult parse_file(const std::string& filename, Netlist& nl);
     static std::string to_verilog(const Netlist& nl, const std::string& module_name = "top");
+
+    // Tier 3: Enhanced post-synthesis Verilog writer
+    struct VerilogWriterConfig {
+        bool emit_hierarchy = false;
+        bool emit_attributes = true;       // (* dont_touch *), (* keep *)
+        bool emit_drive_strength = true;    // cell drive info in comments
+        bool emit_bus_notation = true;      // wire [7:0] bus vs scalar wires
+        bool emit_power_pins = false;       // VDD/VSS pin connections
+        std::string default_lib = "std_cell_lib";
+        std::unordered_set<std::string> dont_touch_nets;
+        std::unordered_set<std::string> dont_touch_cells;
+    };
+    static std::string to_verilog_enhanced(const Netlist& nl,
+                                           const std::string& module_name,
+                                           const VerilogWriterConfig& cfg);
 
 private:
     struct Token {

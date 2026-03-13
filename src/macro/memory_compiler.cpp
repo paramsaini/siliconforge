@@ -859,4 +859,59 @@ MemoryResult MemoryCompiler::run_enhanced(const MemoryConfig& cfg) {
     return r;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Tier 3: Sense Amplifier Design
+// ═══════════════════════════════════════════════════════════════════════════
+
+MemoryCompiler::SenseAmpResult MemoryCompiler::design_sense_amps(
+    const MemoryConfig& cfg, const SenseAmpConfig& sa_cfg) {
+    SenseAmpResult res;
+
+    int total_cols = cfg.bits * (cfg.column_mux > 0 ? cfg.column_mux : 1);
+    res.total_sense_amps = total_cols / std::max(1, sa_cfg.column_mux_ratio);
+    if (res.total_sense_amps <= 0) res.total_sense_amps = cfg.bits;
+
+    // Bitline discharge model: ΔV = (Vdd * C_cell) / (C_cell + C_BL)
+    // C_BL proportional to column height (number of rows)
+    double c_cell = 25e-15;   // 25fF typical 6T SRAM cell capacitance
+    double c_bl_per_row = 0.5e-15; // 0.5fF per bitcell per BL
+    double c_bl = c_bl_per_row * cfg.words / std::max(1, cfg.num_banks);
+    double vdd = cfg.vdd;
+    double delta_v = vdd * c_cell / (c_cell + c_bl);
+    res.sensing_margin_mv = delta_v * 1000.0; // convert to mV
+
+    // SA offset voltage (3σ from Vth mismatch)
+    // For cross-coupled SA: offset ∝ ΔVth / sqrt(W*L)
+    // Using Pelgrom's law: σ(ΔVth) = Avt / sqrt(W*L)
+    double sa_wl_product = 0.1; // um² (0.5um × 0.2um typical)
+    double avt = sa_cfg.vth_mismatch_sigma * std::sqrt(sa_wl_product);
+    res.offset_3sigma_mv = 3.0 * avt * 1000.0;
+
+    // If offset cancellation enabled, reduce offset by ~10×
+    if (sa_cfg.enable_offset_cancellation)
+        res.offset_3sigma_mv /= 10.0;
+
+    // Sensing window: time for BL to develop enough differential
+    // t_sense = C_BL * ΔV_required / I_cell
+    double i_cell = 50e-6; // 50μA typical read current
+    double dv_required = (res.offset_3sigma_mv + sa_cfg.min_differential_mv) / 1000.0;
+    res.read_bitline_delay_ps = (c_bl * dv_required / i_cell) * 1e12;
+
+    // Minimum sensing window
+    res.min_sensing_window_ps = sa_cfg.precharge_time_ps + res.read_bitline_delay_ps +
+                                 sa_cfg.sense_time_ps;
+
+    // Power: per-SA dynamic power × number of SAs
+    res.sa_total_power_uw = sa_cfg.sa_power_uw * res.total_sense_amps;
+
+    // Margin check
+    res.margin_adequate = (res.sensing_margin_mv > res.offset_3sigma_mv + sa_cfg.min_differential_mv);
+
+    res.message = std::to_string(res.total_sense_amps) + " SAs, margin=" +
+                  std::to_string(res.sensing_margin_mv) + "mV, offset_3σ=" +
+                  std::to_string(res.offset_3sigma_mv) + "mV, " +
+                  (res.margin_adequate ? "PASS" : "FAIL");
+    return res;
+}
+
 } // namespace sf

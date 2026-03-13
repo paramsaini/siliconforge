@@ -4,6 +4,7 @@
 // remap connections, and track changes for sign-off.
 
 #include "core/netlist.hpp"
+#include "pnr/physical.hpp"
 #include <string>
 #include <vector>
 #include <functional>
@@ -129,8 +130,57 @@ public:
     // Enhanced ECO: run functional patch + metal-only + verify + place
     FullEcoResult run_enhanced();
 
+    // ── Tier 3: Enhanced Metal-Only ECO ─────────────────────────────────
+    struct SpareCellLibrary {
+        struct SpareDef {
+            std::string type;              // "NAND2", "NOR2", "INV", "BUF", "MUX2", "XOR2"
+            int num_inputs = 2;
+            double area = 1.0;
+            double max_drive_strength = 1.0;
+            std::vector<std::string> can_implement;  // gate types this spare can replace
+        };
+        std::vector<SpareDef> definitions;
+        void add_spare_type(const std::string& type, int inputs, double area,
+                           const std::vector<std::string>& implements);
+    };
+
+    struct SpareCellInventory {
+        struct SpareInstance {
+            std::string type;
+            int cell_id = -1;
+            Point location;
+            bool used = false;
+            int eco_revision = -1;         // which ECO revision consumed it
+        };
+        std::vector<SpareInstance> instances;
+        int available(const std::string& type) const;
+        int total_available() const;
+        SpareInstance* find_nearest(const std::string& type, const Point& target);
+    };
+
+    struct EnhancedEcoResult {
+        int spare_cells_used = 0;
+        int spare_cells_remaining = 0;
+        bool success = false;
+        bool drc_clean = false;
+        double timing_impact_ns = 0;
+        double max_wire_length = 0;
+        int eco_revision = 0;
+        std::string message;
+    };
+
+    void set_spare_library(const SpareCellLibrary& lib) { spare_lib_ = lib; }
+    void set_spare_inventory(const SpareCellInventory& inv) { spare_inv_ = inv; }
+    EnhancedEcoResult eco_metal_only_enhanced(
+        const std::vector<std::pair<int,int>>& changes,
+        double max_wire_length = 100.0);
+    bool eco_drc_check() const;
+
 private:
     Netlist& nl_;
+    SpareCellLibrary spare_lib_;
+    SpareCellInventory spare_inv_;
+    int eco_revision_ = 0;
 
     FullEcoResult run_functional_eco(const EcoConfig& cfg);
     FullEcoResult run_metal_only_eco(const EcoConfig& cfg);

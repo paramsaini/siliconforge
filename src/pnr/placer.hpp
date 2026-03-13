@@ -223,6 +223,56 @@ public:
 
     PlaceResult place();
 
+    // ── Tier 3: Multi-Vdd Power Domain Placement ────────────────────────
+    struct VoltageDomain {
+        std::string name;
+        double voltage = 1.0;
+        Rect region;                        // placement fence for this domain
+        std::vector<int> cell_ids;          // cells assigned to this domain
+        std::string power_net = "VDD";
+        std::string ground_net = "VSS";
+    };
+
+    struct LevelShifterCell {
+        int from_domain = -1;
+        int to_domain = -1;
+        int cell_id = -1;                   // placed cell id in pd_
+        NetId net_id = -1;                  // net crossing domain boundary
+        std::string cell_type = "LS_HL";    // LS_HL or LS_LH
+    };
+
+    struct IsolationCell {
+        int domain_id = -1;
+        int cell_id = -1;
+        NetId net_id = -1;
+        std::string clamp_type = "CLAMP_0"; // CLAMP_0, CLAMP_1, LATCH
+        std::string control_signal;
+    };
+
+    struct PowerSwitchCell {
+        int domain_id = -1;
+        int cell_id = -1;
+        Point position;
+        double switch_resistance = 0.1;     // ohm
+        std::string enable_signal;
+    };
+
+    struct DomainPlaceResult {
+        int domains_placed = 0;
+        int level_shifters_inserted = 0;
+        int isolation_cells_inserted = 0;
+        int power_switches_inserted = 0;
+        int cross_domain_nets = 0;
+        std::string message;
+    };
+
+    void add_voltage_domain(const VoltageDomain& vd) { voltage_domains_.push_back(vd); }
+    void assign_cell_to_domain(int cell_id, int domain_id);
+    DomainPlaceResult place_with_domains();
+    int insert_level_shifters();
+    int insert_isolation_cells(const std::string& control_signal, const std::string& clamp = "CLAMP_0");
+    int insert_power_switches(double switch_pitch = 50.0, const std::string& enable = "pwr_en");
+
 private:
     PhysicalDesign& pd_;
     double wl_weight_ = 1.0;
@@ -340,6 +390,15 @@ private:
 
     // Multi-row legalization
     void legalize_multi_row(std::vector<double>& x, std::vector<double>& y);
+
+    // Tier 3: Multi-Vdd state
+    std::vector<VoltageDomain> voltage_domains_;
+    std::vector<LevelShifterCell> level_shifters_;
+    std::vector<IsolationCell> isolation_cells_;
+    std::vector<PowerSwitchCell> power_switches_;
+    std::unordered_map<int, int> cell_domain_map_;  // cell_id → domain index
+    int find_domain_for_cell(int cell_id) const;
+    bool nets_cross_domains(NetId net) const;
 };
 
 } // namespace sf

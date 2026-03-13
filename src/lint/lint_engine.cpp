@@ -8,6 +8,7 @@
 #include <iostream>
 #include <algorithm>
 #include <functional>
+#include <sstream>
 
 namespace sf {
 
@@ -688,6 +689,146 @@ std::vector<LintViolation> LintEngine::check_dff_reset_missing() {
         }
     }
     return v;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Tier 3: Lint Waiver Support
+// ═══════════════════════════════════════════════════════════════════════════
+
+void LintEngine::load_waivers(const std::string& waiver_content) {
+    // Parse waiver file format:
+    // WAIVE <rule_id> [SCOPE <scope_type> <scope_name>] [REASON "<reason>"] [BY "<approver>"]
+    std::istringstream ss(waiver_content);
+    std::string line;
+    while (std::getline(ss, line)) {
+        // Skip comments and empty lines
+        if (line.empty() || line[0] == '#') continue;
+
+        LintWaiver w;
+        std::istringstream ls(line);
+        std::string token;
+
+        if (!(ls >> token) || token != "WAIVE") continue;
+        if (!(ls >> w.rule_id)) continue;
+
+        // Parse optional fields
+        while (ls >> token) {
+            if (token == "SCOPE") {
+                std::string scope_type, scope_name;
+                if (ls >> scope_type >> scope_name) {
+                    w.scope = scope_name;
+                    if (scope_type == "INSTANCE") w.scope_type = LintWaiver::INSTANCE;
+                    else if (scope_type == "SIGNAL") w.scope_type = LintWaiver::SIGNAL;
+                    else if (scope_type == "MODULE") w.scope_type = LintWaiver::MODULE;
+                    else w.scope_type = LintWaiver::GLOBAL;
+                }
+            } else if (token == "REASON") {
+                // Read quoted reason
+                char c;
+                if (ls >> c && c == '"') {
+                    std::getline(ls, w.reason, '"');
+                }
+            } else if (token == "BY") {
+                char c;
+                if (ls >> c && c == '"') {
+                    std::getline(ls, w.approved_by, '"');
+                }
+            }
+        }
+
+        waivers_.push_back(w);
+    }
+}
+
+bool LintEngine::is_waived(const LintViolation& v) const {
+    for (auto& w : waivers_) {
+        if (w.rule_id != v.rule) continue;
+
+        switch (w.scope_type) {
+            case LintWaiver::GLOBAL:
+                return true;
+            case LintWaiver::INSTANCE:
+                if (v.gate >= 0 && (int)v.gate < (int)nl_.num_gates()) {
+                    if (nl_.gate(v.gate).name == w.scope) return true;
+                }
+                break;
+            case LintWaiver::SIGNAL:
+                if (v.net >= 0 && v.net < (int)nl_.num_nets()) {
+                    if (nl_.net(v.net).name == w.scope) return true;
+                }
+                break;
+            case LintWaiver::MODULE:
+                // Module-level: waive all instances of this rule
+                return true;
+            default:
+                break;
+        }
+    }
+    return false;
+}
+
+std::vector<LintViolation> LintEngine::apply_waivers(
+    const std::vector<LintViolation>& violations) const {
+    std::vector<LintViolation> filtered;
+    for (auto& v : violations) {
+        if (!is_waived(v))
+            filtered.push_back(v);
+    }
+    return filtered;
+}
+
+LintEngine::WaiverReport LintEngine::generate_waiver_report(
+    const std::vector<LintViolation>& before,
+    const std::vector<LintViolation>& after) const {
+    WaiverReport rpt;
+    rpt.total_waivers = (int)waivers_.size();
+    rpt.violations_before = (int)before.size();
+    rpt.violations_after = (int)after.size();
+    rpt.waivers_applied = rpt.violations_before - rpt.violations_after;
+
+    // Count hits per waiver
+    for (auto& w : waivers_) {
+        int hits = 0;
+        for (auto& v : before) {
+            if (v.rule == w.rule_id) {
+                LintViolation test_v = v;
+                // Check if this specific waiver would match
+                if (w.scope_type == LintWaiver::GLOBAL ||
+                    w.scope_type == LintWaiver::MODULE)
+                    hits++;
+                else if (w.scope_type == LintWaiver::INSTANCE && v.gate >= 0 &&
+                         (int)v.gate < (int)nl_.num_gates() &&
+                         nl_.gate(v.gate).name == w.scope)
+                    hits++;
+                else if (w.scope_type == LintWaiver::SIGNAL && v.net >= 0 &&
+                         v.net < (int)nl_.num_nets() &&
+                         nl_.net(v.net).name == w.scope)
+                    hits++;
+            }
+        }
+        rpt.waiver_hit_count.push_back({w, hits});
+    }
+
+    // Audit trail
+    std::ostringstream audit;
+    audit << "=== Lint Waiver Audit Trail ===\n";
+    audit << "Total waivers loaded: " << rpt.total_waivers << "\n";
+    audit << "Violations before: " << rpt.violations_before << "\n";
+    audit << "Violations after: " << rpt.violations_after << "\n";
+    audit << "Waivers applied: " << rpt.waivers_applied << "\n";
+    for (auto& [w, count] : rpt.waiver_hit_count) {
+        audit << "  " << w.rule_id << " (" << w.scope << "): " << count << " hits";
+        if (!w.approved_by.empty()) audit << " [approved by: " << w.approved_by << "]";
+        if (!w.reason.empty()) audit << " reason: " << w.reason;
+        audit << "\n";
+    }
+    rpt.audit_trail = audit.str();
+    return rpt;
+}
+
+std::vector<LintViolation> LintEngine::run_with_waivers() {
+    auto all = run_all();
+    return apply_waivers(all);
 }
 
 } // namespace sf

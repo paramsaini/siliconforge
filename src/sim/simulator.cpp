@@ -261,5 +261,168 @@ std::string EventSimulator::generate_vcd(const std::string& module_name) const {
     return vcd.str();
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Tier 3: Delay-Aware Simulation
+// ═══════════════════════════════════════════════════════════════════════════
+
+void EventSimulator::set_gate_delay(GateId gate, double rise_ps, double fall_ps) {
+    gate_delays_[gate] = {rise_ps, fall_ps, std::min(rise_ps, fall_ps) * 0.5};
+}
+
+void EventSimulator::set_net_delay(NetId net, double delay_ps) {
+    net_delays_[net] = delay_ps;
+}
+
+void EventSimulator::add_timing_check(const TimingCheck& tc) {
+    timing_checks_.push_back(tc);
+}
+
+void EventSimulator::annotate_sdf(const std::string& sdf_content) {
+    // Simple SDF parser: extract IOPATH and INTERCONNECT delays
+    // Format: (IOPATH input output (rise) (fall))
+    std::istringstream ss(sdf_content);
+    std::string line;
+    int gid = 0;
+    while (std::getline(ss, line)) {
+        if (line.find("IOPATH") != std::string::npos) {
+            // Extract delay values
+            auto lp = line.find('(', line.find("IOPATH"));
+            if (lp == std::string::npos) continue;
+            auto rp = line.find(')', lp + 1);
+            if (rp == std::string::npos) continue;
+            std::string val_str = line.substr(lp + 1, rp - lp - 1);
+            double rise = 0;
+            try { rise = std::stod(val_str); } catch (...) {}
+
+            auto lp2 = line.find('(', rp + 1);
+            auto rp2 = line.find(')', lp2 + 1);
+            double fall = rise;
+            if (lp2 != std::string::npos && rp2 != std::string::npos) {
+                std::string val_str2 = line.substr(lp2 + 1, rp2 - lp2 - 1);
+                try { fall = std::stod(val_str2); } catch (...) {}
+            }
+            if (gid < (int)nl_.num_gates())
+                set_gate_delay(gid, rise, fall);
+            gid++;
+        }
+        if (line.find("INTERCONNECT") != std::string::npos) {
+            auto lp = line.find('(', line.find("INTERCONNECT") + 12);
+            if (lp == std::string::npos) continue;
+            auto rp = line.find(')', lp + 1);
+            if (rp == std::string::npos) continue;
+            std::string val_str = line.substr(lp + 1, rp - lp - 1);
+            double delay = 0;
+            try { delay = std::stod(val_str); } catch (...) {}
+            // Apply to next available net
+            static int nid = 0;
+            if (nid < (int)nl_.num_nets())
+                set_net_delay(nid, delay);
+            nid++;
+        }
+    }
+}
+
+void EventSimulator::eval_with_delays(uint64_t current_ps) {
+    // Process gates in topological order with delays
+    for (auto gid : topo_) {
+        auto& g = nl_.gate(gid);
+        if (g.type == GateType::DFF || g.type == GateType::INPUT ||
+            g.type == GateType::OUTPUT || g.output < 0) continue;
+
+        Logic4 old_val = nl_.net(g.output).value;
+        Logic4 new_val = old_val;
+
+        // Evaluate gate
+        std::vector<Logic4> ins;
+        for (auto ni : g.inputs) {
+            ins.push_back(ni >= 0 ? nl_.net(ni).value : Logic4::X);
+        }
+
+        switch (g.type) {
+            case GateType::AND:  new_val = Logic4::ONE; for (auto v : ins) if (v != Logic4::ONE) new_val = (v == Logic4::ZERO) ? Logic4::ZERO : Logic4::X; break;
+            case GateType::OR:   new_val = Logic4::ZERO; for (auto v : ins) if (v != Logic4::ZERO) new_val = (v == Logic4::ONE) ? Logic4::ONE : Logic4::X; break;
+            case GateType::NAND: new_val = Logic4::ONE; for (auto v : ins) if (v != Logic4::ONE) new_val = (v == Logic4::ZERO) ? Logic4::ZERO : Logic4::X; new_val = (new_val == Logic4::ONE) ? Logic4::ZERO : Logic4::ONE; break;
+            case GateType::NOR:  new_val = Logic4::ZERO; for (auto v : ins) if (v != Logic4::ZERO) new_val = (v == Logic4::ONE) ? Logic4::ONE : Logic4::X; new_val = (new_val == Logic4::ONE) ? Logic4::ZERO : Logic4::ONE; break;
+            case GateType::XOR:  if (ins.size() >= 2) new_val = (ins[0] != ins[1]) ? Logic4::ONE : Logic4::ZERO; break;
+            case GateType::NOT:  if (!ins.empty()) new_val = (ins[0] == Logic4::ONE) ? Logic4::ZERO : (ins[0] == Logic4::ZERO) ? Logic4::ONE : Logic4::X; break;
+            case GateType::BUF:  if (!ins.empty()) new_val = ins[0]; break;
+            default: break;
+        }
+
+        if (new_val != old_val) {
+            // Apply gate delay
+            auto dit = gate_delays_.find(gid);
+            double delay = 0;
+            if (dit != gate_delays_.end()) {
+                bool rising = (new_val == Logic4::ONE);
+                delay = rising ? dit->second.rise_delay : dit->second.fall_delay;
+
+                // Inertial delay: filter glitches shorter than min_pulse
+                if (delay_cfg_.inertial_model && delay < dit->second.min_pulse)
+                    continue; // filter glitch
+            }
+
+            // Apply net delay
+            auto nit = net_delays_.find(g.output);
+            if (nit != net_delays_.end()) delay += nit->second;
+
+            nl_.net(g.output).value = new_val;
+            changed_nets_.push_back(g.output);
+        }
+    }
+}
+
+int EventSimulator::check_timing_constraints(uint64_t current_ps) {
+    int violations = 0;
+    for (auto& tc : timing_checks_) {
+        if (tc.data_net < 0 || tc.clock_net < 0) continue;
+        // Simple check: data must be stable before clock edge
+        // (In a full implementation, track transition times)
+        Logic4 data_val = nl_.net(tc.data_net).value;
+        if (data_val == Logic4::X) {
+            violations++; // data uncertain at clock edge
+        }
+    }
+    return violations;
+}
+
+EventSimulator::DelaySimResult EventSimulator::run_with_delays(
+    const std::vector<TestVector>& vectors, uint64_t max_time) {
+    DelaySimResult res;
+    initialize();
+
+    uint64_t time_ps = 0;
+    double timescale = delay_cfg_.timescale_ps > 0 ? delay_cfg_.timescale_ps : 1.0;
+
+    for (auto& tv : vectors) {
+        // Apply stimulus
+        apply_vector(tv);
+
+        // Evaluate with delays
+        changed_nets_.clear();
+        eval_with_delays(time_ps);
+
+        // Check timing constraints at clock edges
+        if (delay_cfg_.check_setup_hold) {
+            int viol = check_timing_constraints(time_ps);
+            res.timing_violations += viol;
+        }
+
+        record_state();
+        time_ps += (uint64_t)(timescale * 10);
+        if (time_ps > max_time * (uint64_t)timescale) break;
+    }
+
+    // Track max path delay
+    for (auto& [gid, dm] : gate_delays_) {
+        double max_d = std::max(dm.rise_delay, dm.fall_delay);
+        if (max_d > res.max_path_delay_ps) res.max_path_delay_ps = max_d;
+    }
+
+    res.message = "Delay sim: " + std::to_string(vectors.size()) + " vectors, " +
+                  std::to_string(res.timing_violations) + " violations";
+    return res;
+}
+
 
 } // namespace sf

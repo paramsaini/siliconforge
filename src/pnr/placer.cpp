@@ -1914,4 +1914,191 @@ void AnalyticalPlacer::thermal_aware_refine() {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Tier 3: Multi-Vdd Power Domain Placement
+// ═══════════════════════════════════════════════════════════════════════════
+
+void AnalyticalPlacer::assign_cell_to_domain(int cell_id, int domain_id) {
+    if (domain_id >= 0 && domain_id < (int)voltage_domains_.size())
+        cell_domain_map_[cell_id] = domain_id;
+}
+
+int AnalyticalPlacer::find_domain_for_cell(int cell_id) const {
+    auto it = cell_domain_map_.find(cell_id);
+    return (it != cell_domain_map_.end()) ? it->second : -1;
+}
+
+bool AnalyticalPlacer::nets_cross_domains(NetId net) const {
+    if (net < 0 || net >= (int)pd_.nets.size()) return false;
+    auto& n = pd_.nets[net];
+    if (n.cell_ids.size() < 2) return false;
+    int first_domain = find_domain_for_cell(n.cell_ids[0]);
+    for (size_t i = 1; i < n.cell_ids.size(); i++) {
+        int d = find_domain_for_cell(n.cell_ids[i]);
+        if (d >= 0 && first_domain >= 0 && d != first_domain)
+            return true;
+    }
+    return false;
+}
+
+AnalyticalPlacer::DomainPlaceResult AnalyticalPlacer::place_with_domains() {
+    DomainPlaceResult dr;
+
+    // Step 1: Create placement fences from domain regions
+    for (size_t di = 0; di < voltage_domains_.size(); di++) {
+        auto& vd = voltage_domains_[di];
+        if (vd.region.width() > 0 && vd.region.height() > 0) {
+            add_fence("domain_" + vd.name, vd.region, vd.cell_ids);
+        }
+        for (int cid : vd.cell_ids)
+            cell_domain_map_[cid] = (int)di;
+    }
+
+    // Step 2: Run standard placement with domain fences
+    place();
+    dr.domains_placed = (int)voltage_domains_.size();
+
+    // Step 3: Enforce domain containment — push escaped cells back
+    for (auto& [cid, did] : cell_domain_map_) {
+        if (cid < 0 || cid >= (int)pd_.cells.size()) continue;
+        auto& vd = voltage_domains_[did];
+        if (vd.region.width() <= 0) continue;
+        auto& cell = pd_.cells[cid];
+        cell.position.x = std::max(vd.region.x0, std::min(cell.position.x, vd.region.x1 - cell.width));
+        cell.position.y = std::max(vd.region.y0, std::min(cell.position.y, vd.region.y1 - cell.height));
+    }
+
+    // Step 4: Identify cross-domain nets
+    for (size_t ni = 0; ni < pd_.nets.size(); ni++) {
+        if (nets_cross_domains((NetId)ni))
+            dr.cross_domain_nets++;
+    }
+
+    // Step 5: Insert level shifters and isolation cells
+    dr.level_shifters_inserted = insert_level_shifters();
+    dr.message = "Placed " + std::to_string(dr.domains_placed) + " voltage domains, " +
+                 std::to_string(dr.cross_domain_nets) + " cross-domain nets, " +
+                 std::to_string(dr.level_shifters_inserted) + " level shifters";
+    return dr;
+}
+
+int AnalyticalPlacer::insert_level_shifters() {
+    int count = 0;
+    for (size_t ni = 0; ni < pd_.nets.size(); ni++) {
+        if (!nets_cross_domains((NetId)ni)) continue;
+        auto& n = pd_.nets[ni];
+        if (n.cell_ids.empty()) continue;
+        int drv_id = n.cell_ids[0];
+        int drv_domain = find_domain_for_cell(drv_id);
+        if (drv_domain < 0) continue;
+
+        for (size_t fi = 1; fi < n.cell_ids.size(); fi++) {
+            int fo = n.cell_ids[fi];
+            int fo_domain = find_domain_for_cell(fo);
+            if (fo_domain < 0 || fo_domain == drv_domain) continue;
+
+            double v_from = voltage_domains_[drv_domain].voltage;
+            double v_to = voltage_domains_[fo_domain].voltage;
+            std::string ls_type = (v_from < v_to) ? "LS_LH" : "LS_HL";
+
+            // Place level shifter at boundary between domains
+            LevelShifterCell ls;
+            ls.from_domain = drv_domain;
+            ls.to_domain = fo_domain;
+            ls.net_id = (NetId)ni;
+            ls.cell_type = ls_type;
+
+            CellInstance lsc;
+            lsc.cell_type = ls_type;
+            lsc.width = 3.0;
+            lsc.height = 1.4;
+            // Place at midpoint between driver and fanout
+            auto& drv_cell = pd_.cells[drv_id];
+            auto& fo_cell = pd_.cells[fo];
+            lsc.position.x = (drv_cell.position.x + fo_cell.position.x) / 2.0;
+            lsc.position.y = (drv_cell.position.y + fo_cell.position.y) / 2.0;
+            lsc.placed = true;
+            ls.cell_id = (int)pd_.cells.size();
+            pd_.cells.push_back(lsc);
+            level_shifters_.push_back(ls);
+            count++;
+        }
+    }
+    return count;
+}
+
+int AnalyticalPlacer::insert_isolation_cells(const std::string& control_signal,
+                                              const std::string& clamp) {
+    int count = 0;
+    // Insert isolation cells at outputs of each non-default domain
+    for (size_t di = 1; di < voltage_domains_.size(); di++) {
+        auto& vd = voltage_domains_[di];
+        for (int cid : vd.cell_ids) {
+            if (cid < 0 || cid >= (int)pd_.cells.size()) continue;
+            // Check if any output net goes outside this domain
+            for (size_t ni = 0; ni < pd_.nets.size(); ni++) {
+                auto& n = pd_.nets[ni];
+                if (n.cell_ids.empty() || n.cell_ids[0] != cid) continue;
+                bool crosses = false;
+                for (size_t fi = 1; fi < n.cell_ids.size(); fi++) {
+                    int fo_dom = find_domain_for_cell(n.cell_ids[fi]);
+                    if (fo_dom >= 0 && fo_dom != (int)di) { crosses = true; break; }
+                }
+                if (!crosses) continue;
+
+                IsolationCell ic;
+                ic.domain_id = (int)di;
+                ic.net_id = (NetId)ni;
+                ic.clamp_type = clamp;
+                ic.control_signal = control_signal;
+
+                CellInstance iso;
+                iso.cell_type = "ISO_" + clamp;
+                iso.width = 2.0;
+                iso.height = 1.4;
+                iso.position = pd_.cells[cid].position;
+                iso.position.x += pd_.cells[cid].width + 0.5;
+                iso.placed = true;
+                ic.cell_id = (int)pd_.cells.size();
+                pd_.cells.push_back(iso);
+                isolation_cells_.push_back(ic);
+                count++;
+            }
+        }
+    }
+    return count;
+}
+
+int AnalyticalPlacer::insert_power_switches(double switch_pitch,
+                                             const std::string& enable) {
+    int count = 0;
+    for (size_t di = 1; di < voltage_domains_.size(); di++) {
+        auto& vd = voltage_domains_[di];
+        if (vd.region.width() <= 0) continue;
+
+        // Place power switches in a grid within the domain region
+        for (double y = vd.region.y0; y < vd.region.y1; y += switch_pitch) {
+            for (double x = vd.region.x0; x < vd.region.x1; x += switch_pitch) {
+                PowerSwitchCell ps;
+                ps.domain_id = (int)di;
+                ps.position = {x, y};
+                ps.enable_signal = enable;
+                ps.switch_resistance = 0.1;
+
+                CellInstance psc;
+                psc.cell_type = "POWER_SWITCH";
+                psc.width = 4.0;
+                psc.height = 2.8;
+                psc.position = {x, y};
+                psc.placed = true;
+                ps.cell_id = (int)pd_.cells.size();
+                pd_.cells.push_back(psc);
+                power_switches_.push_back(ps);
+                count++;
+            }
+        }
+    }
+    return count;
+}
+
 } // namespace sf

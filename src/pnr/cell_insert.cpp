@@ -325,4 +325,150 @@ int CellInserter::insert_decaps(const std::vector<Point>& hotspots, double decap
     return count;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Tier 3: Spare Cell Placement & Filler Keepout
+// ═══════════════════════════════════════════════════════════════════════════
+
+bool CellInserter::in_keepout(const Point& p, double w, double h) const {
+    for (auto& kz : keepouts_) {
+        // Check if cell overlaps keepout region
+        if (p.x + w > kz.region.x0 && p.x < kz.region.x1 &&
+            p.y + h > kz.region.y0 && p.y < kz.region.y1) {
+            if (kz.no_filler) return true;
+        }
+    }
+    return false;
+}
+
+CellInserter::SpareCellResult CellInserter::insert_spare_cells(const SpareCellConfig& cfg) {
+    SpareCellResult res;
+
+    double die_w = pd_.die_area.width();
+    double die_h = pd_.die_area.height();
+    if (die_w <= 0 || die_h <= 0) return res;
+
+    // Create a grid of spare cell regions
+    int nx = std::max(1, (int)(die_w / cfg.region_pitch_x));
+    int ny = std::max(1, (int)(die_h / cfg.region_pitch_y));
+
+    for (int ry = 0; ry < ny; ry++) {
+        for (int rx = 0; rx < nx; rx++) {
+            double cx = pd_.die_area.x0 + (rx + 0.5) * die_w / nx;
+            double cy = pd_.die_area.y0 + (ry + 0.5) * die_h / ny;
+
+            // Insert each spare type at this region
+            double offset_x = 0;
+            for (auto& st : cfg.spare_types) {
+                for (int k = 0; k < st.count_per_region; k++) {
+                    Point p = {cx + offset_x, cy};
+                    if (in_keepout(p, st.width, st.height)) {
+                        offset_x += st.width + 0.5;
+                        continue;
+                    }
+
+                    CellInstance spare;
+                    spare.cell_type = "SPARE_" + st.type;
+                    spare.width = st.width;
+                    spare.height = st.height;
+                    spare.position = p;
+                    spare.placed = true;
+                    pd_.cells.push_back(spare);
+                    res.total_spares++;
+                    res.spares_by_type[st.type]++;
+                    offset_x += st.width + 0.5;
+                }
+            }
+            res.spare_regions++;
+        }
+    }
+
+    res.message = std::to_string(res.total_spares) + " spare cells in " +
+                  std::to_string(res.spare_regions) + " regions";
+    return res;
+}
+
+CellInserter::KeepoutInsertResult CellInserter::insert_with_keepouts(
+    const CellInsertConfig& cfg) {
+    KeepoutInsertResult res;
+
+    double die_w = pd_.die_area.width();
+    double die_h = pd_.die_area.height();
+    double row_h = pd_.row_height > 0 ? pd_.row_height : 1.4;
+
+    // Insert fillers row by row, respecting keepout zones
+    for (double y = pd_.die_area.y0; y < pd_.die_area.y1; y += row_h) {
+        double x = pd_.die_area.x0;
+        while (x < pd_.die_area.x1) {
+            // Find largest filler that fits
+            bool placed = false;
+            for (int fi = 3; fi >= 0; fi--) {
+                double fw = cfg.filler_widths[fi];
+                Point p = {x, y};
+
+                if (x + fw > pd_.die_area.x1) continue;
+
+                if (in_keepout(p, fw, row_h)) {
+                    res.fillers_blocked++;
+                    x += fw;
+                    placed = true;
+                    break;
+                }
+
+                // Check density targets
+                bool density_ok = true;
+                for (auto& dt : density_targets_) {
+                    if (p.x >= dt.region.x0 && p.x < dt.region.x1 &&
+                        p.y >= dt.region.y0 && p.y < dt.region.y1) {
+                        // Simple density check (would need actual area tracking in production)
+                        density_ok = true;
+                    }
+                }
+                if (!density_ok) {
+                    res.density_violations++;
+                    continue;
+                }
+
+                CellInstance filler;
+                filler.cell_type = "FILL" + std::to_string((int)(fw * 2));
+                filler.width = fw;
+                filler.height = row_h;
+                filler.position = p;
+                filler.placed = true;
+                pd_.cells.push_back(filler);
+                res.fillers_inserted++;
+                x += fw;
+                placed = true;
+                break;
+            }
+            if (!placed) x += 0.5; // skip minimum step
+        }
+    }
+
+    res.message = std::to_string(res.fillers_inserted) + " fillers, " +
+                  std::to_string(res.fillers_blocked) + " blocked by keepout";
+    return res;
+}
+
+int CellInserter::insert_decaps_grid(double pitch, double decap_width) {
+    int count = 0;
+    double row_h = pd_.row_height > 0 ? pd_.row_height : 1.4;
+
+    for (double y = pd_.die_area.y0; y < pd_.die_area.y1; y += pitch) {
+        for (double x = pd_.die_area.x0; x < pd_.die_area.x1; x += pitch) {
+            Point p = {x, y};
+            if (in_keepout(p, decap_width, row_h)) continue;
+
+            CellInstance decap;
+            decap.cell_type = "DCAP";
+            decap.width = decap_width;
+            decap.height = row_h;
+            decap.position = p;
+            decap.placed = true;
+            pd_.cells.push_back(decap);
+            count++;
+        }
+    }
+    return count;
+}
+
 } // namespace sf

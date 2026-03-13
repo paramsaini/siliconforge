@@ -158,6 +158,31 @@ public:
     BistWrapperResult generate_bist_wrapper(bool with_repair = false);
     MemoryResult run_enhanced(const MemoryConfig& cfg = {});
 
+    // ── Tier 3: Sense Amplifier Design ──────────────────────────────────
+    struct SenseAmpConfig {
+        double vth_mismatch_sigma = 0.030;  // V, threshold mismatch 1σ
+        double precharge_time_ps = 200.0;   // precharge settling time
+        double sense_time_ps = 150.0;       // SA evaluation time
+        double min_differential_mv = 50.0;  // minimum BL differential for sensing
+        double sa_power_uw = 5.0;           // per-SA dynamic power
+        int column_mux_ratio = 1;
+        bool enable_offset_cancellation = false;
+    };
+
+    struct SenseAmpResult {
+        int total_sense_amps = 0;
+        double sensing_margin_mv = 0;       // actual BL differential at sense time
+        double offset_3sigma_mv = 0;        // 3σ SA offset voltage
+        double min_sensing_window_ps = 0;   // minimum reliable sense window
+        double sa_total_power_uw = 0;
+        double read_bitline_delay_ps = 0;
+        bool margin_adequate = false;       // sensing_margin > offset_3sigma
+        std::string message;
+    };
+
+    SenseAmpResult design_sense_amps(const MemoryConfig& cfg,
+                                      const SenseAmpConfig& sa_cfg);
+
 private:
     void generate_netlist(const MemoryConfig& cfg, MemoryResult& r);
     void compute_timing(const MemoryConfig& cfg, MemoryResult& r);

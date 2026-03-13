@@ -172,4 +172,119 @@ PhysicalDesign ChipAssembler::to_physical_design() const {
     return pd;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Tier 3: Detailed IO Pad / Bump Assignment
+// ═══════════════════════════════════════════════════════════════════════════
+
+std::string ChipAssembler::ball_name(int row, int col) const {
+    std::string name;
+    name += (char)('A' + row);
+    name += std::to_string(col + 1);
+    return name;
+}
+
+ChipAssembler::IoAssignResult ChipAssembler::assign_bumps_detailed() {
+    IoAssignResult res;
+    bumps_.clear();
+
+    if (chip_w_ <= 0 || chip_h_ <= 0) {
+        double margin = cfg_.core_margin;
+        chip_w_ = core_.die_area.width() + 2 * margin;
+        chip_h_ = core_.die_area.height() + 2 * margin;
+    }
+
+    double bp = cfg_.bump_pitch;
+    if (bp <= 0) bp = 200.0; // default 200um bump pitch
+    int cols = std::max(1, (int)(chip_w_ / bp));
+    int rows = std::max(1, (int)(chip_h_ / bp));
+
+    // Create bump grid
+    double x_offset = (chip_w_ - (cols - 1) * bp) / 2.0;
+    double y_offset = (chip_h_ - (rows - 1) * bp) / 2.0;
+
+    // Assign signal pads to peripheral bumps, power to interior
+    int pad_idx = 0;
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            BumpAssignment ba;
+            ba.ball_name = ball_name(r, c);
+            ba.x = x_offset + c * bp;
+            ba.y = y_offset + r * bp;
+
+            bool is_peripheral = (r == 0 || r == rows-1 || c == 0 || c == cols-1);
+            if (is_peripheral && pad_idx < (int)pads_.size()) {
+                ba.signal = pads_[pad_idx].signal;
+                ba.is_power = (pads_[pad_idx].type == IoPad::POWER_VDD ||
+                               pads_[pad_idx].type == IoPad::POWER_VSS);
+                ba.pad_index = pad_idx;
+                pad_idx++;
+            } else {
+                // Interior bumps: alternate VDD/VSS for power delivery
+                ba.is_power = true;
+                ba.signal = ((r + c) % 2 == 0) ? "VDD" : "VSS";
+                ba.pad_index = -1;
+            }
+            bumps_.push_back(ba);
+            res.bumps_assigned++;
+        }
+    }
+
+    res.message = "Assigned " + std::to_string(res.bumps_assigned) + " bumps (" +
+                  std::to_string(cols) + "x" + std::to_string(rows) + " grid)";
+    return res;
+}
+
+std::vector<ChipAssembler::EscapeRoute> ChipAssembler::route_escapes(int rdl_layer) {
+    escape_routes_.clear();
+
+    for (size_t bi = 0; bi < bumps_.size(); bi++) {
+        auto& bump = bumps_[bi];
+        if (bump.pad_index < 0 || bump.is_power) continue;
+
+        EscapeRoute er;
+        er.bump_index = (int)bi;
+        er.pad_index = bump.pad_index;
+        er.layer = rdl_layer;
+
+        // Route from bump to pad — simple L-shape
+        auto& pad = pads_[bump.pad_index];
+        Point bump_pt = {bump.x, bump.y};
+        Point pad_pt = {pad.offset, 0};
+
+        // Determine pad location based on side
+        double margin = cfg_.core_margin;
+        switch (pad.side) {
+            case IoPad::NORTH: pad_pt = {pad.offset, chip_h_ - margin / 2}; break;
+            case IoPad::SOUTH: pad_pt = {pad.offset, margin / 2}; break;
+            case IoPad::EAST:  pad_pt = {chip_w_ - margin / 2, pad.offset}; break;
+            case IoPad::WEST:  pad_pt = {margin / 2, pad.offset}; break;
+        }
+
+        er.path.push_back(bump_pt);
+        er.path.push_back({pad_pt.x, bump_pt.y}); // horizontal
+        er.path.push_back(pad_pt);                  // vertical
+        er.length = std::abs(pad_pt.x - bump_pt.x) + std::abs(pad_pt.y - bump_pt.y);
+        escape_routes_.push_back(er);
+    }
+
+    return escape_routes_;
+}
+
+double ChipAssembler::estimate_io_ir_drop(double current_per_pad) const {
+    // Simple IR drop model: R = ρL/A for RDL traces
+    double rdl_rho = 0.02;  // ohm/um for RDL
+    double total_drop = 0;
+    int power_bumps = 0;
+    for (auto& b : bumps_) {
+        if (b.is_power) {
+            power_bumps++;
+            double dist_to_core = std::max(
+                std::abs(b.x - chip_w_ / 2),
+                std::abs(b.y - chip_h_ / 2));
+            total_drop += current_per_pad * rdl_rho * dist_to_core;
+        }
+    }
+    return power_bumps > 0 ? total_drop / power_bumps : 0;
+}
+
 } // namespace sf

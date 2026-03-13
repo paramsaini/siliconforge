@@ -143,13 +143,41 @@ public:
     std::vector<LintViolation> check_non_scannable_ffs();   // LINT-D01: DFFs without scan mux
     std::vector<LintViolation> check_dff_reset_missing();   // LINT-D02: DFFs without reset
 
+    // ── Tier 3: Lint Waiver Support ─────────────────────────────────────
+    struct LintWaiver {
+        std::string rule_id;               // e.g. "LINT-C01"
+        std::string scope;                 // "global", instance name, or signal name
+        enum Scope { GLOBAL, INSTANCE, SIGNAL, MODULE } scope_type = GLOBAL;
+        std::string reason;
+        std::string approved_by;
+        std::string date;
+    };
+
+    struct WaiverReport {
+        int total_waivers = 0;
+        int waivers_applied = 0;
+        int violations_before = 0;
+        int violations_after = 0;
+        std::vector<std::pair<LintWaiver, int>> waiver_hit_count; // waiver + times applied
+        std::string audit_trail;
+    };
+
+    void load_waivers(const std::string& waiver_content);
+    void add_waiver(const LintWaiver& w) { waivers_.push_back(w); }
+    std::vector<LintViolation> apply_waivers(const std::vector<LintViolation>& violations) const;
+    WaiverReport generate_waiver_report(const std::vector<LintViolation>& before,
+                                        const std::vector<LintViolation>& after) const;
+    std::vector<LintViolation> run_with_waivers();
+
 private:
     const Netlist& nl_;
     LintConfig config_;
+    std::vector<LintWaiver> waivers_;
 
     bool is_rule_enabled(const std::string& rule) const {
         return config_.disabled_rules.find(rule) == config_.disabled_rules.end();
     }
+    bool is_waived(const LintViolation& v) const;
 };
 
 } // namespace sf

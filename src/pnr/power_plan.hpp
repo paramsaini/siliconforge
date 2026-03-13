@@ -33,12 +33,26 @@ public:
     explicit PowerPlanner(PhysicalDesign& pd) : pd_(pd) {}
     PowerPlanResult plan(const PowerPlanConfig& cfg = {});
 
+    // Tier 3: Multi-Vdd power grid
+    struct DomainGrid {
+        std::string domain_name;
+        double voltage = 1.0;
+        Rect region;
+        std::string power_net = "VDD";
+        std::string ground_net = "VSS";
+    };
+    void add_domain_grid(const DomainGrid& dg) { domain_grids_.push_back(dg); }
+    PowerPlanResult plan_multi_vdd(const PowerPlanConfig& cfg = {});
+
 private:
     PhysicalDesign& pd_;
+    std::vector<DomainGrid> domain_grids_;
     void create_rings(const PowerPlanConfig& cfg, PowerPlanResult& res);
     void create_stripes(const PowerPlanConfig& cfg, PowerPlanResult& res);
     void create_rails(const PowerPlanConfig& cfg, PowerPlanResult& res);
     void create_vias(const PowerPlanConfig& cfg, PowerPlanResult& res);
+    void create_domain_rings(const DomainGrid& dg, const PowerPlanConfig& cfg, PowerPlanResult& res);
+    void create_domain_stripes(const DomainGrid& dg, const PowerPlanConfig& cfg, PowerPlanResult& res);
 };
 
 } // namespace sf

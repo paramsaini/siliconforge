@@ -136,4 +136,78 @@ void PowerPlanner::create_vias(const PowerPlanConfig& cfg, PowerPlanResult& res)
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Tier 3: Multi-Vdd Power Grid
+// ═══════════════════════════════════════════════════════════════════════════
+
+void PowerPlanner::create_domain_rings(const DomainGrid& dg,
+                                        const PowerPlanConfig& cfg,
+                                        PowerPlanResult& res) {
+    // Create power/ground rings around the domain region
+    double rx0 = dg.region.x0, ry0 = dg.region.y0;
+    double rx1 = dg.region.x1, ry1 = dg.region.y1;
+    double rw = cfg.ring_width;
+
+    // Top, bottom, left, right rings for VDD and VSS
+    auto add_wire = [&](Point s, Point e) {
+        WireSegment w;
+        w.layer = cfg.ring_layer;
+        w.start = s;
+        w.end = e;
+        w.width = rw;
+        pd_.wires.push_back(w);
+    };
+    add_wire({rx0, ry1 - rw}, {rx1, ry1});
+    add_wire({rx0, ry0}, {rx1, ry0 + rw});
+    add_wire({rx0, ry0}, {rx0 + rw, ry1});
+    add_wire({rx1 - rw, ry0}, {rx1, ry1});
+    res.rings += 4;
+}
+
+void PowerPlanner::create_domain_stripes(const DomainGrid& dg,
+                                          const PowerPlanConfig& cfg,
+                                          PowerPlanResult& res) {
+    double sx0 = dg.region.x0, sy0 = dg.region.y0;
+    double sx1 = dg.region.x1, sy1 = dg.region.y1;
+
+    for (double x = sx0 + cfg.stripe_pitch / 2; x < sx1; x += cfg.stripe_pitch) {
+        WireSegment w;
+        w.layer = cfg.stripe_layer;
+        w.start = {x - cfg.stripe_width/2, sy0};
+        w.end = {x + cfg.stripe_width/2, sy1};
+        w.width = cfg.stripe_width;
+        pd_.wires.push_back(w);
+        res.stripes++;
+        res.total_wire_length += (sy1 - sy0);
+
+        // Via stack from stripe down to rails
+        double row_h = pd_.row_height > 0 ? pd_.row_height : 1.4;
+        for (double y = sy0; y <= sy1; y += row_h) {
+            for (int l = cfg.rail_layer; l < cfg.stripe_layer; ++l) {
+                Via v;
+                v.position = {x, y};
+                v.lower_layer = l;
+                v.upper_layer = l + 1;
+                pd_.vias.push_back(v);
+                res.vias++;
+            }
+        }
+    }
+}
+
+PowerPlanResult PowerPlanner::plan_multi_vdd(const PowerPlanConfig& cfg) {
+    // First create the default global grid
+    PowerPlanResult res = plan(cfg);
+
+    // Then overlay per-domain grids
+    for (auto& dg : domain_grids_) {
+        if (dg.region.width() <= 0 || dg.region.height() <= 0) continue;
+        create_domain_rings(dg, cfg, res);
+        create_domain_stripes(dg, cfg, res);
+    }
+
+    res.message += " | Multi-Vdd: " + std::to_string(domain_grids_.size()) + " domains";
+    return res;
+}
+
 } // namespace sf

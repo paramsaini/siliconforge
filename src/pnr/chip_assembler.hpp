@@ -59,15 +59,48 @@ public:
     // Generate final PhysicalDesign with everything
     PhysicalDesign to_physical_design() const;
 
+    // ── Tier 3: Detailed IO Pad / Bump Assignment ───────────────────────
+    struct BumpAssignment {
+        std::string ball_name;     // BGA ball ID e.g. "A1", "B3"
+        std::string signal;
+        double x = 0, y = 0;      // bump center coordinates
+        int pad_index = -1;        // linked IoPad index
+        bool is_power = false;
+    };
+
+    struct EscapeRoute {
+        int bump_index = -1;
+        int pad_index = -1;
+        std::vector<Point> path;
+        int layer = 0;
+        double length = 0;
+    };
+
+    struct IoAssignResult {
+        int bumps_assigned = 0;
+        int escape_routes = 0;
+        double max_escape_length = 0;
+        double io_ring_power_ir_drop = 0;
+        std::string message;
+    };
+
+    IoAssignResult assign_bumps_detailed();
+    std::vector<EscapeRoute> route_escapes(int rdl_layer = 5);
+    double estimate_io_ir_drop(double current_per_pad = 0.005) const;
+    const std::vector<BumpAssignment>& bumps() const { return bumps_; }
+
 private:
     const PhysicalDesign& core_;
     ChipConfig cfg_;
     std::vector<IoPad> pads_;
+    std::vector<BumpAssignment> bumps_;
+    std::vector<EscapeRoute> escape_routes_;
     double chip_w_ = 0, chip_h_ = 0;
 
     void place_pads();
     void generate_seal_ring(PhysicalDesign& pd) const;
     void generate_bump_map();
+    std::string ball_name(int row, int col) const;
 };
 
 } // namespace sf

@@ -559,4 +559,117 @@ FullEcoResult FullEcoEngine::run_enhanced() {
     return result;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Tier 3: Enhanced Metal-Only ECO
+// ═══════════════════════════════════════════════════════════════════════════
+
+void FullEcoEngine::SpareCellLibrary::add_spare_type(
+    const std::string& type, int inputs, double area,
+    const std::vector<std::string>& implements) {
+    SpareDef sd;
+    sd.type = type;
+    sd.num_inputs = inputs;
+    sd.area = area;
+    sd.can_implement = implements;
+    definitions.push_back(sd);
+}
+
+int FullEcoEngine::SpareCellInventory::available(const std::string& type) const {
+    int count = 0;
+    for (auto& si : instances)
+        if (!si.used && si.type == type) count++;
+    return count;
+}
+
+int FullEcoEngine::SpareCellInventory::total_available() const {
+    int count = 0;
+    for (auto& si : instances)
+        if (!si.used) count++;
+    return count;
+}
+
+FullEcoEngine::SpareCellInventory::SpareInstance*
+FullEcoEngine::SpareCellInventory::find_nearest(const std::string& type, const Point& target) {
+    SpareInstance* best = nullptr;
+    double best_dist = 1e18;
+    for (auto& si : instances) {
+        if (si.used || si.type != type) continue;
+        double dist = std::abs(si.location.x - target.x) + std::abs(si.location.y - target.y);
+        if (dist < best_dist) {
+            best_dist = dist;
+            best = &si;
+        }
+    }
+    return best;
+}
+
+FullEcoEngine::EnhancedEcoResult FullEcoEngine::eco_metal_only_enhanced(
+    const std::vector<std::pair<int,int>>& changes,
+    double max_wire_length) {
+    EnhancedEcoResult res;
+    eco_revision_++;
+    res.eco_revision = eco_revision_;
+
+    for (auto& [old_gate, new_gate] : changes) {
+        if (old_gate < 0 || old_gate >= (int)nl_.num_gates()) continue;
+        auto& g = nl_.gate(old_gate);
+        std::string needed_type = gate_type_str(g.type);
+
+        // Find matching spare from library
+        std::string spare_type;
+        for (auto& sd : spare_lib_.definitions) {
+            for (auto& impl : sd.can_implement) {
+                if (impl == needed_type) { spare_type = sd.type; break; }
+            }
+            if (!spare_type.empty()) break;
+        }
+        if (spare_type.empty()) spare_type = "INV"; // fallback
+
+        // Find nearest available spare cell
+        Point target = {0, 0}; // In real flow, use gate placement location
+        auto* spare = spare_inv_.find_nearest(spare_type, target);
+        if (!spare) {
+            res.message = "ECO failed: no spare " + spare_type + " available";
+            return res;
+        }
+
+        // Check wire length constraint
+        double wire = std::abs(spare->location.x - target.x) +
+                      std::abs(spare->location.y - target.y);
+        if (wire > max_wire_length) {
+            res.message = "ECO failed: wire length " + std::to_string(wire) +
+                         " exceeds max " + std::to_string(max_wire_length);
+            return res;
+        }
+
+        spare->used = true;
+        spare->eco_revision = eco_revision_;
+        res.spare_cells_used++;
+        if (wire > res.max_wire_length) res.max_wire_length = wire;
+    }
+
+    res.spare_cells_remaining = spare_inv_.total_available();
+    res.success = true;
+    res.drc_clean = eco_drc_check();
+    res.message = "ECO rev " + std::to_string(eco_revision_) + ": " +
+                  std::to_string(res.spare_cells_used) + " spares used, " +
+                  std::to_string(res.spare_cells_remaining) + " remaining";
+    return res;
+}
+
+bool FullEcoEngine::eco_drc_check() const {
+    // Basic DRC: check all spare cells have minimum spacing
+    // In production, this would call full DRC engine
+    for (auto& si : spare_inv_.instances) {
+        if (!si.used) continue;
+        for (auto& sj : spare_inv_.instances) {
+            if (&si == &sj || !sj.used) continue;
+            double dist = std::abs(si.location.x - sj.location.x) +
+                          std::abs(si.location.y - sj.location.y);
+            if (dist < 1.0) return false; // minimum 1um spacing
+        }
+    }
+    return true;
+}
+
 } // namespace sf

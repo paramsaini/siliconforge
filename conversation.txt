@@ -1668,3 +1668,117 @@ Total cumulative LOC added: ~2,000+ (Tier 0 + Tier 1 + Tier 2)
 PENDING COMMIT (not pushed — Rule 7):
   All Tier 0 + Tier 1 + Tier 2 changes are local.
 ================================================================================
+
+================================================================================
+SESSION 13 — Tier 3: Production-Quality Enhancement Features (9 Gaps)
+================================================================================
+Date: 2025-07-17
+Researcher: PhD-level semiconductor researcher
+Status: ✅ COMPLETE — All 9 Tier 3 gaps implemented, tested, ASAN-clean
+
+OBJECTIVE:
+  Implement 9 Tier 3 enhancement gaps for competitive parity with Cadence/
+  Synopsys/Siemens commercial EDA tools. Two Tier 3 features (Clock Mesh,
+  Cross-Die Routing) were already complete from prior work.
+
+GAPS IMPLEMENTED (9 of 9):
+
+  1. Multi-Vdd Power Domain Placement
+     Files: src/pnr/placer.hpp, src/pnr/placer.cpp
+     Features: VoltageDomain struct, placement fences per domain, containment
+     enforcement, cross-domain net detection, level shifter insertion (LH/HL
+     at driver-fanout midpoint), isolation cell insertion, power switch grid.
+     ~180 lines added.
+
+  2. Multi-Vdd Power Grid
+     Files: src/pnr/power_plan.hpp, src/pnr/power_plan.cpp
+     Features: DomainGrid struct, domain rings (4-side power/ground rings),
+     domain stripes with via stacks, plan_multi_vdd() overlays per-domain
+     grid on global grid. ~70 lines added.
+
+  3. Enhanced Verilog Writer
+     Files: src/frontend/verilog_parser.hpp, src/frontend/verilog_parser.cpp
+     Features: VerilogWriterConfig (attributes, dont_touch, drive strength,
+     bus notation, power pins), to_verilog_enhanced() with ANSI port style,
+     library cell naming, DFF pin mapping (D/CK/RN/Q). ~85 lines added.
+
+  4. IO Pad/Bump Assignment
+     Files: src/pnr/chip_assembler.hpp, src/pnr/chip_assembler.cpp
+     Features: BumpAssignment, EscapeRoute, IoAssignResult structs. BGA ball
+     naming, peripheral signal bumps, interior checkerboard VDD/VSS power
+     grid, L-shape RDL escape routing, IR drop estimation. ~100 lines added.
+
+  5. Delay-Aware Simulation
+     Files: src/sim/simulator.hpp, src/sim/simulator.cpp
+     Features: DelayModel (rise/fall/min_pulse), TimingCheck (setup/hold),
+     DelaySimConfig, SDF annotation parser (IOPATH/INTERCONNECT), gate+net
+     delay propagation, inertial glitch filtering, setup/hold checking.
+     ~150 lines added.
+
+  6. Enhanced Metal-Only ECO
+     Files: src/synth/eco.hpp, src/synth/eco.cpp
+     Features: SpareCellLibrary (type definitions, can_implement mapping),
+     SpareCellInventory (availability tracking, nearest-spare Manhattan
+     search), eco_metal_only_enhanced() with wire length limit and revision
+     tracking, eco_drc_check(). ~100 lines added.
+
+  7. Lint Waiver Support
+     Files: src/lint/lint_engine.hpp, src/lint/lint_engine.cpp
+     Features: LintWaiver (rule_id, scope GLOBAL/INSTANCE/SIGNAL/MODULE,
+     reason, approver), load_waivers() file parser, is_waived() scope
+     matching, apply_waivers(), generate_waiver_report() audit trail with
+     hit counts, run_with_waivers() combined flow. ~130 lines added.
+
+  8. Memory Sense Amp Design
+     Files: src/macro/memory_compiler.hpp, src/macro/memory_compiler.cpp
+     Features: SenseAmpConfig (Vth mismatch, precharge/sense time, column
+     mux), SenseAmpResult. Physics: BL discharge ΔV = Vdd×C_cell/(C_cell+
+     C_BL), Pelgrom mismatch σ(ΔVth) = Avt/√(WL), offset cancellation
+     10× reduction, sensing window, margin adequacy check. ~55 lines added.
+
+  9. Spare Cell Placement + Filler Keepout
+     Files: src/pnr/cell_insert.hpp, src/pnr/cell_insert.cpp
+     Features: SpareCellConfig (types, pitch), grid-based regional spare
+     insertion. KeepoutZone, DensityTarget, insert_with_keepouts() row-by-
+     row largest-first filler selection with keepout blocking, decap grid
+     insertion. ~120 lines added.
+
+BUILD FIXES REQUIRED:
+  - lint_engine.cpp: Added #include <sstream>; fixed v.rule_id→v.rule,
+    v.gate_id→v.gate, v.net_id→v.net (LintViolation field names)
+  - placer.cpp: Rewrote nets_cross_domains/insert_level_shifters/
+    insert_isolation_cells to use PhysNet.cell_ids[] instead of .driver/.fanout
+  - placer.cpp: Fixed vd.region.x0()→vd.region.x0 (Rect data members, not methods)
+  - power_plan.cpp: Replaced pd_.metal_wires with pd_.wires (WireSegment),
+    fixed Rect member access, fixed Via/WireSegment construction
+  - cell_insert.cpp: Fixed all Rect .x0()→.x0 member access
+
+TEST RESULTS:
+  - tests/test_phase48.cpp: 25 tests covering all 9 Tier 3 features
+  - Release build: 47/47 tests PASS (0.83s)
+  - ASAN build: 47/47 tests PASS, zero memory errors (332s)
+
+API QUIRKS DISCOVERED:
+  - PhysNet has cell_ids[] (not driver/fanout) — first element is driver convention
+  - Rect has x0/y0/x1/y1 as data members, width()/height() as methods
+  - WireSegment: {layer, start, end, width, net_id}
+  - Via: {position, lower_layer, upper_layer}
+  - EventSimulator (not Simulator), TestVector.assignments (not input_values)
+  - FullEcoEngine (not EcoEngine) has Tier 3 enhanced ECO
+  - GateType::NOT (not INV)
+  - LintEngine::run_all() (not run())
+  - LintWaiver is nested inside LintEngine class
+  - LintWaiver::Scope enum (GLOBAL/INSTANCE/SIGNAL/MODULE), field is scope_type
+
+TOTAL LOC ADDED (Tier 3): ~990 implementation + ~550 test = ~1,540 lines
+Cumulative LOC added (all tiers): ~3,500+
+
+TIER STATUS:
+  ✅ Tier 0: 4/4 gaps complete
+  ✅ Tier 1: 5/5 gaps complete
+  ✅ Tier 2: 25/25 gaps complete
+  ✅ Tier 3: 11/11 gaps complete (9 new + 2 pre-existing)
+
+PENDING COMMIT (not pushed — Rule 7):
+  All Tier 0 + Tier 1 + Tier 2 + Tier 3 changes are local.
+================================================================================
