@@ -214,6 +214,23 @@ std::vector<VerilogParser::Token> VerilogParser::tokenize(const std::string& src
             tokens.push_back({Token::PLUS_COLON, "+:", line}); i += 2;
         } else if (c == '-' && i+1 < src.size() && src[i+1] == ':') {
             tokens.push_back({Token::MINUS_COLON, "-:", line}); i += 2;
+        // SV Phase 4: compound assignment and inc/dec
+        } else if (c == '+' && i+1 < src.size() && src[i+1] == '+') {
+            tokens.push_back({Token::INC_OP, "++", line}); i += 2;
+        } else if (c == '-' && i+1 < src.size() && src[i+1] == '-') {
+            tokens.push_back({Token::DEC_OP, "--", line}); i += 2;
+        } else if (c == '+' && i+1 < src.size() && src[i+1] == '=') {
+            tokens.push_back({Token::PLUS_ASSIGN, "+=", line}); i += 2;
+        } else if (c == '-' && i+1 < src.size() && src[i+1] == '=') {
+            tokens.push_back({Token::MINUS_ASSIGN, "-=", line}); i += 2;
+        } else if (c == '*' && i+1 < src.size() && src[i+1] == '=') {
+            tokens.push_back({Token::STAR_ASSIGN, "*=", line}); i += 2;
+        } else if (c == '&' && i+1 < src.size() && src[i+1] == '=') {
+            tokens.push_back({Token::AMP_ASSIGN, "&=", line}); i += 2;
+        } else if (c == '|' && i+1 < src.size() && src[i+1] == '=') {
+            tokens.push_back({Token::PIPE_ASSIGN, "|=", line}); i += 2;
+        } else if (c == '^' && i+1 < src.size() && src[i+1] == '=') {
+            tokens.push_back({Token::CARET_ASSIGN, "^=", line}); i += 2;
         } else if (c == '<' && i+1 < src.size() && src[i+1] == '<') {
             tokens.push_back({Token::LSHIFT, "<<", line}); i += 2;
         } else if (c == '>' && i+2 < src.size() && src[i+1] == '>' && src[i+2] == '>') {
@@ -323,6 +340,7 @@ std::vector<VerilogParser::Token> VerilogParser::tokenize(const std::string& src
             else if (ident == "interface") tokens.push_back({Token::INTERFACE_KW, ident, line});
             else if (ident == "endinterface") tokens.push_back({Token::ENDINTERFACE_KW, ident, line});
             else if (ident == "modport") tokens.push_back({Token::MODPORT_KW, ident, line});
+            else if (ident == "inside") tokens.push_back({Token::INSIDE_KW, ident, line});
             else tokens.push_back({Token::IDENT, ident, line});
         }
         else i++;
@@ -433,6 +451,50 @@ std::shared_ptr<AstNode> VerilogParser::parse_equality(const std::vector<Token>&
         auto node = AstNode::make(AstNodeType::BIN_OP, op);
         node->add(left); node->add(right);
         left = node;
+    }
+    // SV Phase 4: inside operator — x inside {a, b, [c:d]} → OR chain
+    if (pos < t.size() && t[pos].type == Token::INSIDE_KW) {
+        pos++; // skip 'inside'
+        if (pos < t.size() && t[pos].type == Token::LBRACE) {
+            pos++; // skip '{'
+            std::shared_ptr<AstNode> result = nullptr;
+            while (pos < t.size() && t[pos].type != Token::RBRACE) {
+                if (t[pos].type == Token::LBRACKET) {
+                    // Range [lo:hi] — desugar to (left >= lo && left <= hi)
+                    pos++; // skip [
+                    auto lo = parse_expression(t, pos);
+                    if (pos < t.size() && t[pos].type == Token::COLON) pos++;
+                    auto hi = parse_expression(t, pos);
+                    if (pos < t.size() && t[pos].type == Token::RBRACKET) pos++;
+                    auto ge = AstNode::make(AstNodeType::BIN_OP, ">=");
+                    ge->add(left); ge->add(lo);
+                    auto le = AstNode::make(AstNodeType::BIN_OP, "<=");
+                    le->add(left); le->add(hi);
+                    auto range_match = AstNode::make(AstNodeType::BIN_OP, "&&");
+                    range_match->add(ge); range_match->add(le);
+                    if (!result) result = range_match;
+                    else {
+                        auto or_node = AstNode::make(AstNodeType::BIN_OP, "||");
+                        or_node->add(result); or_node->add(range_match);
+                        result = or_node;
+                    }
+                } else {
+                    // Single value — desugar to (left == value)
+                    auto val = parse_expression(t, pos);
+                    auto eq = AstNode::make(AstNodeType::BIN_OP, "==");
+                    eq->add(left); eq->add(val);
+                    if (!result) result = eq;
+                    else {
+                        auto or_node = AstNode::make(AstNodeType::BIN_OP, "||");
+                        or_node->add(result); or_node->add(eq);
+                        result = or_node;
+                    }
+                }
+                if (pos < t.size() && t[pos].type == Token::COMMA) pos++;
+            }
+            if (pos < t.size() && t[pos].type == Token::RBRACE) pos++;
+            if (result) left = result;
+        }
     }
     return left;
 }
@@ -987,7 +1049,13 @@ size_t VerilogParser::parse_module_inst(const std::vector<Token>& t, size_t pos,
         pos++;
         std::vector<std::pair<std::string, std::string>> connections;
         while (pos < t.size() && t[pos].type != Token::RPAREN) {
-            if (t[pos].type == Token::DOT) {
+            if (t[pos].type == Token::DOT && pos + 1 < t.size() && t[pos+1].type == Token::STAR) {
+                // SV Phase 4: .* implicit port connection — skip, handled below
+                pos += 2; // skip .*
+                if (pos < t.size() && t[pos].type == Token::COMMA) pos++;
+                // Mark wildcard for name-matching after we know the ports
+                connections.push_back({"*", "*"});
+            } else if (t[pos].type == Token::DOT) {
                 pos++;
                 std::string port;
                 if (pos < t.size() && t[pos].type == Token::IDENT) { port = t[pos].value; pos++; }
@@ -1008,6 +1076,36 @@ size_t VerilogParser::parse_module_inst(const std::vector<Token>& t, size_t pos,
 
         // Try hierarchical elaboration if module definition is available
         auto it = module_defs_.find(mod_type);
+
+        // SV Phase 4: Expand .* wildcard connections
+        bool has_wildcard = false;
+        for (auto& c : connections) {
+            if (c.first == "*" && c.second == "*") { has_wildcard = true; break; }
+        }
+        if (has_wildcard && it != module_defs_.end()) {
+            // Collect explicitly-connected ports
+            std::unordered_set<std::string> explicit_ports;
+            for (auto& c : connections) {
+                if (c.first != "*" && !c.first.empty())
+                    explicit_ports.insert(c.first);
+            }
+            // Add auto-connections for all ports not explicitly connected
+            const auto& mdef = it->second;
+            std::vector<std::pair<std::string,std::string>> expanded;
+            for (auto& c : connections) {
+                if (c.first == "*" && c.second == "*") continue;
+                expanded.push_back(c);
+            }
+            for (auto& pn : mdef.port_names) {
+                if (!explicit_ports.count(pn)) {
+                    // Connect port to net with same name (if exists)
+                    if (net_map_.count(pn) || bus_ranges_.count(pn))
+                        expanded.push_back({pn, pn});
+                }
+            }
+            connections = std::move(expanded);
+        }
+
         if (it != module_defs_.end() && hierarchy_depth_ < MAX_HIERARCHY_DEPTH) {
             elaborate_instance(mod_type, inst_name, connections, param_overrides, nl, r);
         } else {
@@ -2579,6 +2677,27 @@ size_t VerilogParser::parse_statement(const std::vector<Token>& t, size_t pos, s
         pos++; // skip qualifier — synthesis treats as full_case/parallel_case hint
     }
 
+    // SV Phase 4: prefix ++ / --
+    if (pos < t.size() && (t[pos].type == Token::INC_OP || t[pos].type == Token::DEC_OP)) {
+        bool is_inc = (t[pos].type == Token::INC_OP);
+        pos++;
+        if (pos < t.size() && t[pos].type == Token::IDENT) {
+            std::string target = t[pos].value; pos++;
+            auto assign = std::make_shared<AstNode>();
+            assign->type = AstNodeType::BLOCK_ASSIGN;
+            assign->value = target;
+            auto binop = AstNode::make(AstNodeType::BIN_OP, is_inc ? "+" : "-");
+            binop->add(AstNode::make(AstNodeType::WIRE_DECL, target));
+            auto one = AstNode::make(AstNodeType::NUMBER_LITERAL, "1");
+            one->int_val = 1;
+            binop->add(one);
+            assign->add(binop);
+            parent->add(assign);
+            if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            return pos;
+        }
+    }
+
     if (t[pos].type == Token::IF) {
         auto if_node = AstNode::make(AstNodeType::IF_ELSE);
         pos++; // skip if
@@ -2815,13 +2934,58 @@ size_t VerilogParser::parse_statement(const std::vector<Token>& t, size_t pos, s
             }
         }
 
+        // SV Phase 4: ++ and -- (postfix: target++)
+        if (pos < t.size() && (t[pos].type == Token::INC_OP || t[pos].type == Token::DEC_OP)) {
+            bool is_inc = (t[pos].type == Token::INC_OP);
+            pos++;
+            assign->type = AstNodeType::BLOCK_ASSIGN;
+            assign->value = target;
+            auto binop = AstNode::make(AstNodeType::BIN_OP, is_inc ? "+" : "-");
+            binop->add(AstNode::make(AstNodeType::WIRE_DECL, target));
+            auto one = AstNode::make(AstNodeType::NUMBER_LITERAL, "1");
+            one->int_val = 1;
+            binop->add(one);
+            assign->add(binop);
+            parent->add(assign);
+            if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            return pos;
+        }
+
         if (pos < t.size() && t[pos].type == Token::LEQ) {
             assign->type = AstNodeType::NONBLOCK_ASSIGN;
             pos++;
         } else if (pos < t.size() && t[pos].type == Token::ASSIGN) {
             assign->type = AstNodeType::BLOCK_ASSIGN;
             pos++;
-        } else {
+        }
+        // SV Phase 4: compound assignments (+=, -=, *=, &=, |=, ^=)
+        else if (pos < t.size() && (t[pos].type == Token::PLUS_ASSIGN ||
+                 t[pos].type == Token::MINUS_ASSIGN || t[pos].type == Token::STAR_ASSIGN ||
+                 t[pos].type == Token::AMP_ASSIGN || t[pos].type == Token::PIPE_ASSIGN ||
+                 t[pos].type == Token::CARET_ASSIGN)) {
+            std::string op_str;
+            switch (t[pos].type) {
+                case Token::PLUS_ASSIGN:  op_str = "+"; break;
+                case Token::MINUS_ASSIGN: op_str = "-"; break;
+                case Token::STAR_ASSIGN:  op_str = "*"; break;
+                case Token::AMP_ASSIGN:   op_str = "&"; break;
+                case Token::PIPE_ASSIGN:  op_str = "|"; break;
+                case Token::CARET_ASSIGN: op_str = "^"; break;
+                default: op_str = "+"; break;
+            }
+            assign->type = AstNodeType::BLOCK_ASSIGN;
+            pos++;
+            auto rhs_expr = parse_expression(t, pos);
+            if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            auto binop = AstNode::make(AstNodeType::BIN_OP, op_str);
+            binop->add(AstNode::make(AstNodeType::WIRE_DECL, target));
+            binop->add(rhs_expr);
+            assign->value = target;
+            assign->add(binop);
+            parent->add(assign);
+            return pos;
+        }
+        else {
             // Unknown, skip
             while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
             if (pos < t.size()) pos++;
@@ -2964,8 +3128,38 @@ size_t VerilogParser::parse_for_loop(const std::vector<Token>& t, size_t pos, st
     }
     if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
 
-    // Parse increment: ident = ident + 1 (skip to closing paren)
+    // Parse increment: i++, ++i, i += N, i = i + N, etc.
     int step = 1;
+    if (pos < t.size() && t[pos].type == Token::INC_OP) {
+        // prefix ++i
+        step = 1; pos++;
+        if (pos < t.size() && t[pos].type == Token::IDENT) pos++;
+    } else if (pos < t.size() && t[pos].type == Token::DEC_OP) {
+        // prefix --i
+        step = -1; pos++;
+        if (pos < t.size() && t[pos].type == Token::IDENT) pos++;
+    } else if (pos < t.size() && t[pos].type == Token::IDENT) {
+        pos++; // skip variable
+        if (pos < t.size() && t[pos].type == Token::INC_OP) {
+            step = 1; pos++; // i++
+        } else if (pos < t.size() && t[pos].type == Token::DEC_OP) {
+            step = -1; pos++; // i--
+        } else if (pos < t.size() && t[pos].type == Token::PLUS_ASSIGN) {
+            pos++; // i += N
+            if (pos < t.size() && t[pos].type == Token::NUMBER) {
+                step = (int)parse_verilog_number(t[pos].value); pos++;
+            }
+        } else if (pos < t.size() && t[pos].type == Token::MINUS_ASSIGN) {
+            pos++; // i -= N
+            if (pos < t.size() && t[pos].type == Token::NUMBER) {
+                step = -(int)parse_verilog_number(t[pos].value); pos++;
+            }
+        } else {
+            // i = i + N style — skip to )
+            while (pos < t.size() && t[pos].type != Token::RPAREN) pos++;
+        }
+    }
+    // Skip any remaining tokens to closing paren
     while (pos < t.size() && t[pos].type != Token::RPAREN) pos++;
     if (pos < t.size() && t[pos].type == Token::RPAREN) pos++;
 

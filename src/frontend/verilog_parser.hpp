@@ -103,6 +103,16 @@ private:
             INTERFACE_KW,        // interface
             ENDINTERFACE_KW,     // endinterface
             MODPORT_KW,          // modport
+            // SystemVerilog IEEE 1800 — Phase 4 operators
+            PLUS_ASSIGN,         // +=
+            MINUS_ASSIGN,        // -=
+            STAR_ASSIGN,         // *=
+            AMP_ASSIGN,          // &=
+            PIPE_ASSIGN,         // |=
+            CARET_ASSIGN,        // ^=
+            INC_OP,              // ++
+            DEC_OP,              // --
+            INSIDE_KW,           // inside
             END
         };
         Type type;

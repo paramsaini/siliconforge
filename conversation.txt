@@ -2067,3 +2067,80 @@ CUMULATIVE STATUS:
 PENDING COMMIT (not pushed — Rule 7):
   All Tier 0-3 + SV Phase 1-3 changes are local.
 ================================================================================
+
+================================================================================
+SESSION 17 — SystemVerilog Phase 4: Advanced RTL Operators
+================================================================================
+
+OBJECTIVE:
+  Complete SV Phase 4 — compound assignments (+=, -=, *=, &=, |=, ^=),
+  increment/decrement (++/--), inside operator, .* implicit port connection,
+  and for-loop SV increment support.
+
+RESEARCH (pre-implementation):
+  - Confirmed AstNodeType uses BIN_OP with string value ("+", "-", etc.)
+  - Identifiers in expressions → WIRE_DECL nodes (not SIGNAL_REF)
+  - Token types already added in prior partial work: PLUS_ASSIGN through INSIDE_KW
+  - Operator tokenization for ++/--/+=/etc. already in tokenizer
+  - Missing: `inside` keyword in tokenizer, all logic implementations, tests
+
+CHANGES MADE:
+
+1. Tokenizer — inside keyword (verilog_parser.cpp ~line 343):
+   - Added: `else if (ident == "inside") tokens.push_back({Token::INSIDE_KW, ...})`
+
+2. Compound assignments in parse_statement() (~line 2955):
+   - After LEQ/ASSIGN checks, added PLUS_ASSIGN through CARET_ASSIGN dispatch
+   - Desugar: `x += rhs` → BLOCK_ASSIGN(x, BIN_OP("+", WIRE_DECL(x), rhs))
+   - Maps: += → "+", -= → "-", *= → "*", &= → "&", |= → "|", ^= → "^"
+
+3. Postfix ++/-- in parse_statement() (~line 2937):
+   - After target IDENT extracted, check for INC_OP/DEC_OP
+   - Desugar: `x++` → BLOCK_ASSIGN(x, BIN_OP("+", WIRE_DECL(x), NUMBER_LITERAL(1)))
+   - `x--` → same with "-"
+
+4. Prefix ++/-- in parse_statement() (~line 2648):
+   - Before if/case/for dispatch, check INC_OP/DEC_OP tokens
+   - `++x` → same desugaring as postfix
+
+5. inside operator in parse_equality() (~line 456):
+   - After equality loop, check for INSIDE_KW token
+   - Parse `inside { values }` as list of match items
+   - Single value: desugar to BIN_OP("==", left, value)
+   - Range [lo:hi]: desugar to BIN_OP("&&", BIN_OP(">=",left,lo), BIN_OP("<=",left,hi))
+   - Multiple items chained with BIN_OP("||", ...)
+
+6. .* implicit port connection in parse_module_inst() (~line 990):
+   - When DOT followed by STAR, push wildcard marker {"*", "*"}
+   - After parsing all connections, expand wildcard:
+     * Collect explicitly-connected ports
+     * For each port in module_defs_ not explicitly connected,
+       auto-connect if matching net exists in net_map_ or bus_ranges_
+
+7. For-loop SV increment in parse_for_loop() (~line 3130):
+   - Replaced simple skip-to-RPAREN with full increment parsing:
+     * `i++` / `++i` → step=1
+     * `i--` / `--i` → step=-1
+     * `i += N` → step=N
+     * `i -= N` → step=-N
+     * `i = i + N` → fallback skip-to-paren (existing behavior)
+
+BUILD: Zero errors, zero warnings.
+
+TESTS — test_phase52.cpp (23 tests):
+  Tests 1-6:   Compound assigns (+=, -=, *=, &=, |=, ^=)
+  Tests 7-10:  Postfix/prefix increment/decrement
+  Tests 11-13: For-loop with i++, i=i+1, i+=2
+  Tests 14-16: Inside operator (single values, ranges, mixed)
+  Tests 17-18: .* port auto-connect (basic + explicit override)
+  Test 19:     $clog2 verification (still working)
+  Tests 20-23: Mixed scenarios (always_comb, if-else, sequence, always_ff)
+
+REGRESSION: 51/51 PASS (0.89s normal)
+ASAN:       51/51 PASS, zero memory errors (359.82s)
+
+Total test phases: 52 (51 active + Phase44 SAT excluded from quick regression)
+
+PENDING COMMIT (not pushed — Rule 7):
+  All Tier 0-3 + SV Phase 1-4 changes are local.
+================================================================================
