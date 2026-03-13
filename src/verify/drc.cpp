@@ -1865,4 +1865,503 @@ void DrcEngine::generate_em_rules(int num_metal_layers) {
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// Enhanced DRC checks — via enclosure, density uniformity, off-grid,
+// per-layer antenna, min area, waiver system, rule deck parser
+// ══════════════════════════════════════════════════════════════════════
+
+void DrcEngine::add_via_enclosure_rule(const ViaEnclosureRule& rule) {
+    via_enclosure_rules_.push_back(rule);
+}
+
+int DrcEngine::check_via_enclosure() {
+    int violations = 0;
+    for (auto& rule : via_enclosure_rules_) {
+        for (auto& via : pd_.vias) {
+            if (via.lower_layer != rule.via_layer && via.upper_layer != rule.via_layer)
+                continue;
+
+            // Check enclosure by upper metal (metal_above)
+            double best_enc_above = -1.0;
+            for (auto& w : pd_.wires) {
+                if (w.layer != rule.metal_above) continue;
+                Rect wr(std::min(w.start.x, w.end.x) - w.width / 2,
+                        std::min(w.start.y, w.end.y) - w.width / 2,
+                        std::max(w.start.x, w.end.x) + w.width / 2,
+                        std::max(w.start.y, w.end.y) + w.width / 2);
+                if (!wr.contains(via.position)) continue;
+                double enc_x = std::min(via.position.x - wr.x0, wr.x1 - via.position.x);
+                double enc_y = std::min(via.position.y - wr.y0, wr.y1 - via.position.y);
+                double enc = std::min(enc_x, enc_y);
+                if (best_enc_above < 0 || enc > best_enc_above)
+                    best_enc_above = enc;
+            }
+            if (best_enc_above >= 0 && best_enc_above < rule.enclosure_above)
+                violations++;
+
+            // Check enclosure by lower metal (metal_below)
+            double best_enc_below = -1.0;
+            for (auto& w : pd_.wires) {
+                if (w.layer != rule.metal_below) continue;
+                Rect wr(std::min(w.start.x, w.end.x) - w.width / 2,
+                        std::min(w.start.y, w.end.y) - w.width / 2,
+                        std::max(w.start.x, w.end.x) + w.width / 2,
+                        std::max(w.start.y, w.end.y) + w.width / 2);
+                if (!wr.contains(via.position)) continue;
+                double enc_x = std::min(via.position.x - wr.x0, wr.x1 - via.position.x);
+                double enc_y = std::min(via.position.y - wr.y0, wr.y1 - via.position.y);
+                double enc = std::min(enc_x, enc_y);
+                if (best_enc_below < 0 || enc > best_enc_below)
+                    best_enc_below = enc;
+            }
+            if (best_enc_below >= 0 && best_enc_below < rule.enclosure_below)
+                violations++;
+        }
+    }
+    return violations;
+}
+
+void DrcEngine::add_density_rule(const DensityRule& rule) {
+    density_rules_.push_back(rule);
+}
+
+int DrcEngine::check_density_uniformity() {
+    int violations = 0;
+    for (auto& rule : density_rules_) {
+        double die_w = pd_.die_area.width();
+        double die_h = pd_.die_area.height();
+        if (die_w <= 0 || die_h <= 0 || rule.window_size <= 0 || rule.window_step <= 0)
+            continue;
+
+        // Collect wire bounding boxes for this layer
+        struct WireRect { double x0, y0, x1, y1; };
+        std::vector<WireRect> layer_wires;
+        for (auto& w : pd_.wires) {
+            if (w.layer != rule.layer) continue;
+            layer_wires.push_back({
+                std::min(w.start.x, w.end.x) - w.width / 2,
+                std::min(w.start.y, w.end.y) - w.width / 2,
+                std::max(w.start.x, w.end.x) + w.width / 2,
+                std::max(w.start.y, w.end.y) + w.width / 2
+            });
+        }
+
+        double window_area = rule.window_size * rule.window_size;
+        for (double wy = pd_.die_area.y0; wy + rule.window_size <= pd_.die_area.y1;
+             wy += rule.window_step) {
+            for (double wx = pd_.die_area.x0; wx + rule.window_size <= pd_.die_area.x1;
+                 wx += rule.window_step) {
+                double wx1 = wx + rule.window_size;
+                double wy1 = wy + rule.window_size;
+
+                // Sum metal area within this window
+                double metal_area = 0;
+                for (auto& wr : layer_wires) {
+                    double ox0 = std::max(wr.x0, wx);
+                    double oy0 = std::max(wr.y0, wy);
+                    double ox1 = std::min(wr.x1, wx1);
+                    double oy1 = std::min(wr.y1, wy1);
+                    if (ox1 > ox0 && oy1 > oy0)
+                        metal_area += (ox1 - ox0) * (oy1 - oy0);
+                }
+
+                double density = metal_area / window_area;
+                if (density < rule.min_density || density > rule.max_density)
+                    violations++;
+            }
+        }
+    }
+    return violations;
+}
+
+void DrcEngine::add_grid_rule(const GridRule& rule) {
+    grid_rules_.push_back(rule);
+}
+
+int DrcEngine::check_off_grid() {
+    int violations = 0;
+    auto on_grid = [](double coord, double grid) -> bool {
+        if (grid <= 0) return true;
+        double snapped = std::round(coord / grid) * grid;
+        return std::abs(coord - snapped) < 1e-9;
+    };
+
+    for (auto& rule : grid_rules_) {
+        // Check wire endpoints
+        for (auto& w : pd_.wires) {
+            if (w.layer != rule.layer) continue;
+            if (!on_grid(w.start.x, rule.grid_x) || !on_grid(w.start.y, rule.grid_y))
+                violations++;
+            if (!on_grid(w.end.x, rule.grid_x) || !on_grid(w.end.y, rule.grid_y))
+                violations++;
+        }
+        // Check via positions
+        for (auto& v : pd_.vias) {
+            if (v.lower_layer != rule.layer && v.upper_layer != rule.layer) continue;
+            if (!on_grid(v.position.x, rule.grid_x) || !on_grid(v.position.y, rule.grid_y))
+                violations++;
+        }
+    }
+    return violations;
+}
+
+void DrcEngine::add_antenna_rule(const AntennaRule& rule) {
+    antenna_rules_.push_back(rule);
+}
+
+int DrcEngine::check_antenna_per_layer() {
+    int violations = 0;
+
+    // Compute total gate area (~30% of cell area as proxy)
+    double gate_area = 0;
+    for (auto& c : pd_.cells)
+        gate_area += c.width * c.height * 0.3;
+    if (gate_area <= 0) return 0;
+
+    // Build per-layer metal area map
+    std::unordered_map<int, double> layer_metal_area;
+    for (auto& w : pd_.wires)
+        layer_metal_area[w.layer] += wire_area(w);
+
+    // Check per-layer and cumulative ratios
+    for (auto& rule : antenna_rules_) {
+        // Per-layer ratio
+        double area = layer_metal_area[rule.layer];
+        double ratio = area / gate_area;
+        if (rule.max_ratio > 0 && ratio > rule.max_ratio)
+            violations++;
+
+        // Cumulative ratio: sum metal area from layer 0 up to this layer
+        if (rule.max_cum_ratio > 0) {
+            double cum_area = 0;
+            for (auto& [layer, a] : layer_metal_area) {
+                if (layer <= rule.layer)
+                    cum_area += a;
+            }
+            double cum_ratio = cum_area / gate_area;
+            if (cum_ratio > rule.max_cum_ratio)
+                violations++;
+        }
+    }
+    return violations;
+}
+
+void DrcEngine::add_min_area_rule(const MinAreaRule& rule) {
+    min_area_rules_.push_back(rule);
+}
+
+int DrcEngine::check_min_area_enhanced() {
+    int violations = 0;
+    for (auto& rule : min_area_rules_) {
+        for (auto& w : pd_.wires) {
+            if (w.layer != rule.layer) continue;
+            double a = wire_area(w);
+            if (a < rule.min_area)
+                violations++;
+        }
+    }
+    return violations;
+}
+
+void DrcEngine::add_waiver(const DrcWaiver& waiver) {
+    waivers_.push_back(waiver);
+}
+
+bool DrcEngine::is_waived(const std::string& rule, int layer, double x, double y) const {
+    for (auto& w : waivers_) {
+        if (!w.rule_name.empty() && w.rule_name != rule) continue;
+        if (w.layer >= 0 && w.layer != layer) continue;
+        if (x >= w.x_lo && x <= w.x_hi && y >= w.y_lo && y <= w.y_hi)
+            return true;
+    }
+    return false;
+}
+
+// ── Rule deck parser ─────────────────────────────────────────────────
+
+namespace {
+
+// Map layer name tokens to DrcLayer::Id values
+static int resolve_layer_name(const std::string& name) {
+    static const std::unordered_map<std::string, int> lmap = {
+        {"NWELL", DrcLayer::NWELL}, {"PWELL", DrcLayer::PWELL}, {"DNW", DrcLayer::DNW},
+        {"DIFF", DrcLayer::DIFF}, {"TAP", DrcLayer::TAP},
+        {"POLY", DrcLayer::POLY}, {"NPC", DrcLayer::NPC},
+        {"NSDM", DrcLayer::NSDM}, {"PSDM", DrcLayer::PSDM},
+        {"HVI", DrcLayer::HVI}, {"HVNTM", DrcLayer::HVNTM},
+        {"LICON", DrcLayer::LICON}, {"LI1", DrcLayer::LI1}, {"MCON", DrcLayer::MCON},
+        {"MET1", DrcLayer::MET1}, {"M1", DrcLayer::MET1},
+        {"VIA1", DrcLayer::VIA1}, {"V1", DrcLayer::VIA1},
+        {"MET2", DrcLayer::MET2}, {"M2", DrcLayer::MET2},
+        {"VIA2", DrcLayer::VIA2}, {"V2", DrcLayer::VIA2},
+        {"MET3", DrcLayer::MET3}, {"M3", DrcLayer::MET3},
+        {"VIA3", DrcLayer::VIA3}, {"V3", DrcLayer::VIA3},
+        {"MET4", DrcLayer::MET4}, {"M4", DrcLayer::MET4},
+        {"VIA4", DrcLayer::VIA4}, {"V4", DrcLayer::VIA4},
+        {"MET5", DrcLayer::MET5}, {"M5", DrcLayer::MET5},
+        {"PAD", DrcLayer::PAD}, {"RDL", DrcLayer::RDL},
+    };
+    auto upper = to_upper(name);
+    auto it = lmap.find(upper);
+    return (it != lmap.end()) ? it->second : -1;
+}
+
+} // anonymous namespace
+
+int DrcEngine::load_rule_deck(const std::string& filename) {
+    std::ifstream ifs(filename);
+    if (!ifs.is_open()) {
+        std::cerr << "[DRC] ERROR: Cannot open rule deck: " << filename << "\n";
+        return 0;
+    }
+    std::string content((std::istreambuf_iterator<char>(ifs)),
+                         std::istreambuf_iterator<char>());
+    ifs.close();
+    return load_rule_deck_string(content);
+}
+
+int DrcEngine::load_rule_deck_string(const std::string& deck) {
+    int loaded = 0;
+    std::istringstream iss(deck);
+    std::string line;
+
+    while (std::getline(iss, line)) {
+        // Strip leading whitespace
+        size_t start = line.find_first_not_of(" \t");
+        if (start == std::string::npos) continue;
+        line = line.substr(start);
+        // Skip comments and empty lines
+        if (line.empty() || line[0] == '#' || line[0] == '/' || line[0] == ';')
+            continue;
+
+        std::istringstream ls(line);
+        std::string keyword;
+        ls >> keyword;
+        std::string kw = to_upper(keyword);
+
+        if (kw == "SPACING" || kw == "WIDTH") {
+            // SPACING M1 0.065 / WIDTH M1 0.04
+            std::string layer_name;
+            double value;
+            if (!(ls >> layer_name >> value)) continue;
+            int layer = resolve_layer_name(layer_name);
+            if (layer < 0) continue;
+
+            DrcRule rule;
+            rule.layer = layer;
+            rule.value = value;
+            rule.enabled = true;
+            if (kw == "SPACING") {
+                rule.type = DrcRule::MIN_SPACING;
+                rule.name = to_upper(layer_name) + ".S.DECK";
+                rule.description = layer_name + " spacing from rule deck";
+            } else {
+                rule.type = DrcRule::MIN_WIDTH;
+                rule.name = to_upper(layer_name) + ".W.DECK";
+                rule.description = layer_name + " width from rule deck";
+            }
+            rules_.push_back(rule);
+            loaded++;
+
+        } else if (kw == "ENCLOSURE") {
+            // ENCLOSURE VIA1 M1 M2 0.03 0.04
+            std::string via_name, below_name, above_name;
+            double enc_below, enc_above;
+            if (!(ls >> via_name >> below_name >> above_name >> enc_below >> enc_above))
+                continue;
+            int via_layer = resolve_layer_name(via_name);
+            int metal_below = resolve_layer_name(below_name);
+            int metal_above = resolve_layer_name(above_name);
+            if (via_layer < 0 || metal_below < 0 || metal_above < 0) continue;
+            via_enclosure_rules_.push_back({via_layer, metal_above, metal_below,
+                                            enc_above, enc_below});
+            loaded++;
+
+        } else if (kw == "DENSITY") {
+            // DENSITY M1 0.2 0.8 50.0 10.0
+            std::string layer_name;
+            double min_d, max_d, win_size, win_step;
+            if (!(ls >> layer_name >> min_d >> max_d >> win_size >> win_step)) continue;
+            int layer = resolve_layer_name(layer_name);
+            if (layer < 0) continue;
+            density_rules_.push_back({layer, min_d, max_d, win_size, win_step});
+            loaded++;
+
+        } else if (kw == "GRID") {
+            // GRID M1 0.005 0.005
+            std::string layer_name;
+            double gx, gy;
+            if (!(ls >> layer_name >> gx >> gy)) continue;
+            int layer = resolve_layer_name(layer_name);
+            if (layer < 0) continue;
+            grid_rules_.push_back({layer, gx, gy});
+            loaded++;
+
+        } else if (kw == "ANTENNA") {
+            // ANTENNA M1 400.0 [cumulative_ratio]
+            std::string layer_name;
+            double max_ratio;
+            if (!(ls >> layer_name >> max_ratio)) continue;
+            int layer = resolve_layer_name(layer_name);
+            if (layer < 0) continue;
+            double cum_ratio = 0;
+            ls >> cum_ratio; // optional
+            antenna_rules_.push_back({layer, max_ratio, cum_ratio});
+            loaded++;
+
+        } else if (kw == "MINAREA") {
+            // MINAREA M1 0.01
+            std::string layer_name;
+            double area;
+            if (!(ls >> layer_name >> area)) continue;
+            int layer = resolve_layer_name(layer_name);
+            if (layer < 0) continue;
+            min_area_rules_.push_back({layer, area});
+            loaded++;
+        }
+    }
+
+    std::cout << "[DRC] Loaded " << loaded << " rules from rule deck string\n";
+    return loaded;
+}
+
+// ── run_enhanced ─────────────────────────────────────────────────────
+DrcResult DrcEngine::run_enhanced() {
+    auto t0 = std::chrono::high_resolution_clock::now();
+    build_spatial_index();
+    DrcResult r;
+
+    // Run all existing checks
+    check_min_width(r);
+    check_max_width(r);
+    check_min_spacing(r);
+    check_min_area(r);
+    check_boundary(r);
+    check_density(r);
+    check_via_rules(r);
+    check_wide_wire_spacing(r);
+    check_end_of_line(r);
+    check_antenna(r);
+    check_min_step(r);
+    check_jog(r);
+    check_parallel_run(r);
+    check_cut_rules(r);
+    check_notch_fill(r);
+    check_enclosure(r);
+    check_min_hole(r);
+    check_conditional_spacing(r);
+    check_conditional_enclosure(r);
+
+    // Advanced rule checks
+    check_em_width(r);
+    check_multi_patterning(r);
+    check_stress_voiding(r);
+    check_esd_spacing(r);
+    check_guard_ring(r);
+    check_reliability_width(r);
+    check_temp_variant(r);
+
+    // ── New enhanced checks ──────────────────────────────────────────
+
+    // Via enclosure
+    {
+        int enc_viols = check_via_enclosure();
+        r.via_enclosure_violations = enc_viols;
+        for (int i = 0; i < enc_viols; i++) {
+            r.violations++;
+            r.errors++;
+            r.total_rules++;
+            r.details.push_back({"VIA_ENCLOSURE", "Via enclosure insufficient",
+                                 {}, 0, 0, DrcViolation::ERROR});
+        }
+    }
+
+    // Density uniformity (window-based)
+    {
+        int dens_viols = check_density_uniformity();
+        r.density_uniformity_violations = dens_viols;
+        for (int i = 0; i < dens_viols; i++) {
+            r.violations++;
+            r.warnings++;
+            r.total_rules++;
+            r.details.push_back({"DENSITY_UNIFORMITY",
+                                 "Window density outside allowed range",
+                                 {}, 0, 0, DrcViolation::WARNING});
+        }
+    }
+
+    // Off-grid
+    {
+        int grid_viols = check_off_grid();
+        r.off_grid_violations = grid_viols;
+        for (int i = 0; i < grid_viols; i++) {
+            r.violations++;
+            r.errors++;
+            r.total_rules++;
+            r.details.push_back({"OFF_GRID", "Coordinate not on manufacturing grid",
+                                 {}, 0, 0, DrcViolation::ERROR});
+        }
+    }
+
+    // Per-layer antenna
+    {
+        int ant_viols = check_antenna_per_layer();
+        r.antenna_per_layer_violations = ant_viols;
+        for (int i = 0; i < ant_viols; i++) {
+            r.violations++;
+            r.warnings++;
+            r.total_rules++;
+            r.details.push_back({"ANTENNA_PER_LAYER",
+                                 "Per-layer antenna ratio exceeded",
+                                 {}, 0, 0, DrcViolation::WARNING});
+        }
+    }
+
+    // Min area (enhanced)
+    {
+        int area_viols = check_min_area_enhanced();
+        r.min_area_enhanced_violations = area_viols;
+        for (int i = 0; i < area_viols; i++) {
+            r.violations++;
+            r.warnings++;
+            r.total_rules++;
+            r.details.push_back({"MIN_AREA_ENH",
+                                 "Wire area below minimum for layer",
+                                 {}, 0, 0, DrcViolation::WARNING});
+        }
+    }
+
+    // Filter waived violations
+    if (!waivers_.empty()) {
+        std::vector<DrcViolation> filtered;
+        filtered.reserve(r.details.size());
+        int waived = 0;
+        for (auto& v : r.details) {
+            double cx = (v.bbox.x0 + v.bbox.x1) / 2;
+            double cy = (v.bbox.y0 + v.bbox.y1) / 2;
+            // Try to extract layer from rule name (heuristic: first matching waiver layer or -1)
+            bool w = is_waived(v.rule_name, -1, cx, cy);
+            if (w) {
+                waived++;
+            } else {
+                filtered.push_back(std::move(v));
+            }
+        }
+        int removed = static_cast<int>(r.details.size()) - static_cast<int>(filtered.size());
+        r.violations -= removed;
+        r.waived_violations = waived;
+        r.details = std::move(filtered);
+    }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    r.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    r.message = r.violations == 0
+        ? "DRC CLEAN (enhanced) — " + std::to_string(r.total_rules) + " rules checked"
+        : std::to_string(r.violations) + " violations (" +
+          std::to_string(r.errors) + " errors, " +
+          std::to_string(r.warnings) + " warnings) across " +
+          std::to_string(r.total_rules) + " rules [enhanced]";
+    return r;
+}
+
 } // namespace sf

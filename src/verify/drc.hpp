@@ -161,6 +161,14 @@ struct DrcResult {
     int guard_ring_violations = 0;
     int reliability_violations = 0;
     int temp_violations = 0;
+
+    // Enhanced check violation counts
+    int via_enclosure_violations = 0;
+    int density_uniformity_violations = 0;
+    int off_grid_violations = 0;
+    int antenna_per_layer_violations = 0;
+    int min_area_enhanced_violations = 0;
+    int waived_violations = 0;
 };
 
 class DrcEngine {
@@ -201,7 +209,80 @@ public:
 
     DrcResult check();
 
+    // ── Via enclosure checking ───────────────────────────────────────
+    struct ViaEnclosureRule {
+        int via_layer;
+        int metal_above;
+        int metal_below;
+        double enclosure_above;  // min enclosure on upper metal
+        double enclosure_below;  // min enclosure on lower metal
+    };
+    void add_via_enclosure_rule(const ViaEnclosureRule& rule);
+    int check_via_enclosure();
+
+    // ── Density uniformity (window-based) ────────────────────────────
+    struct DensityRule {
+        int layer;
+        double min_density;     // e.g., 0.2 (20%)
+        double max_density;     // e.g., 0.8 (80%)
+        double window_size;     // um, sliding window size
+        double window_step;     // um, step between windows
+    };
+    void add_density_rule(const DensityRule& rule);
+    int check_density_uniformity();
+
+    // ── Off-grid checking ────────────────────────────────────────────
+    struct GridRule {
+        int layer;
+        double grid_x;          // manufacturing grid X pitch
+        double grid_y;          // manufacturing grid Y pitch
+    };
+    void add_grid_rule(const GridRule& rule);
+    int check_off_grid();
+
+    // ── Per-layer antenna ratio ──────────────────────────────────────
+    struct AntennaRule {
+        int layer;
+        double max_ratio;       // max metal_area / gate_area ratio
+        double max_cum_ratio;   // cumulative across layers
+    };
+    void add_antenna_rule(const AntennaRule& rule);
+    int check_antenna_per_layer();
+
+    // ── Minimum area rules ───────────────────────────────────────────
+    struct MinAreaRule {
+        int layer;
+        double min_area;        // um^2
+    };
+    void add_min_area_rule(const MinAreaRule& rule);
+    int check_min_area_enhanced();
+
+    // ── Soft DRC waiver system ───────────────────────────────────────
+    struct DrcWaiver {
+        std::string rule_name;
+        int layer;
+        double x_lo, y_lo, x_hi, y_hi;  // waiver region
+        std::string reason;
+    };
+    void add_waiver(const DrcWaiver& waiver);
+    bool is_waived(const std::string& rule, int layer, double x, double y) const;
+
+    // ── Rule deck parser (simplified Calibre-like format) ────────────
+    // Format: "SPACING M1 0.065" / "WIDTH M1 0.04" / etc.
+    int load_rule_deck(const std::string& filename);
+    int load_rule_deck_string(const std::string& deck);
+
+    // ── Enhanced DRC run with all new checks ─────────────────────────
+    DrcResult run_enhanced();
+
 private:
+    std::vector<ViaEnclosureRule> via_enclosure_rules_;
+    std::vector<DensityRule> density_rules_;
+    std::vector<GridRule> grid_rules_;
+    std::vector<AntennaRule> antenna_rules_;
+    std::vector<MinAreaRule> min_area_rules_;
+    std::vector<DrcWaiver> waivers_;
+
     const PhysicalDesign& pd_;
     std::vector<DrcRule> rules_;
     DrcConfig config_;
