@@ -93,6 +93,47 @@ public:
     // Mark clock gating cells (ICGs) — will be auto-detected if not set
     void add_clock_gating_cell(GateId gid) { clock_gating_cells_.insert(gid); }
 
+    // Bounded retiming
+    struct BoundedConfig {
+        int max_forward_moves;
+        int max_backward_moves;
+        bool preserve_io_latency;
+    };
+    struct BoundedResult {
+        int forward_moves;
+        int backward_moves;
+        double delay_improvement_ns;
+        bool io_latency_preserved;
+    };
+    BoundedResult retime_bounded(Netlist& nl, const BoundedConfig& cfg);
+
+    // Power-aware retiming
+    struct PowerRetimeResult {
+        double switching_power_before;
+        double switching_power_after;
+        double power_reduction_pct;
+        int registers_moved;
+    };
+    PowerRetimeResult retime_power_aware(Netlist& nl);
+
+    // Incremental retiming
+    struct IncrementalRetimeResult {
+        int registers_adjusted;
+        double timing_improvement;
+        double runtime_ms;
+    };
+    IncrementalRetimeResult retime_incremental(Netlist& nl, const std::vector<int>& changed_gates);
+
+    // Sequential optimization integration
+    struct SeqOptResult {
+        double delay_before;
+        double delay_after;
+        int registers_before;
+        int registers_after;
+        int iterations;
+    };
+    SeqOptResult sequential_optimize(Netlist& nl, int max_iter = 5);
+
 private:
     RetimingConfig config_;
     const LibertyLibrary* lib_ = nullptr;

@@ -808,4 +808,211 @@ std::vector<EmLayerRule> EmAnalyzer::default_rules_7nm() {
     };
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+//  Enhanced: Current Density Extraction
+// ═══════════════════════════════════════════════════════════════════════
+
+std::vector<CurrentDensity> EmAnalyzer::extract_current_density() const {
+    std::vector<CurrentDensity> result;
+    if (!pd_ || !nl_) return result;
+
+    auto rules = stored_cfg_.layer_rules.empty() ?
+                 default_rules_sky130() : stored_cfg_.layer_rules;
+
+    for (int w = 0; w < (int)pd_->wires.size(); ++w) {
+        auto& wire = pd_->wires[w];
+        int layer = wire.layer;
+        if (layer < 0 || layer >= (int)rules.size()) continue;
+        if (rules[layer].is_via) continue;
+
+        auto& rule = rules[std::min(layer, (int)rules.size() - 1)];
+        double width = rule.width_um;
+        double thickness = rule.thickness_um;
+
+        // Estimate current from wire length and resistance
+        double dx = wire.end.x - wire.start.x;
+        double dy = wire.end.y - wire.start.y;
+        double length = std::sqrt(dx * dx + dy * dy);
+        if (length <= 0) continue;
+
+        double r_wire = rule.resistivity_ohm_um * length / (width * thickness);
+        // Estimate current from switching activity
+        double avg_current = stored_cfg_.supply_voltage * stored_cfg_.activity_factor /
+                            (r_wire > 0 ? r_wire : 1.0);
+        double peak_current = avg_current * 3.0;
+        double j = current_density(avg_current, width, thickness);
+        double j_limit = rule.jdc_limit_ma_per_um * stored_cfg_.jdc_margin;
+
+        CurrentDensity cd;
+        cd.wire_idx = w;
+        cd.layer = layer;
+        cd.avg_current_ma = avg_current;
+        cd.peak_current_ma = peak_current;
+        cd.current_density_ma_per_um2 = j;
+        cd.limit_ma_per_um2 = j_limit;
+        cd.exceeds_limit = j > j_limit;
+        result.push_back(cd);
+    }
+    return result;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Enhanced: Blech Effect Check
+// ═══════════════════════════════════════════════════════════════════════
+
+std::vector<BlechResult> EmAnalyzer::check_blech_effect() const {
+    std::vector<BlechResult> result;
+    if (!pd_) return result;
+
+    auto rules = stored_cfg_.layer_rules.empty() ?
+                 default_rules_sky130() : stored_cfg_.layer_rules;
+
+    // Blech product threshold (Ω·B) / (Z·e·ρ) ~ empirical constant
+    // For Cu: Blech_length ≈ threshold / J  where threshold ~ 10 mA·μm/μm²
+    double blech_threshold = 10.0;  // mA·μm / μm²
+
+    for (int w = 0; w < (int)pd_->wires.size(); ++w) {
+        auto& wire = pd_->wires[w];
+        int layer = wire.layer;
+        if (layer < 0 || layer >= (int)rules.size()) continue;
+        if (rules[layer].is_via) continue;
+
+        auto& rule = rules[std::min(layer, (int)rules.size() - 1)];
+        double width = rule.width_um;
+        double thickness = rule.thickness_um;
+
+        double dx = wire.end.x - wire.start.x;
+        double dy = wire.end.y - wire.start.y;
+        double length = std::sqrt(dx * dx + dy * dy);
+        if (length <= 0) continue;
+
+        double r_wire = rule.resistivity_ohm_um * length / (width * thickness);
+        double avg_current = stored_cfg_.supply_voltage * stored_cfg_.activity_factor /
+                            (r_wire > 0 ? r_wire : 1.0);
+        double j = current_density(avg_current, width, thickness);
+
+        double blech_length = (j > 0) ? blech_threshold / j : 1e6;
+
+        BlechResult br;
+        br.wire_idx = w;
+        br.wire_length_um = length;
+        br.blech_length_um = blech_length;
+        br.is_immune = length < blech_length;
+        br.current_density_ma_per_um2 = j;
+        result.push_back(br);
+    }
+    return result;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Enhanced: EM Fix Suggestions
+// ═══════════════════════════════════════════════════════════════════════
+
+std::vector<EmFix> EmAnalyzer::suggest_em_fixes() const {
+    std::vector<EmFix> result;
+    auto densities = extract_current_density();
+
+    auto rules = stored_cfg_.layer_rules.empty() ?
+                 default_rules_sky130() : stored_cfg_.layer_rules;
+
+    for (auto& cd : densities) {
+        if (!cd.exceeds_limit) continue;
+
+        auto& rule = rules[std::min(cd.layer, (int)rules.size() - 1)];
+
+        // Primary fix: widen wire (J ∝ 1/width)
+        EmFix fix;
+        fix.wire_idx = cd.wire_idx;
+        fix.type = EmFix::WIDEN_WIRE;
+        fix.current_width = rule.width_um;
+        // Need to reduce J to limit: new_width = current * width / (limit * thickness)
+        double needed_width = (cd.limit_ma_per_um2 > 0 && rule.thickness_um > 0) ?
+            cd.avg_current_ma / (cd.limit_ma_per_um2 * rule.thickness_um) : rule.width_um * 2;
+        fix.suggested_width = std::max(needed_width, rule.width_um * 1.5);
+        fix.improvement_pct = (fix.suggested_width > fix.current_width) ?
+            (1.0 - fix.current_width / fix.suggested_width) * 100.0 : 0;
+        result.push_back(fix);
+
+        // Secondary fix: add via for current distribution
+        if (cd.current_density_ma_per_um2 > cd.limit_ma_per_um2 * 1.5) {
+            EmFix via_fix;
+            via_fix.wire_idx = cd.wire_idx;
+            via_fix.type = EmFix::ADD_VIA;
+            via_fix.current_width = rule.width_um;
+            via_fix.suggested_width = rule.width_um;
+            via_fix.improvement_pct = 50.0;  // adding via splits current
+            result.push_back(via_fix);
+        }
+    }
+    return result;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Enhanced: Redundant Via Addition
+// ═══════════════════════════════════════════════════════════════════════
+
+ViaEmResult EmAnalyzer::add_redundant_vias() const {
+    ViaEmResult result{};
+    if (!pd_) return result;
+
+    auto rules = stored_cfg_.layer_rules.empty() ?
+                 default_rules_sky130() : stored_cfg_.layer_rules;
+
+    for (int v = 0; v < (int)pd_->vias.size(); ++v) {
+        auto& via = pd_->vias[v];
+        result.total_vias++;
+
+        // Find via rule
+        double via_limit = 0.5;  // default
+        for (auto& r : rules) {
+            if (r.is_via && r.via_current_limit_ma > 0) {
+                via_limit = r.via_current_limit_ma;
+                break;
+            }
+        }
+
+        // Estimate via current from nearby wire activity
+        double via_current = stored_cfg_.supply_voltage * stored_cfg_.activity_factor * 0.1;
+
+        if (via_current > via_limit * 0.7) {
+            result.single_vias_at_risk++;
+            result.redundant_vias_added++;
+        }
+    }
+
+    result.reliability_improvement_pct = result.total_vias > 0 ?
+        (double)result.redundant_vias_added / result.total_vias * 100.0 : 0;
+    return result;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Enhanced: Full Enhanced EM Run
+// ═══════════════════════════════════════════════════════════════════════
+
+EmResult EmAnalyzer::run_enhanced() const {
+    if (!nl_ || !pd_) return {};
+
+    EmResult r = analyze(*nl_, *pd_, stored_cfg_);
+
+    auto densities = extract_current_density();
+    auto blech = check_blech_effect();
+    auto fixes = suggest_em_fixes();
+    auto vias = add_redundant_vias();
+
+    int exceeding = 0;
+    for (auto& cd : densities)
+        if (cd.exceeds_limit) exceeding++;
+
+    int immune = 0;
+    for (auto& b : blech)
+        if (b.is_immune) immune++;
+
+    r.summary += " | Enhanced: " +
+        std::to_string(exceeding) + " density violations, " +
+        std::to_string(immune) + "/" + std::to_string(blech.size()) + " Blech-immune, " +
+        std::to_string(fixes.size()) + " fixes suggested, " +
+        std::to_string(vias.redundant_vias_added) + " redundant vias";
+    return r;
+}
+
 } // namespace sf

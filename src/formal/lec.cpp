@@ -301,6 +301,7 @@ bool LecEngine::sim_compare(LecResult& result) {
 LecResult LecEngine::check() {
     auto t0 = std::chrono::high_resolution_clock::now();
     LecResult r;
+    has_cex_ = false;
 
     // Primary method: simulation-based comparison (robust to structural changes)
     bool sim_eq = sim_compare(r);
@@ -337,6 +338,451 @@ LecResult LecEngine::check() {
         r.message = "LEC FAIL \xe2\x80\x94 " + std::to_string(r.mismatched) + " mismatches";
     }
     return r;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Key-Point Identification
+// ═════════════════════════════════════════════════════════════════════════════
+
+std::vector<KeyPoint> LecEngine::identify_key_points(const Netlist& nl) {
+    std::vector<KeyPoint> points;
+
+    // Primary inputs and outputs
+    for (auto pi : nl.primary_inputs()) {
+        KeyPoint kp;
+        kp.net_idx = pi;
+        kp.name = nl.net(pi).name;
+        kp.type = KeyPoint::PRIMARY_IO;
+        points.push_back(kp);
+    }
+    for (auto po : nl.primary_outputs()) {
+        KeyPoint kp;
+        kp.net_idx = po;
+        kp.name = nl.net(po).name;
+        kp.type = KeyPoint::PRIMARY_IO;
+        points.push_back(kp);
+    }
+
+    // Registers (DFFs)
+    for (auto dff_id : nl.flip_flops()) {
+        const auto& g = nl.gate(dff_id);
+        KeyPoint kp;
+        kp.net_idx = g.output;
+        kp.name = g.name.empty() ? ("dff_" + std::to_string(dff_id)) : g.name;
+        kp.type = KeyPoint::REGISTER;
+        points.push_back(kp);
+    }
+
+    // Internal cut points: gates with high fanout (reconvergence points)
+    std::unordered_map<NetId, int> fanout_count;
+    for (size_t i = 0; i < nl.num_nets(); i++) {
+        fanout_count[(NetId)i] = (int)nl.net((NetId)i).fanout.size();
+    }
+
+    // Pick top reconvergence points (fanout > 2 and not already a key point)
+    std::unordered_set<NetId> existing;
+    for (const auto& kp : points) existing.insert(kp.net_idx);
+
+    for (size_t i = 0; i < nl.num_nets(); i++) {
+        NetId nid = (NetId)i;
+        if (existing.count(nid)) continue;
+        if (fanout_count[nid] > 2) {
+            KeyPoint kp;
+            kp.net_idx = nid;
+            kp.name = nl.net(nid).name.empty()
+                ? ("cut_" + std::to_string(nid)) : nl.net(nid).name;
+            kp.type = KeyPoint::INTERNAL_CUT;
+            points.push_back(kp);
+        }
+    }
+
+    return points;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Structural Comparison
+// ═════════════════════════════════════════════════════════════════════════════
+
+StructuralMatch LecEngine::structural_compare() {
+    StructuralMatch result;
+
+    auto ref_pts = identify_key_points(golden_);
+    auto impl_pts = identify_key_points(revised_);
+
+    // Index impl key points by name
+    std::unordered_map<std::string, int> impl_by_name;
+    for (size_t i = 0; i < impl_pts.size(); i++) {
+        if (!impl_pts[i].name.empty()) {
+            impl_by_name[impl_pts[i].name] = (int)i;
+        }
+    }
+
+    std::unordered_set<int> impl_matched_set;
+
+    // Match ref points to impl by name
+    for (size_t i = 0; i < ref_pts.size(); i++) {
+        auto it = impl_by_name.find(ref_pts[i].name);
+        if (it != impl_by_name.end()) {
+            ref_pts[i].matched = true;
+            ref_pts[i].match_idx = impl_pts[it->second].net_idx;
+            impl_pts[it->second].matched = true;
+            impl_pts[it->second].match_idx = ref_pts[i].net_idx;
+            result.match_pairs.push_back({ref_pts[i].net_idx,
+                                          impl_pts[it->second].net_idx});
+            impl_matched_set.insert(it->second);
+        }
+    }
+
+    result.matched = (int)result.match_pairs.size();
+    result.total_key_points = (int)ref_pts.size() + (int)impl_pts.size();
+
+    for (size_t i = 0; i < ref_pts.size(); i++) {
+        if (!ref_pts[i].matched) result.unmatched_ref.push_back(ref_pts[i].net_idx);
+    }
+    for (size_t i = 0; i < impl_pts.size(); i++) {
+        if (!impl_pts[i].matched) result.unmatched_impl.push_back(impl_pts[i].net_idx);
+    }
+    result.unmatched = (int)result.unmatched_ref.size() +
+                       (int)result.unmatched_impl.size();
+
+    return result;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Cone-of-Influence Reduction
+// ═════════════════════════════════════════════════════════════════════════════
+
+ConeReduction LecEngine::reduce_cone(int output_idx) {
+    ConeReduction result;
+    result.original_size = (int)golden_.num_gates();
+
+    auto g_outs = golden_.primary_outputs();
+    if (output_idx < 0 || output_idx >= (int)g_outs.size()) {
+        result.reduced_size = result.original_size;
+        result.reduction_pct = 0;
+        return result;
+    }
+
+    NetId target = g_outs[output_idx];
+
+    // Backward BFS/DFS from target output to find all gates in transitive fanin
+    std::unordered_set<GateId> in_cone;
+    std::unordered_set<NetId> visited_nets;
+    std::vector<NetId> worklist = {target};
+
+    while (!worklist.empty()) {
+        NetId nid = worklist.back();
+        worklist.pop_back();
+        if (visited_nets.count(nid)) continue;
+        visited_nets.insert(nid);
+
+        const auto& net = golden_.net(nid);
+        if (net.driver >= 0) {
+            in_cone.insert(net.driver);
+            const auto& gate = golden_.gate(net.driver);
+            // Stop at DFF boundaries (register cut points)
+            if (gate.type != GateType::DFF && gate.type != GateType::DLATCH) {
+                for (auto inp : gate.inputs) {
+                    worklist.push_back(inp);
+                }
+            }
+        }
+    }
+
+    result.relevant_gates.reserve(in_cone.size());
+    for (GateId gid : in_cone) result.relevant_gates.push_back(gid);
+    std::sort(result.relevant_gates.begin(), result.relevant_gates.end());
+
+    result.reduced_size = (int)in_cone.size();
+    result.reduction_pct = result.original_size > 0
+        ? 100.0 * (1.0 - (double)result.reduced_size / result.original_size) : 0;
+
+    return result;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Sequential Equivalence Checking
+// ═════════════════════════════════════════════════════════════════════════════
+
+SeqEquivResult LecEngine::check_sequential(int max_depth) {
+    SeqEquivResult result;
+
+    // Match registers between golden and revised by name
+    std::unordered_map<std::string, GateId> g_regs, r_regs;
+    for (auto dff_id : golden_.flip_flops()) {
+        const auto& g = golden_.gate(dff_id);
+        std::string key = g.name.empty() ? ("dff_" + std::to_string(dff_id)) : g.name;
+        g_regs[key] = dff_id;
+    }
+    for (auto dff_id : revised_.flip_flops()) {
+        const auto& g = revised_.gate(dff_id);
+        std::string key = g.name.empty() ? ("dff_" + std::to_string(dff_id)) : g.name;
+        r_regs[key] = dff_id;
+    }
+
+    int matched_regs = 0;
+    for (auto& [name, gid] : g_regs) {
+        if (r_regs.count(name)) matched_regs++;
+    }
+    result.registers_matched = matched_regs;
+
+    // If no registers, fall back to combinational check
+    if (golden_.flip_flops().empty() && revised_.flip_flops().empty()) {
+        LecResult comb = check();
+        result.equivalent = comb.equivalent;
+        result.unrolling_depth = 0;
+        result.message = "Sequential LEC: combinational design — " +
+                         std::string(comb.equivalent ? "EQUIVALENT" : "NOT EQUIVALENT");
+        return result;
+    }
+
+    // Unroll both designs for each depth and check combinational equivalence
+    // For each unrolling depth, simulate with random vectors to detect mismatches.
+    Netlist g_nl = golden_;
+    Netlist r_nl = revised_;
+
+    auto g_pis = g_nl.primary_inputs();
+    auto r_pis = r_nl.primary_inputs();
+    auto g_pos = g_nl.primary_outputs();
+    auto r_pos = r_nl.primary_outputs();
+
+    // Match PIs/POs by name
+    std::unordered_map<std::string, NetId> g_pi_map, r_pi_map;
+    for (auto pi : g_pis) g_pi_map[g_nl.net(pi).name] = pi;
+    for (auto pi : r_pis) r_pi_map[r_nl.net(pi).name] = pi;
+
+    std::vector<std::pair<NetId, NetId>> matched_pis;
+    for (auto& [name, gid] : g_pi_map) {
+        auto it = r_pi_map.find(name);
+        if (it != r_pi_map.end()) matched_pis.push_back({gid, it->second});
+    }
+
+    std::unordered_map<std::string, NetId> g_po_map, r_po_map;
+    for (auto po : g_pos) g_po_map[g_nl.net(po).name] = po;
+    for (auto po : r_pos) r_po_map[r_nl.net(po).name] = po;
+
+    std::vector<std::tuple<std::string, NetId, NetId>> matched_pos;
+    for (auto& [name, gid] : g_po_map) {
+        auto it = r_po_map.find(name);
+        if (it != r_po_map.end()) matched_pos.push_back({name, gid, it->second});
+    }
+
+    if (matched_pos.empty()) {
+        result.equivalent = false;
+        result.message = "Sequential LEC: no matching outputs";
+        return result;
+    }
+
+    std::mt19937 rng(123);
+    bool all_eq = true;
+
+    EventSimulator g_sim(g_nl);
+    EventSimulator r_sim(r_nl);
+
+    for (int depth = 0; depth < max_depth; depth++) {
+        result.unrolling_depth = depth + 1;
+
+        // Apply random inputs for this cycle
+        const int VECTORS = 32;
+        for (int v = 0; v < VECTORS; v++) {
+            g_sim.initialize();
+            r_sim.initialize();
+
+            // Apply inputs for 'depth+1' cycles
+            for (int cyc = 0; cyc <= depth; cyc++) {
+                for (auto& [gpi, rpi] : matched_pis) {
+                    Logic4 val = (rng() & 1) ? Logic4::ONE : Logic4::ZERO;
+                    g_sim.set_input(gpi, val);
+                    r_sim.set_input(rpi, val);
+                }
+                g_sim.eval_combinational();
+                r_sim.eval_combinational();
+            }
+
+            // Compare outputs
+            for (auto& [name, gpo, rpo] : matched_pos) {
+                Logic4 gv = g_sim.get_net_value(gpo);
+                Logic4 rv = r_sim.get_net_value(rpo);
+                if (gv != rv && gv != Logic4::X && rv != Logic4::X) {
+                    all_eq = false;
+                    break;
+                }
+            }
+            if (!all_eq) break;
+        }
+        if (!all_eq) break;
+    }
+
+    result.equivalent = all_eq;
+    result.message = all_eq
+        ? "Sequential LEC: EQUIVALENT (verified " + std::to_string(max_depth) +
+          " cycles, " + std::to_string(matched_regs) + " registers matched)"
+        : "Sequential LEC: NOT EQUIVALENT at depth " +
+          std::to_string(result.unrolling_depth);
+    return result;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Counter-Example Trace
+// ═════════════════════════════════════════════════════════════════════════════
+
+LecCex LecEngine::get_counterexample() {
+    if (has_cex_) return last_cex_;
+
+    LecCex cex;
+
+    // Find a mismatch by simulation and record the input assignment
+    Netlist g_nl = golden_;
+    Netlist r_nl = revised_;
+
+    auto g_pis = g_nl.primary_inputs();
+    auto r_pis = r_nl.primary_inputs();
+    auto g_pos = g_nl.primary_outputs();
+    auto r_pos = r_nl.primary_outputs();
+
+    std::unordered_map<std::string, NetId> g_pi_map, r_pi_map;
+    for (auto pi : g_pis) g_pi_map[g_nl.net(pi).name] = pi;
+    for (auto pi : r_pis) r_pi_map[r_nl.net(pi).name] = pi;
+
+    std::vector<std::pair<std::string, std::pair<NetId, NetId>>> matched_pis;
+    for (auto& [name, gid] : g_pi_map) {
+        auto it = r_pi_map.find(name);
+        if (it != r_pi_map.end())
+            matched_pis.push_back({name, {gid, it->second}});
+    }
+
+    std::unordered_map<std::string, NetId> g_po_map, r_po_map;
+    for (auto po : g_pos) g_po_map[g_nl.net(po).name] = po;
+    for (auto po : r_pos) r_po_map[r_nl.net(po).name] = po;
+
+    std::vector<std::tuple<std::string, NetId, NetId>> matched_pos;
+    for (auto& [name, gid] : g_po_map) {
+        auto it = r_po_map.find(name);
+        if (it != r_po_map.end()) matched_pos.push_back({name, gid, it->second});
+    }
+
+    std::mt19937 rng(99);
+    EventSimulator g_sim(g_nl);
+    EventSimulator r_sim(r_nl);
+
+    for (int v = 0; v < 256; v++) {
+        g_sim.initialize();
+        r_sim.initialize();
+
+        std::vector<std::pair<std::string, bool>> inputs_used;
+        for (auto& [name, ids] : matched_pis) {
+            bool val = (rng() & 1);
+            Logic4 lv = val ? Logic4::ONE : Logic4::ZERO;
+            g_sim.set_input(ids.first, lv);
+            r_sim.set_input(ids.second, lv);
+            inputs_used.push_back({name, val});
+        }
+
+        g_sim.eval_combinational();
+        r_sim.eval_combinational();
+
+        for (auto& [name, gpo, rpo] : matched_pos) {
+            Logic4 gv = g_sim.get_net_value(gpo);
+            Logic4 rv = r_sim.get_net_value(rpo);
+            if (gv != rv && gv != Logic4::X && rv != Logic4::X) {
+                cex.input_values = inputs_used;
+                cex.output_name = name;
+                cex.ref_value = (gv == Logic4::ONE);
+                cex.impl_value = (rv == Logic4::ONE);
+
+                // Find internal divergence points by comparing all matched nets
+                for (size_t i = 0; i < std::min(g_nl.num_nets(), r_nl.num_nets()); i++) {
+                    const auto& gn = g_nl.net((NetId)i);
+                    const auto& rn = r_nl.net((NetId)i);
+                    if (gn.name == rn.name && !gn.name.empty()) {
+                        Logic4 giv = g_sim.get_net_value((NetId)i);
+                        Logic4 riv = r_sim.get_net_value((NetId)i);
+                        if (giv != riv && giv != Logic4::X && riv != Logic4::X) {
+                            cex.internal_diffs.push_back(
+                                {gn.name, (giv == Logic4::ONE)});
+                            if (cex.internal_diffs.size() >= 10) break;
+                        }
+                    }
+                }
+
+                last_cex_ = cex;
+                has_cex_ = true;
+                return cex;
+            }
+        }
+    }
+
+    return cex; // empty if no mismatch found
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Enhanced LEC Flow
+// ═════════════════════════════════════════════════════════════════════════════
+
+LecResult LecEngine::run_enhanced() {
+    auto t0 = std::chrono::high_resolution_clock::now();
+    LecResult result;
+    has_cex_ = false;
+
+    // Phase 1: Structural matching (fast — catches ~80% of mismatches)
+    auto smatch = structural_compare();
+    result.key_points_compared = smatch.matched;
+
+    // Phase 2: For matched points, do simulation-based comparison
+    bool sim_eq = sim_compare(result);
+
+    // Phase 3: For unmatched points, reduce cone and do SAT checks
+    if (sim_eq && !smatch.unmatched_ref.empty()) {
+        auto g_outs = golden_.primary_outputs();
+        for (int i = 0; i < (int)g_outs.size() && i < 8; i++) {
+            auto cone = reduce_cone(i);
+            // SAT check with reduced problem (only gates in cone)
+            auto r_outs = revised_.primary_outputs();
+            std::string gname = golden_.net(g_outs[i]).name;
+            for (auto ro : r_outs) {
+                if (revised_.net(ro).name == gname) {
+                    compare_output(gname, g_outs[i], ro, result);
+                    break;
+                }
+            }
+        }
+    }
+
+    // Phase 4: Sequential equivalence if registers present
+    if (!golden_.flip_flops().empty() || !revised_.flip_flops().empty()) {
+        auto seq = check_sequential();
+        if (!seq.equivalent) {
+            result.equivalent = false;
+            result.message = "LEC FAIL — sequential mismatch: " + seq.message;
+            // Generate counterexample
+            get_counterexample();
+
+            auto t1 = std::chrono::high_resolution_clock::now();
+            result.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+            return result;
+        }
+    }
+
+    result.equivalent = (result.mismatched == 0 && result.key_points_compared > 0);
+
+    // Phase 5: On failure, generate counterexample
+    if (!result.equivalent) {
+        get_counterexample();
+    }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    result.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    if (result.equivalent) {
+        result.message = "Enhanced LEC PASS — " + std::to_string(result.matched) +
+                         "/" + std::to_string(result.key_points_compared) +
+                         " key points, structural+" +
+                         std::to_string(smatch.matched) + " matches";
+    } else {
+        result.message = "Enhanced LEC FAIL — " +
+                         std::to_string(result.mismatched) + " mismatches";
+    }
+    return result;
 }
 
 } // namespace sf

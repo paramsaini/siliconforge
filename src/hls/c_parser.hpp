@@ -142,4 +142,55 @@ public:
     static void synthesize_to_netlist(const std::vector<CfgBlock>& cdfg, class Netlist& nl);
 };
 
+// Loop pipelining
+struct HlsPipelineConfig {
+    int target_ii;
+    int max_stages;
+};
+struct HlsPipelineResult {
+    int achieved_ii;
+    int stages;
+    double throughput_improvement;
+};
+
+// Scheduling algorithms (enhanced)
+enum class HlsScheduleAlgo { ASAP, ALAP, FORCE_DIRECTED, LIST };
+struct HlsScheduleResult {
+    int total_cycles;
+    int total_operations;
+    std::vector<std::pair<std::string,int>> op_to_cycle;
+    double resource_utilization;
+};
+
+// Resource binding
+struct HlsBindingResult {
+    int functional_units;
+    int registers;
+    int muxes;
+    std::vector<std::pair<std::string,int>> op_to_fu;
+};
+
+// Array partitioning
+struct ArrayPartResult {
+    std::string array_name;
+    int partitions;
+    enum PartType { BLOCK, CYCLIC, COMPLETE } type;
+    int bank_width;
+};
+
+// Enhanced HLS engine
+class HlsEnhanced {
+public:
+    explicit HlsEnhanced(std::vector<CfgBlock>& cdfg) : cdfg_(cdfg) {}
+    
+    HlsPipelineResult pipeline_loop(const std::string& loop_name, const HlsPipelineConfig& cfg);
+    HlsScheduleResult schedule(HlsScheduleAlgo algo = HlsScheduleAlgo::FORCE_DIRECTED);
+    HlsBindingResult bind_resources();
+    ArrayPartResult partition_array(const std::string& name, int factor);
+    HlsResult run_enhanced(const HlsConfig& cfg = {});
+    
+private:
+    std::vector<CfgBlock>& cdfg_;
+};
+
 } // namespace sf

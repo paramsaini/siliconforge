@@ -20,6 +20,7 @@
 #include <map>
 #include <functional>
 #include <memory>
+#include <unordered_set>
 
 namespace sf {
 
@@ -59,6 +60,36 @@ public:
     // Query frames
     int num_frames() const { return (int)frames_.size(); }
     int clauses_in_frame(int f) const;
+
+    // Frame generalization
+    struct GeneralizedClause {
+        std::vector<int> literals;
+        int frame;
+        bool is_inductive;
+    };
+    void generalize_clause(GeneralizedClause& clause);
+
+    // Counterexample-guided lifting
+    struct LiftedCube {
+        std::vector<int> state_bits;
+        int frame;
+        bool is_minimal;
+    };
+    LiftedCube lift_counterexample(const std::vector<int>& cube, int frame);
+
+    // Inductive generalization (ternary simulation)
+    std::vector<int> inductive_generalize(const std::vector<int>& cube, int frame);
+
+    // Property decomposition
+    struct DecompResult {
+        std::vector<std::vector<int>> sub_properties;
+        int properties_proved;
+        bool all_proved;
+    };
+    DecompResult decompose_and_check();
+
+    // Enhanced IC3 run
+    Ic3Result run_enhanced();
 
 private:
     const AigGraph& aig_;
@@ -147,12 +178,52 @@ public:
     // Check liveness property: GF(p) — infinitely often p
     LtlResult check_liveness(int output_index, int max_bound = 20);
 
+    // Optimized LTL→NBA (Gastin-Oddoux style)
+    struct NbaState {
+        int id;
+        std::vector<int> active_subformulas;
+        bool is_accepting;
+    };
+    struct Nba {
+        std::vector<NbaState> states;
+        std::vector<std::tuple<int,int,std::vector<int>>> transitions; // from, to, label
+        int initial;
+        std::vector<int> accepting;
+    };
+    Nba ltl_to_nba_optimized(const std::string& formula);
+
+    // Generalized Büchi acceptance
+    struct GBuchiResult {
+        bool accepted = false;
+        int acceptance_sets;
+        std::vector<int> accepting_run;  // state sequence
+    };
+    GBuchiResult check_generalized_buchi(const Nba& automaton);
+
+    // On-the-fly emptiness check
+    bool emptiness_check_otf(const Nba& automaton);
+
+    // LTL simplification
+    std::string simplify_ltl(const std::string& formula);
+
+    // Fairness constraints
+    struct FairnessResult {
+        bool fair_property_holds;
+        int fairness_constraints_count;
+        std::string message;
+    };
+    FairnessResult check_with_fairness(const std::string& property,
+                                        const std::vector<std::string>& fairness);
+
 private:
     const AigGraph& aig_;
 
     // Convert LTL to safety check via monitor construction
     bool is_safety_formula(const std::shared_ptr<LtlFormula>& f) const;
     int formula_depth(const std::shared_ptr<LtlFormula>& f) const;
+
+    // Helper: parse simple LTL string to formula tree
+    std::shared_ptr<LtlFormula> parse_ltl_string(const std::string& formula);
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -187,6 +258,34 @@ public:
     // Query abstraction state
     int num_visible_latches() const { return (int)visible_latches_.size(); }
     int num_total_latches() const;
+
+    // Localization abstraction
+    struct AbstractModel {
+        std::vector<int> visible_signals;    // included in abstract model
+        std::vector<int> abstracted_signals; // replaced with free inputs
+        int abstract_size;
+        int concrete_size;
+    };
+    AbstractModel create_abstraction(const std::vector<int>& initial_visible);
+
+    // CEX-guided refinement loop
+    struct EnhancedCegarResult {
+        bool property_holds = false;
+        int refinement_iterations;
+        int final_abstract_size;
+        bool timeout = false;
+        std::string message;
+    };
+    EnhancedCegarResult run_cegar(int max_iterations = 100, int timeout_ms = 30000);
+
+    // Counterexample analysis
+    struct CexAnalysis {
+        bool is_real;           // true if CEX is valid in concrete model
+        bool is_spurious;       // true if CEX is artifact of abstraction
+        std::vector<int> refinement_signals;  // signals to add to abstract model
+    };
+    CexAnalysis analyze_counterexample(const AbstractModel& model,
+                                        const std::vector<std::vector<bool>>& cex);
 
 private:
     const AigGraph& aig_;
@@ -234,6 +333,26 @@ public:
         const CnfFormula& A,
         const CnfFormula& B);
 
+    // McMillan's proof-based interpolation for model checking
+    struct InterpolantResult {
+        bool property_holds = false;
+        int bmc_depth;
+        std::vector<std::vector<int>> interpolants;  // one per unrolling step
+        int refinement_iterations;
+        std::string message;
+    };
+    static InterpolantResult prove_with_interpolation(const AigGraph& aig,
+                                                       int max_depth = 30);
+
+    // UNSAT core extraction
+    static std::vector<int> extract_unsat_core(const std::vector<std::vector<int>>& clauses);
+
+    // Interpolant simplification
+    static std::vector<int> simplify_interpolant(const std::vector<int>& interp);
+
+    // Overapproximation refinement
+    static bool refine_with_interpolant(const std::vector<int>& interpolant, int depth);
+
 private:
     // Classify variables as A-local, B-local, or shared
     struct VarClassification {
@@ -243,6 +362,58 @@ private:
     };
     static VarClassification classify_vars(const CnfFormula& A, const CnfFormula& B,
                                             const std::vector<int>& shared);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  K-Induction Strengthening, CEX Minimization, Multi-Property, Coverage
+// ═════════════════════════════════════════════════════════════════════════════
+
+struct KInductionResult {
+    bool proved = false;
+    int induction_depth = 0;
+    int strengthening_lemmas = 0;
+    std::string message;
+};
+
+struct MinCex {
+    std::vector<std::vector<bool>> minimal_trace;
+    int original_length = 0;
+    int minimized_length = 0;
+    std::vector<int> relevant_inputs;
+};
+
+struct AGDecomp {
+    std::vector<std::string> assumptions;
+    std::vector<std::string> guarantees;
+    struct AGResult {
+        std::string property;
+        bool proved = false;
+        int depth = 0;
+    };
+    std::vector<AGResult> results;
+};
+
+struct MultiPropResult {
+    int total_properties = 0;
+    int proved = 0;
+    int failed = 0;
+    int unknown = 0;
+    double total_time_ms = 0;
+    struct PropStatus {
+        std::string name;
+        enum Status { PROVED, FAILED, UNKNOWN } status = UNKNOWN;
+        int depth = 0;
+        double time_ms = 0;
+    };
+    std::vector<PropStatus> statuses;
+};
+
+struct CoverageResult {
+    double state_coverage = 0;
+    double transition_coverage = 0;
+    double cone_coverage = 0;
+    int total_states_sampled = 0;
+    int unique_states = 0;
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -270,6 +441,23 @@ public:
     LtlResult run_ltl(std::shared_ptr<LtlFormula> property, int bound = 30);
     CegarResult run_cegar(const CegarConfig& cfg = {});
     InterpolationResult run_interpolation(const CnfFormula& A, const CnfFormula& B);
+
+    // K-induction strengthening
+    KInductionResult prove_k_induction(int max_k = 50);
+
+    // Counterexample minimization (delta debugging)
+    MinCex minimize_counterexample(const std::vector<std::vector<bool>>& cex);
+
+    // Assumption/guarantee decomposition
+    AGDecomp prove_with_assumptions(
+        const std::vector<std::string>& assumptions,
+        const std::vector<std::string>& properties);
+
+    // Multi-property scheduling
+    MultiPropResult check_multi_property(int timeout_per_prop_ms = 5000);
+
+    // Coverage metrics via random simulation
+    CoverageResult compute_coverage(int num_random_traces = 100, int trace_length = 50);
 
 private:
     const AigGraph& aig_;

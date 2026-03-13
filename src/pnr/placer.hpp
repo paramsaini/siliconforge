@@ -145,6 +145,56 @@ public:
     }
     void set_max_displacement(double d) { max_displacement_ = d; }
 
+    // FFT-based density smoothing (ePlace-style)
+    struct DensityConfig {
+        int bin_count_x = 64;
+        int bin_count_y = 64;
+        double target_density = 0.7;   // target utilization
+        double smooth_penalty = 1.0;    // density penalty weight
+        int fft_iterations = 5;
+    };
+    void set_density_config(const DensityConfig& cfg) { density_cfg_ = cfg; }
+
+    // IO pad placement
+    struct IoPad {
+        std::string name;
+        int cell_idx;
+        enum class Side { NORTH, SOUTH, EAST, WEST } side;
+        double position;  // position along the side (0.0 to 1.0)
+    };
+    void set_io_pads(const std::vector<IoPad>& pads) { io_pads_ = pads; }
+    void place_io_pads();
+
+    // Incremental placement (after ECO)
+    PlaceResult incremental_place(const std::vector<int>& modified_cells);
+
+    // Multi-row cell support
+    struct MultiRowCell {
+        int cell_idx;
+        int row_span;    // how many rows this cell occupies
+        double height;   // actual height
+    };
+    void register_multi_row(const std::vector<MultiRowCell>& cells) { multi_row_ = cells; }
+
+    // Wirelength gradient computation
+    struct WLGradient {
+        std::vector<double> grad_x;
+        std::vector<double> grad_y;
+        double total_wl;
+    };
+    WLGradient compute_wl_gradient();
+
+    // Density gradient (smoothed)
+    struct DensityGradient {
+        std::vector<double> grad_x;
+        std::vector<double> grad_y;
+        double overflow;
+    };
+    DensityGradient compute_density_gradient();
+
+    // Enhanced placement with density smoothing
+    PlaceResult place_eplace();  // ePlace-style global placement
+
     PlaceResult place();
 
 private:
@@ -230,6 +280,31 @@ private:
     void compute_density();
     void spread_bins_x();
     void spread_bins_y();
+
+    // ePlace / density smoothing state
+    DensityConfig density_cfg_;
+    std::vector<IoPad> io_pads_;
+    std::vector<MultiRowCell> multi_row_;
+
+    // FFT helpers (simplified 2D DCT for density smoothing)
+    std::vector<std::vector<double>> compute_density_map();
+    void smooth_density(std::vector<std::vector<double>>& density);
+
+    // Nesterov's method for global placement
+    struct NesterovState {
+        std::vector<double> x, y;          // current positions
+        std::vector<double> x_prev, y_prev; // previous positions
+        double step_size = 0.01;
+        int iteration = 0;
+    };
+    void nesterov_step(NesterovState& state, const WLGradient& wl_grad,
+                       const DensityGradient& den_grad);
+
+    // Look-ahead legalization
+    void legalize_lookahead(std::vector<double>& x, std::vector<double>& y);
+
+    // Multi-row legalization
+    void legalize_multi_row(std::vector<double>& x, std::vector<double>& y);
 };
 
 } // namespace sf

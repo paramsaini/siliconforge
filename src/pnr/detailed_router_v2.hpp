@@ -45,6 +45,69 @@ public:
         net_timing_ = map;
     }
 
+    // Per-layer design rules
+    struct LayerRules {
+        int layer;
+        double min_width;
+        double min_spacing;
+        double min_enclosure;    // via enclosure
+        bool prefer_horizontal;  // preferred routing direction
+        double pitch;
+    };
+    void set_layer_rules(const std::vector<LayerRules>& rules) { layer_rules_ = rules; }
+
+    // Multi-layer track assignment
+    struct TrackAssignResult {
+        int net_idx;
+        int layer;
+        int track_idx;
+        double start_x, end_x;  // or start_y, end_y for vertical
+        int via_count;
+    };
+    std::vector<TrackAssignResult> assign_tracks_multilayer(int num_layers = 4);
+
+    // Via pillar optimization
+    struct ViaPillar {
+        double x, y;
+        int bottom_layer, top_layer;
+        bool is_stacked;   // true if multi-layer via stack
+    };
+    int optimize_via_pillars(std::vector<ViaPillar>& vias);
+
+    // DRC-aware routing
+    struct DrcConstraint {
+        double min_spacing = 0.14;
+        double min_width = 0.14;
+        double via_enclosure = 0.05;
+        double end_of_line_spacing = 0.2;    // special spacing at wire ends
+        double corner_spacing = 0.2;
+    };
+    void set_drc_constraints(const DrcConstraint& drc) { drc_constraints_ = drc; }
+
+    // Convergence-based global rip-up reroute
+    struct ConvergenceConfig {
+        int max_iterations = 100;
+        double overflow_target = 0.0;
+        double cost_escalation = 1.5;   // multiply congestion cost each iteration
+        int nets_per_iteration = 10;    // how many to rip-up per iteration
+    };
+    void set_convergence_config(const ConvergenceConfig& cfg) { conv_cfg_ = cfg; }
+
+    // Enhanced routing with convergence
+    RouteResult route_with_convergence();
+
+    // DRC-clean routing (check DRC during maze routing)
+    bool route_net_drc_aware(int net_idx);
+
+    // Double patterning awareness
+    struct DPConfig {
+        bool enable = false;
+        double min_dp_spacing = 0.2;    // min spacing for same-mask wires
+        int num_masks = 2;
+    };
+    void set_dp_config(const DPConfig& cfg) { dp_cfg_ = cfg; }
+    bool check_dp_conflict(int track1, int track2, int layer) const;
+
 private:
     PhysicalDesign& pd_;
     int num_layers_;
@@ -106,6 +169,43 @@ private:
     // Industrial: antenna check per net
     AntennaViolation check_antenna(int net_id,
                                     const std::vector<WireSegment>& wires) const;
+
+    // New private members for enhanced routing
+    std::vector<LayerRules> layer_rules_;
+    DrcConstraint drc_constraints_;
+    ConvergenceConfig conv_cfg_;
+    DPConfig dp_cfg_;
+
+    // Track assignment helpers
+    struct TrackResource {
+        int layer;
+        int track_idx;
+        std::vector<std::pair<double,double>> occupied;  // occupied intervals
+        bool is_available(double start, double end, double spacing) const;
+    };
+    std::vector<std::vector<TrackResource>> track_resources_;  // per layer
+
+    void init_track_resources(int num_layers);
+    int find_best_track(int net_idx, int layer, double start, double end);
+
+    // DRC-aware maze helpers
+    struct MazeNode {
+        int x, y, layer;
+        double cost;
+        int parent;
+        bool operator>(const MazeNode& o) const { return cost > o.cost; }
+    };
+    bool drc_check_segment(double x1, double y1, double x2, double y2, int layer, int net_idx) const;
+    double maze_cost(const MazeNode& from, const MazeNode& to) const;
+
+    // Convergence helpers
+    std::vector<int> identify_violating_nets();
+    void escalate_costs(double factor);
+    double congestion_penalty_ = 1.0;
+
+    // Per-net wire/via storage used by convergence routing
+    std::vector<std::vector<WireSegment>> conv_net_wires_;
+    std::vector<std::vector<Via>> conv_net_vias_;
 };
 
 } // namespace sf

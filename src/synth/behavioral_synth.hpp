@@ -158,6 +158,47 @@ private:
     void synth_always_comb(std::shared_ptr<AstNode> node, Netlist& nl);
     void synth_statement(std::shared_ptr<AstNode> stmt, Netlist& nl, const BlockState& state,
                          std::map<std::string, std::vector<NetId>>& next_state);
+
+    // Loop handling
+    struct LoopBounds {
+        std::string var_name;
+        int start, end, step;
+    };
+    LoopBounds extract_loop_bounds(std::shared_ptr<AstNode> for_node) const;
+    void synth_for_loop(std::shared_ptr<AstNode> for_node, Netlist& nl, const BlockState& state,
+                        std::map<std::string, std::vector<NetId>>& next_state);
+
+    // Resource sharing: track operators for potential reuse
+    struct SharedResource {
+        GateType op_type;           // AND=MUL, XOR=ADD (composite op mapping)
+        int width;
+        std::vector<NetId> inputs_a;
+        std::vector<NetId> inputs_b;
+        std::vector<NetId> output;
+        NetId condition;            // under what condition this resource is used
+        int usage_count = 0;
+    };
+    std::vector<SharedResource> shared_resources_;
+
+    // Resource sharing methods
+    std::vector<NetId> try_share_resource(GateType op, int width,
+        const std::vector<NetId>& a, const std::vector<NetId>& b,
+        NetId condition, Netlist& nl,
+        std::map<std::string, std::vector<NetId>>& next_state);
+
+    // Operator chaining: fuse back-to-back operations
+    std::vector<NetId> chain_operations(std::shared_ptr<AstNode> expr, Netlist& nl,
+        const std::map<std::string, std::vector<NetId>>& next_state, int target_w);
+
+    // Synthesis statistics
+    struct SynthStats {
+        int loops_unrolled = 0;
+        int resources_shared = 0;
+        int operators_chained = 0;
+        int muxes_created = 0;
+        int dffs_inferred = 0;
+    };
+    SynthStats stats_;
 };
 
 // Structural expression synthesizer — used for continuous assigns

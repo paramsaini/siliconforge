@@ -170,6 +170,42 @@ struct PdnResult {
     std::string message;
 };
 
+// ── Target Impedance Detail ──────────────────────────────────────────
+struct TargetImpedance {
+    double z_target_ohms = 0;
+    double frequency_hz = 0;
+    double voltage = 0;
+    double max_current = 0;
+    double ripple_pct = 0;
+    bool meets_target = false;
+};
+
+// ── Decoupling Optimization Result ──────────────────────────────────
+struct DecapOptResult {
+    int decaps_added = 0;
+    double total_capacitance_nf = 0;
+    std::vector<std::pair<double,double>> locations;
+    double impedance_improvement_pct = 0;
+};
+
+// ── AC Impedance Profile ────────────────────────────────────────────
+struct ACImpedanceProfile {
+    std::vector<double> frequencies;
+    std::vector<double> impedance_mag;
+    std::vector<double> impedance_phase;
+    double first_resonance_hz = 0;
+    double anti_resonance_hz = 0;
+};
+
+// ── Package Electrical Model ────────────────────────────────────────
+struct PdnPackageModel {
+    double pkg_inductance_nh = 1.0;
+    double pkg_resistance_mohm = 10.0;
+    double pkg_capacitance_pf = 100.0;
+    double board_inductance_nh = 5.0;
+    double board_capacitance_uf = 10.0;
+};
+
 // ── Analyzer ─────────────────────────────────────────────────────────────
 
 class PdnAnalyzer {
@@ -188,6 +224,14 @@ public:
     // Full analysis
     PdnResult analyze(int grid_res = 10);
 
+    // Enhanced PDN analysis
+    TargetImpedance compute_target_impedance_detail(double voltage, double max_current_a,
+                                                     double ripple_pct = 5.0);
+    DecapOptResult optimize_decoupling(double budget_area = 0.0);
+    ACImpedanceProfile compute_ac_impedance(double f_start = 1e6, double f_end = 10e9, int points = 100);
+    void set_package_model(const PdnPackageModel& pkg);
+    PdnResult run_enhanced();
+
     // Frequency-domain impedance sweep
     std::vector<ImpedancePoint> impedance_sweep() const;
 
@@ -197,6 +241,7 @@ public:
 private:
     const PhysicalDesign& pd_;
     PdnConfig cfg_;
+    PdnPackageModel pkg_model_;
 
     double nearest_stripe_resistance(double x, double y) const;
 

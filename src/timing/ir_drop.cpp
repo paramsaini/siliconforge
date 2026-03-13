@@ -428,6 +428,15 @@ IrDropResult IrDropAnalyzer::analyze(int grid_res) {
                 std::to_string(sr.iterations) + " solver iters, " +
                 (r.converged ? "converged" : "NOT converged") +
                 (r.signoff_pass ? " [SIGNOFF PASS]" : " [SIGNOFF FAIL]");
+
+    // Cache for enhanced methods
+    last_result_ = r;
+    has_result_ = true;
+    last_grid_n_ = N;
+    last_cell_w_ = cell_w;
+    last_cell_h_ = cell_h;
+    last_current_map_ = current_map;
+
     return r;
 }
 
@@ -501,6 +510,347 @@ IrDropResult IrDropAnalyzer::analyze_legacy(int grid_res) {
                 std::to_string(r.worst_drop_mv / (cfg_.vdd * 10)) + "%), " +
                 std::to_string(r.num_hotspots) + " hotspot(s)";
     return r;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Enhanced IR Drop Analysis
+// ══════════════════════════════════════════════════════════════════════
+
+// ── Dynamic IR drop (transient) ──────────────────────────────────────
+// Time-step simulation: at each step, compute current draw from switching
+// cells, solve resistive network for voltage drop at each node.
+
+DynamicIrResult IrDropAnalyzer::analyze_dynamic(double time_step_ps, int num_steps) {
+    // Ensure we have a base analysis
+    if (!has_result_) analyze();
+
+    DynamicIrResult result{};
+    result.time_steps = num_steps;
+
+    int N = last_grid_n_ > 0 ? last_grid_n_ : cfg_.grid_resolution;
+    double cell_w = pd_.die_area.width() / N;
+    double cell_h = pd_.die_area.height() / N;
+
+    // Decoupling capacitance per grid cell
+    double decap_per_cell_ff = cfg_.decap_density_ff_per_um2 * cell_w * cell_h;
+    double decap_per_cell_f = decap_per_cell_ff * 1e-15;
+
+    // Voltage state per node (starts at VDD)
+    std::vector<std::vector<double>> node_voltage(N, std::vector<double>(N, cfg_.vdd));
+
+    double peak_drop = 0.0;
+    double total_drop_sum = 0.0;
+    int total_measurements = 0;
+    int worst_x = 0, worst_y = 0;
+
+    double time_step_s = time_step_ps * 1e-12;
+
+    for (int step = 0; step < num_steps; ++step) {
+        double t_ps = step * time_step_ps;
+
+        // Switching activity varies sinusoidally (modeling clock edges)
+        double phase = 2.0 * M_PI * step / std::max(num_steps, 1);
+        double sw_factor = cfg_.switching_factor * (0.5 + 0.5 * std::sin(phase));
+
+        // Per-node transient current
+        double step_worst_drop = 0.0;
+        double step_total_drop = 0.0;
+
+        for (int y = 0; y < N; ++y) {
+            for (int x = 0; x < N; ++x) {
+                double i_static = has_result_ ? last_current_map_[y][x] : 0.0;
+                double i_switching = i_static * sw_factor * 2.0; // both edges
+
+                // Decap provides charge: ΔV = I × Δt / C
+                double total_current_ma = i_static + i_switching;
+                double total_current_a = total_current_ma * 1e-3;
+
+                double delta_v = 0.0;
+                if (decap_per_cell_f > 0) {
+                    delta_v = total_current_a * time_step_s / decap_per_cell_f;
+                }
+
+                // Static IR drop component from base analysis
+                double static_drop = 0.0;
+                if (has_result_ && y < (int)last_result_.drop_map.size() &&
+                    x < (int)last_result_.drop_map[0].size()) {
+                    static_drop = last_result_.drop_map[y][x];
+                }
+
+                // Dynamic drop = static × current_ratio + decap_discharge
+                double i_ratio = (i_static > 1e-15) ? (i_static + i_switching) / i_static : 1.0;
+                double dynamic_drop = static_drop * i_ratio + delta_v * 1000.0; // mV
+                dynamic_drop = std::min(dynamic_drop, cfg_.vdd * 1000.0);
+
+                if (dynamic_drop > step_worst_drop) {
+                    step_worst_drop = dynamic_drop;
+                    if (dynamic_drop > peak_drop) {
+                        worst_x = x;
+                        worst_y = y;
+                    }
+                }
+                step_total_drop += dynamic_drop;
+                total_measurements++;
+            }
+        }
+
+        peak_drop = std::max(peak_drop, step_worst_drop);
+        total_drop_sum += step_total_drop / (N * N);
+
+        result.waveform.push_back({t_ps, step_worst_drop});
+    }
+
+    result.peak_drop_mv = peak_drop;
+    result.avg_drop_mv = (num_steps > 0) ? total_drop_sum / num_steps : 0.0;
+    result.worst_region = "grid(" + std::to_string(worst_x) + "," + std::to_string(worst_y) + ")";
+
+    return result;
+}
+
+// ── VCD-driven vectored analysis ─────────────────────────────────────
+
+VectoredIrResult IrDropAnalyzer::analyze_vectored(
+    const std::vector<std::vector<bool>>& stimulus, double clock_period_ns) {
+    if (!has_result_) analyze();
+
+    VectoredIrResult result{};
+    result.peak_drop_mv = 0;
+    result.peak_cycle = 0;
+
+    int N = last_grid_n_ > 0 ? last_grid_n_ : cfg_.grid_resolution;
+
+    for (size_t cycle = 0; cycle < stimulus.size(); ++cycle) {
+        // Count switching cells in this cycle
+        int switching_count = 0;
+        for (bool active : stimulus[cycle]) {
+            if (active) switching_count++;
+        }
+        double sw_fraction = (stimulus[cycle].empty()) ? cfg_.switching_factor
+            : static_cast<double>(switching_count) / stimulus[cycle].size();
+
+        // Scale current map by switching fraction
+        double cycle_worst = 0.0;
+        for (int y = 0; y < N; ++y) {
+            for (int x = 0; x < N; ++x) {
+                double i_static = (has_result_ && y < (int)last_current_map_.size() &&
+                                   x < (int)last_current_map_[0].size())
+                                  ? last_current_map_[y][x] : 0.0;
+                double i_dynamic = i_static * sw_fraction * 2.0;
+                double static_drop = (has_result_ && y < (int)last_result_.drop_map.size() &&
+                                      x < (int)last_result_.drop_map[0].size())
+                                     ? last_result_.drop_map[y][x] : 0.0;
+                double i_ratio = (i_static > 1e-15) ? (i_static + i_dynamic) / i_static : 1.0;
+                double drop = static_drop * i_ratio;
+                cycle_worst = std::max(cycle_worst, drop);
+            }
+        }
+
+        result.per_cycle_drops.push_back(cycle_worst);
+        if (cycle_worst > result.peak_drop_mv) {
+            result.peak_drop_mv = cycle_worst;
+            result.peak_cycle = static_cast<int>(cycle);
+        }
+    }
+
+    result.message = "Vectored IR: peak=" + std::to_string((int)result.peak_drop_mv) +
+                     "mV at cycle " + std::to_string(result.peak_cycle) +
+                     " (" + std::to_string(stimulus.size()) + " cycles)";
+    return result;
+}
+
+// ── Voltage-drop-aware STA ───────────────────────────────────────────
+// Use IR drop map to compute per-gate voltage. Lower voltage → slower gate
+// (delay ∝ V/(V−Vth)²). Report timing degradation.
+
+VoltageAwareTimingResult IrDropAnalyzer::analyze_voltage_timing() {
+    if (!has_result_) analyze();
+
+    VoltageAwareTimingResult result{};
+    double vdd = cfg_.vdd;
+    double vth = vdd * 0.25;  // approximate threshold voltage
+
+    // Nominal WNS: use worst timing derate from base analysis
+    result.nominal_wns = 0.0;
+
+    double worst_extra_delay = 0.0;
+    double total_extra_delay = 0.0;
+    int gate_count = 0;
+
+    for (int ci = 0; ci < (int)pd_.cells.size(); ++ci) {
+        auto& c = pd_.cells[ci];
+        if (!c.placed) continue;
+
+        int N = last_grid_n_ > 0 ? last_grid_n_ : cfg_.grid_resolution;
+        double cell_w = pd_.die_area.width() / N;
+        double cell_h = pd_.die_area.height() / N;
+        int gx = std::clamp((int)((c.position.x - pd_.die_area.x0) / cell_w), 0, N - 1);
+        int gy = std::clamp((int)((c.position.y - pd_.die_area.y0) / cell_h), 0, N - 1);
+
+        double drop_mv = 0.0;
+        if (has_result_ && gy < (int)last_result_.drop_map.size() &&
+            gx < (int)last_result_.drop_map[0].size()) {
+            drop_mv = last_result_.drop_map[gy][gx];
+        }
+
+        double v_actual = vdd - drop_mv / 1000.0;
+        v_actual = std::max(v_actual, vth + 0.01);  // prevent divide by zero
+
+        // Delay ratio: delay_actual/delay_nominal = (V_nom/(V_nom−Vth))² / (V_act/(V_act−Vth))²
+        // Simplified: extra_delay_fraction = 2 × (drop/V) × V/(V−Vth)
+        double drop_fraction = drop_mv / (vdd * 1000.0);
+        double v_headroom = (v_actual - vth);
+        double delay_increase_pct = cfg_.timing_derate_sensitivity * drop_fraction * 100.0;
+
+        // More accurate alpha-power model: delay ∝ V/(V-Vth)^alpha, alpha≈1.3
+        double nom_factor = vdd / ((vdd - vth) * (vdd - vth));
+        double act_factor = v_actual / (v_headroom * v_headroom);
+        double accurate_ratio = act_factor / nom_factor;
+        double extra_delay_ns = (accurate_ratio - 1.0) * 0.1; // assuming 100ps nominal
+        extra_delay_ns = std::max(extra_delay_ns, 0.0);
+
+        if (extra_delay_ns > 0.001) {
+            result.gate_delay_increases.push_back({ci, extra_delay_ns});
+        }
+
+        worst_extra_delay = std::max(worst_extra_delay, extra_delay_ns);
+        total_extra_delay += extra_delay_ns;
+        gate_count++;
+    }
+
+    result.voltage_aware_wns = result.nominal_wns - worst_extra_delay;
+    result.timing_degradation_pct = (gate_count > 0) ?
+        (total_extra_delay / gate_count) / 0.1 * 100.0 : 0.0; // relative to 100ps nominal
+
+    // Sort by delay increase descending
+    std::sort(result.gate_delay_increases.begin(), result.gate_delay_increases.end(),
+              [](auto& a, auto& b) { return a.second > b.second; });
+
+    return result;
+}
+
+// ── Hotspot clustering ───────────────────────────────────────────────
+// Cluster high-drop regions using spatial grouping.
+// Hotspot = region where avg drop > threshold.
+
+std::vector<IrHotspot> IrDropAnalyzer::find_hotspots(double threshold_mv) {
+    if (!has_result_) analyze();
+
+    std::vector<IrHotspot> hotspots;
+
+    int N = last_grid_n_ > 0 ? last_grid_n_ : cfg_.grid_resolution;
+    if (N <= 0 || !has_result_ || last_result_.drop_map.empty()) return hotspots;
+
+    double cell_w = pd_.die_area.width() / N;
+    double cell_h = pd_.die_area.height() / N;
+
+    // Mark cells above threshold
+    std::vector<std::vector<bool>> hot(N, std::vector<bool>(N, false));
+    for (int y = 0; y < N; ++y)
+        for (int x = 0; x < N; ++x)
+            if (y < (int)last_result_.drop_map.size() && x < (int)last_result_.drop_map[0].size())
+                hot[y][x] = (last_result_.drop_map[y][x] > threshold_mv);
+
+    // Flood-fill clustering
+    std::vector<std::vector<bool>> visited(N, std::vector<bool>(N, false));
+    for (int y = 0; y < N; ++y) {
+        for (int x = 0; x < N; ++x) {
+            if (!hot[y][x] || visited[y][x]) continue;
+
+            // BFS to find connected hot region
+            std::vector<std::pair<int,int>> cluster;
+            std::vector<std::pair<int,int>> queue = {{x, y}};
+            visited[y][x] = true;
+
+            while (!queue.empty()) {
+                auto [cx, cy] = queue.back();
+                queue.pop_back();
+                cluster.push_back({cx, cy});
+
+                // 4-connected neighbors
+                int dx[] = {-1, 1, 0, 0};
+                int dy[] = {0, 0, -1, 1};
+                for (int d = 0; d < 4; ++d) {
+                    int nx = cx + dx[d], ny = cy + dy[d];
+                    if (nx >= 0 && nx < N && ny >= 0 && ny < N &&
+                        !visited[ny][nx] && hot[ny][nx]) {
+                        visited[ny][nx] = true;
+                        queue.push_back({nx, ny});
+                    }
+                }
+            }
+
+            // Compute hotspot centroid and stats
+            double sum_x = 0, sum_y = 0, sum_drop = 0;
+            double max_dist = 0;
+            for (auto& [cx, cy] : cluster) {
+                double px = pd_.die_area.x0 + (cx + 0.5) * cell_w;
+                double py = pd_.die_area.y0 + (cy + 0.5) * cell_h;
+                sum_x += px;
+                sum_y += py;
+                sum_drop += last_result_.drop_map[cy][cx];
+            }
+            double cx_avg = sum_x / cluster.size();
+            double cy_avg = sum_y / cluster.size();
+
+            for (auto& [cx, cy] : cluster) {
+                double px = pd_.die_area.x0 + (cx + 0.5) * cell_w;
+                double py = pd_.die_area.y0 + (cy + 0.5) * cell_h;
+                double dist = std::sqrt((px - cx_avg) * (px - cx_avg) +
+                                        (py - cy_avg) * (py - cy_avg));
+                max_dist = std::max(max_dist, dist);
+            }
+
+            IrHotspot hs;
+            hs.x = cx_avg;
+            hs.y = cy_avg;
+            hs.radius = std::max(max_dist, std::max(cell_w, cell_h));
+            hs.avg_drop_mv = sum_drop / cluster.size();
+            hs.cells_affected = static_cast<int>(cluster.size());
+            hotspots.push_back(hs);
+        }
+    }
+
+    // Sort by avg drop descending
+    std::sort(hotspots.begin(), hotspots.end(),
+              [](auto& a, auto& b) { return a.avg_drop_mv > b.avg_drop_mv; });
+
+    return hotspots;
+}
+
+// ── Enhanced IR drop run ─────────────────────────────────────────────
+
+IrDropResult IrDropAnalyzer::run_enhanced() {
+    auto t0 = std::chrono::high_resolution_clock::now();
+
+    // Run standard analysis (also caches data)
+    auto result = analyze();
+
+    // Enable dynamic analysis
+    bool saved_dynamic = cfg_.enable_dynamic;
+    cfg_.enable_dynamic = true;
+
+    // Perform dynamic analysis
+    auto dyn_result = analyze_dynamic(10.0, 50);
+    result.worst_dynamic_drop_mv = dyn_result.peak_drop_mv;
+    result.avg_dynamic_drop_mv = dyn_result.avg_drop_mv;
+    result.dynamic_analyzed = true;
+
+    cfg_.enable_dynamic = saved_dynamic;
+
+    // Re-evaluate signoff with dynamic data
+    evaluate_signoff(result);
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    result.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    result.message = "Enhanced IR Drop: static_worst=" + std::to_string((int)result.worst_drop_mv) +
+                     "mV, dynamic_peak=" + std::to_string((int)result.worst_dynamic_drop_mv) +
+                     "mV, " + std::to_string(result.num_hotspots) + " hotspot(s), " +
+                     (result.signoff_pass ? "[SIGNOFF PASS]" : "[SIGNOFF FAIL]");
+
+    last_result_ = result;
+    has_result_ = true;
+    return result;
 }
 
 } // namespace sf

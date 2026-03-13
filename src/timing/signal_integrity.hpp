@@ -84,6 +84,51 @@ struct SiResult {
     std::vector<NicEntry> nic_table;
 };
 
+// ── Aggressor Identification ─────────────────────────────────────────
+struct AggressorInfo {
+    int victim_net = -1;
+    int aggressor_net = -1;
+    double coupling_cap = 0;
+    double parallel_length = 0;
+    int shared_layer = 0;
+    double timing_window_overlap = 0;
+};
+
+// ── Functional Filtering ─────────────────────────────────────────────
+struct FunctionalFilter {
+    int victim_net = -1;
+    int aggressor_net = -1;
+    bool can_switch_simultaneously = true;
+    std::string reason;
+};
+
+// ── Noise Propagation ────────────────────────────────────────────────
+struct NoisePropResult {
+    int victim_net = -1;
+    double noise_amplitude_mv = 0;
+    double noise_width_ps = 0;
+    bool propagates_to_output = false;
+    int gates_traversed = 0;
+    double attenuated_amplitude_mv = 0;
+};
+
+// ── Glitch Energy ────────────────────────────────────────────────────
+struct GlitchResult {
+    int net_idx = -1;
+    double glitch_energy_fj = 0;
+    double threshold_fj = 0;
+    bool is_functional_failure = false;
+};
+
+// ── SI-Aware Hold Fix ────────────────────────────────────────────────
+struct SiHoldFix {
+    int endpoint = -1;
+    double original_hold_slack = 0;
+    double si_hold_slack = 0;
+    bool needs_fix = false;
+    double buffer_delay_needed = 0;
+};
+
 // ── Analyzer ─────────────────────────────────────────────────────────────
 
 class SignalIntegrityAnalyzer {
@@ -100,6 +145,14 @@ public:
     const SiConfig& config() const { return cfg_; }
 
     SiResult analyze();
+
+    // Enhanced SI analysis
+    std::vector<AggressorInfo> identify_all_aggressors();
+    std::vector<FunctionalFilter> functional_filtering();
+    std::vector<NoisePropResult> propagate_noise();
+    std::vector<GlitchResult> check_glitch_energy();
+    std::vector<SiHoldFix> check_si_hold();
+    SiResult run_enhanced();
 
     // Miller-factor effective coupling
     static double effective_coupling(double cc_ff, double miller,

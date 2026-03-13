@@ -83,6 +83,40 @@ struct NoiseResult {
     double timing_derating_pct = 0;      // noise-induced timing penalty
 };
 
+// ── Power Supply Noise ───────────────────────────────────────────────
+struct PsnResult {
+    double peak_noise_mv = 0;
+    double ldi_dt_max = 0;
+    double inductance_nh = 0;
+    std::vector<std::pair<double,double>> noise_waveform;
+};
+
+// ── Simultaneous Switching Output ────────────────────────────────────
+struct SsoResult {
+    int total_outputs = 0;
+    int simultaneous_switching = 0;
+    double ground_bounce_mv = 0;
+    double vdd_droop_mv = 0;
+    bool within_budget = false;
+};
+
+// ── Noise Margin Verification ────────────────────────────────────────
+struct NoiseMarginResult {
+    int total_nets = 0;
+    int marginal_nets = 0;
+    int failing_nets = 0;
+    double worst_margin = 0;
+    std::vector<std::pair<int,double>> violations;
+};
+
+// ── Jitter Analysis ──────────────────────────────────────────────────
+struct JitterResult {
+    double rj_rms_ps = 0;
+    double dj_pp_ps = 0;
+    double tj_at_ber_ps = 0;
+    std::string source;
+};
+
 // ── Analyzer ─────────────────────────────────────────────────────────────
 
 class NoiseAnalyzer {
@@ -103,6 +137,13 @@ public:
     const NoiseConfig& config() const { return cfg_; }
 
     NoiseResult analyze();
+
+    // Enhanced noise analysis
+    PsnResult analyze_power_supply_noise(double pkg_inductance_nh = 1.0);
+    SsoResult analyze_sso(double max_bounce_mv = 100.0);
+    NoiseMarginResult verify_noise_margins();
+    JitterResult analyze_jitter(double clock_freq_hz = 1e9);
+    NoiseResult run_enhanced();
 
     // SSN calculation: V = N × L × di/dt
     static SsnResult compute_ssn(int num_outputs, double inductance_nh,

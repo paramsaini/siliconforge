@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <limits>
 #include <queue>
+#include <chrono>
 
 namespace sf {
 
@@ -605,6 +606,355 @@ RetimingResult RetimingEngine::optimize_with_result(Netlist& nl) {
     std::cout << "[Retiming] " << result.message << "\n";
 
     return result;
+}
+
+// ============================================================================
+// Bounded Retiming
+// ============================================================================
+
+RetimingEngine::BoundedResult RetimingEngine::retime_bounded(Netlist& nl, const BoundedConfig& cfg) {
+    BoundedResult res{0, 0, 0.0, true};
+
+    if (nl.flip_flops().empty()) return res;
+
+    build_graph(nl);
+    if (nodes_.empty() || edges_.empty()) return res;
+
+    detect_clock_gating(nl);
+    detect_reset_paths(nl);
+    apply_multicycle_relaxation();
+    freeze_dont_retime_cells();
+
+    double cp_before = compute_critical_path();
+    if (cp_before <= 0) return res;
+
+    // Record IO-boundary node indices for latency preservation
+    std::unordered_set<int> io_nodes;
+    if (cfg.preserve_io_latency) {
+        for (auto& node : nodes_) {
+            const Gate& g = nl.gate(node.gid);
+            if (g.inputs.empty() || g.type == GateType::DFF) {
+                io_nodes.insert(gid_to_idx_[node.gid]);
+            }
+        }
+    }
+
+    // Binary search for best feasible period
+    double lo = 0;
+    for (auto& n : nodes_) lo = std::max(lo, n.delay);
+    double hi = cp_before;
+    double best_T = hi;
+
+    for (int step = 0; step < config_.binary_search_steps; ++step) {
+        double mid = (lo + hi) / 2.0;
+        for (auto& n : nodes_) n.r_val = 0;
+        if (compute_retiming_values(mid)) {
+            best_T = mid;
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+
+    // Recompute r-values at best period
+    for (auto& n : nodes_) n.r_val = 0;
+    if (!compute_retiming_values(best_T)) {
+        res.delay_improvement_ns = 0;
+        return res;
+    }
+
+    // Clamp r-values to bounded forward/backward move limits
+    for (auto& n : nodes_) {
+        if (n.frozen) continue;
+        if (n.r_val > 0) {
+            n.r_val = std::min(n.r_val, cfg.max_forward_moves);
+            res.forward_moves += n.r_val;
+        } else if (n.r_val < 0) {
+            n.r_val = std::max(n.r_val, -cfg.max_backward_moves);
+            res.backward_moves += (-n.r_val);
+        }
+    }
+
+    // Preserve IO latency: zero out r-values on IO-boundary nodes
+    if (cfg.preserve_io_latency) {
+        for (int idx : io_nodes) {
+            if (nodes_[idx].r_val != 0) {
+                nodes_[idx].r_val = 0;
+            }
+        }
+        res.io_latency_preserved = true;
+    }
+
+    apply_retiming(nl);
+
+    double cp_after = compute_critical_path();
+    res.delay_improvement_ns = cp_before - cp_after;
+    if (res.delay_improvement_ns < 0) res.delay_improvement_ns = 0;
+
+    std::cout << "[Retiming] Bounded: fwd=" << res.forward_moves
+              << " bwd=" << res.backward_moves
+              << " improvement=" << res.delay_improvement_ns << " ns\n";
+    return res;
+}
+
+// ============================================================================
+// Power-Aware Retiming
+// ============================================================================
+
+RetimingEngine::PowerRetimeResult RetimingEngine::retime_power_aware(Netlist& nl) {
+    PowerRetimeResult res{0.0, 0.0, 0.0, 0};
+
+    if (nl.flip_flops().empty()) return res;
+
+    build_graph(nl);
+    if (nodes_.empty() || edges_.empty()) return res;
+
+    detect_clock_gating(nl);
+    detect_reset_paths(nl);
+    apply_multicycle_relaxation();
+    freeze_dont_retime_cells();
+
+    // Estimate switching power: sum of (fanout_count * gate_delay) as proxy
+    // for dynamic switching activity on each edge
+    auto estimate_switching_power = [&]() -> double {
+        double power = 0.0;
+        for (auto& e : edges_) {
+            double activity = nodes_[e.u].delay;
+            int weight = e.weight;
+            // Registers on an edge reduce downstream switching activity
+            double attenuation = (weight > 0) ? 0.5 : 1.0;
+            power += activity * attenuation;
+        }
+        return power;
+    };
+
+    res.switching_power_before = estimate_switching_power();
+
+    // Find critical path and target period (relax slightly to trade timing for power)
+    double cp = compute_critical_path();
+    if (cp <= 0) return res;
+
+    // Target period: allow 5% timing slack to favour power-optimal register placement
+    double target = cp * 1.05;
+
+    for (auto& n : nodes_) n.r_val = 0;
+    if (!compute_retiming_values(target)) {
+        // Fall back to current period
+        for (auto& n : nodes_) n.r_val = 0;
+        if (!compute_retiming_values(cp)) return res;
+    }
+
+    // Bias r-values toward placing registers on high-activity edges
+    // (move registers forward past high-switching nodes to reduce glitch propagation)
+    for (size_t i = 0; i < nodes_.size(); ++i) {
+        auto& n = nodes_[i];
+        if (n.frozen) continue;
+        // Nodes with high delay (proxy for high switching) benefit from forward retiming
+        if (n.delay > cp * 0.3 && n.r_val == 0) {
+            // Check if a small forward move is feasible (doesn't violate edge weights)
+            bool can_move = true;
+            for (auto& e : edges_) {
+                if (e.u == static_cast<int>(i) && e.weight + 1 - n.r_val < 0) {
+                    can_move = false;
+                    break;
+                }
+            }
+            if (can_move) n.r_val = 1;
+        }
+    }
+
+    int changes = apply_retiming(nl);
+    res.registers_moved = changes;
+
+    // Rebuild graph to re-estimate power after retiming
+    build_graph(nl);
+    res.switching_power_after = estimate_switching_power();
+
+    if (res.switching_power_before > 0) {
+        res.power_reduction_pct =
+            ((res.switching_power_before - res.switching_power_after) /
+             res.switching_power_before) * 100.0;
+    }
+
+    std::cout << "[Retiming] Power-aware: power " << res.switching_power_before
+              << " -> " << res.switching_power_after
+              << " (" << res.power_reduction_pct << "% reduction, "
+              << res.registers_moved << " regs moved)\n";
+    return res;
+}
+
+// ============================================================================
+// Incremental Retiming
+// ============================================================================
+
+RetimingEngine::IncrementalRetimeResult RetimingEngine::retime_incremental(
+        Netlist& nl, const std::vector<int>& changed_gates) {
+    IncrementalRetimeResult res{0, 0.0, 0.0};
+
+    auto t_start = std::chrono::steady_clock::now();
+
+    if (nl.flip_flops().empty() || changed_gates.empty()) {
+        auto t_end = std::chrono::steady_clock::now();
+        res.runtime_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+        return res;
+    }
+
+    build_graph(nl);
+    if (nodes_.empty() || edges_.empty()) {
+        auto t_end = std::chrono::steady_clock::now();
+        res.runtime_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+        return res;
+    }
+
+    detect_clock_gating(nl);
+    detect_reset_paths(nl);
+    apply_multicycle_relaxation();
+    freeze_dont_retime_cells();
+
+    double cp_before = compute_critical_path();
+
+    // Build neighbourhood: only allow retiming on nodes within 1 hop of changed gates
+    std::unordered_set<int> active_set;
+    for (int gid : changed_gates) {
+        auto it = gid_to_idx_.find(gid);
+        if (it == gid_to_idx_.end()) continue;
+        active_set.insert(it->second);
+    }
+    // Expand to direct fanin/fanout neighbours
+    std::unordered_set<int> expanded = active_set;
+    for (auto& e : edges_) {
+        if (active_set.count(e.u)) expanded.insert(e.v);
+        if (active_set.count(e.v)) expanded.insert(e.u);
+    }
+
+    // Freeze everything outside the active neighbourhood
+    for (size_t i = 0; i < nodes_.size(); ++i) {
+        if (!expanded.count(static_cast<int>(i))) {
+            nodes_[i].frozen = true;
+        }
+    }
+
+    // Compute retiming for a slightly improved target
+    double lo = 0;
+    for (auto& n : nodes_) lo = std::max(lo, n.delay);
+    double hi = cp_before;
+    double best_T = hi;
+
+    for (int step = 0; step < config_.binary_search_steps; ++step) {
+        double mid = (lo + hi) / 2.0;
+        for (auto& n : nodes_) n.r_val = 0;
+        if (compute_retiming_values(mid)) {
+            best_T = mid;
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+
+    for (auto& n : nodes_) n.r_val = 0;
+    if (compute_retiming_values(best_T)) {
+        res.registers_adjusted = apply_retiming(nl);
+    }
+
+    double cp_after = compute_critical_path();
+    res.timing_improvement = cp_before - cp_after;
+    if (res.timing_improvement < 0) res.timing_improvement = 0;
+
+    auto t_end = std::chrono::steady_clock::now();
+    res.runtime_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+
+    std::cout << "[Retiming] Incremental: " << res.registers_adjusted
+              << " regs adjusted, improvement=" << res.timing_improvement
+              << " ns, runtime=" << res.runtime_ms << " ms\n";
+    return res;
+}
+
+// ============================================================================
+// Sequential Optimization (iterative retiming)
+// ============================================================================
+
+RetimingEngine::SeqOptResult RetimingEngine::sequential_optimize(Netlist& nl, int max_iter) {
+    SeqOptResult res{0.0, 0.0, 0, 0, 0};
+
+    if (nl.flip_flops().empty()) return res;
+
+    res.registers_before = static_cast<int>(nl.flip_flops().size());
+
+    // Initial graph build to get baseline delay
+    build_graph(nl);
+    if (nodes_.empty() || edges_.empty()) return res;
+
+    detect_clock_gating(nl);
+    detect_reset_paths(nl);
+    apply_multicycle_relaxation();
+    freeze_dont_retime_cells();
+
+    res.delay_before = compute_critical_path();
+    double current_delay = res.delay_before;
+
+    std::cout << "[Retiming] SeqOpt: initial delay=" << current_delay
+              << ", max_iter=" << max_iter << "\n";
+
+    for (int iter = 0; iter < max_iter; ++iter) {
+        // Rebuild graph each iteration (netlist may have changed)
+        build_graph(nl);
+        if (nodes_.empty() || edges_.empty()) break;
+
+        detect_clock_gating(nl);
+        detect_reset_paths(nl);
+        apply_multicycle_relaxation();
+        freeze_dont_retime_cells();
+
+        double cp = compute_critical_path();
+        if (cp <= 0) break;
+
+        // Binary search for optimal period this iteration
+        double lo = 0;
+        for (auto& n : nodes_) lo = std::max(lo, n.delay);
+        double hi = cp;
+        double best_T = hi;
+        bool found = false;
+
+        for (int step = 0; step < config_.binary_search_steps; ++step) {
+            double mid = (lo + hi) / 2.0;
+            for (auto& n : nodes_) n.r_val = 0;
+            if (compute_retiming_values(mid)) {
+                best_T = mid;
+                hi = mid;
+                found = true;
+            } else {
+                lo = mid;
+            }
+        }
+
+        if (!found) break;
+
+        double improvement_pct = (cp - best_T) / cp;
+        if (improvement_pct < config_.improvement_threshold) break;
+
+        // Apply retiming for this iteration
+        for (auto& n : nodes_) n.r_val = 0;
+        if (!compute_retiming_values(best_T)) break;
+
+        int changes = apply_retiming(nl);
+        if (changes == 0) break;
+
+        current_delay = best_T;
+        res.iterations = iter + 1;
+
+        std::cout << "[Retiming] SeqOpt iter " << (iter + 1)
+                  << ": delay=" << current_delay
+                  << " (" << changes << " reg moves)\n";
+    }
+
+    res.delay_after = current_delay;
+    res.registers_after = static_cast<int>(nl.flip_flops().size());
+
+    std::cout << "[Retiming] SeqOpt complete: delay " << res.delay_before
+              << " -> " << res.delay_after
+              << ", regs " << res.registers_before << " -> " << res.registers_after
+              << " in " << res.iterations << " iterations\n";
+    return res;
 }
 
 } // namespace sf

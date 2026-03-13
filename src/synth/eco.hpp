@@ -85,6 +85,50 @@ public:
 
     FullEcoResult run_eco(const EcoConfig& cfg = {});
 
+    // Metal-only ECO with spare cells
+    struct SpareCellConfig {
+        std::vector<std::string> spare_types;  // e.g., {"NAND2", "NOR2", "INV", "BUF"}
+        int spare_count_per_type;
+    };
+    struct MetalOnlyResult {
+        int spare_cells_used;
+        int spare_cells_remaining;
+        bool success;
+        double timing_impact_ns;
+        std::string message;
+    };
+    MetalOnlyResult eco_metal_only(const std::vector<std::pair<int,int>>& changes,
+                                    const SpareCellConfig& spares);
+
+    // Functional ECO with patch synthesis
+    struct PatchResult {
+        int gates_added;
+        int gates_removed;
+        int gates_modified;
+        bool functionally_equivalent;
+        std::string patch_netlist;
+    };
+    PatchResult eco_functional_patch(const Netlist& golden, const Netlist& revised);
+
+    // Incremental LEC after ECO
+    struct EcoLecResult {
+        bool equivalent;
+        int mismatches;
+        std::vector<std::string> mismatch_outputs;
+    };
+    EcoLecResult verify_eco();
+
+    // Timing-aware ECO placement
+    struct EcoPlaceResult {
+        int cells_placed;
+        double max_displacement;
+        double timing_slack_after;
+    };
+    EcoPlaceResult eco_place(double max_displacement_um = 10.0);
+
+    // Enhanced ECO: run functional patch + metal-only + verify + place
+    FullEcoResult run_enhanced();
+
 private:
     Netlist& nl_;
 

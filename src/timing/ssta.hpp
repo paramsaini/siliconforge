@@ -115,6 +115,49 @@ struct SensitivityResult {
     double dominant_impact_ps = 0.0;
 };
 
+// ── First-order canonical form (SOCV style) ─────────────────────────
+
+struct CanonicalDelay {
+    double nominal;
+    std::vector<double> sensitivities;  // sensitivity to each variation source
+    double random_sigma;                // independent random component
+};
+
+// ── Spatial correlation model ────────────────────────────────────────
+
+struct SpatialCorrelation {
+    double correlation_length;   // um, beyond this distance correlation drops
+    std::vector<std::pair<double,double>> gate_positions; // x,y per gate
+};
+
+// ── PCA-based variation reduction ────────────────────────────────────
+
+struct PcaResult {
+    int original_sources;
+    int principal_components;    // number of significant PCs
+    double variance_captured;    // fraction of total variance captured
+    std::vector<std::vector<double>> transform;  // PC transform matrix
+};
+
+// ── Parametric yield estimation ──────────────────────────────────────
+
+struct YieldResult {
+    double yield_pct;           // estimated yield
+    double mean_delay;
+    double sigma_delay;
+    double delay_3sigma;        // mean + 3σ delay
+    std::vector<double> delay_histogram;  // binned distribution
+};
+
+// ── Statistical slack ────────────────────────────────────────────────
+
+struct StatSlack {
+    int endpoint;
+    double mean_slack;
+    double sigma_slack;
+    double prob_violation;   // P(slack < 0)
+};
+
 // ── SSTA Engine ──────────────────────────────────────────────────────
 
 class SstaEngine {
@@ -143,6 +186,18 @@ public:
     // Sensitivity analysis: which variation parameter dominates
     SensitivityResult sensitivity_analysis();
 
+    // ── Enhanced SSTA features ───────────────────────────────────────
+
+    void set_spatial_correlation(const SpatialCorrelation& sc);
+
+    PcaResult reduce_with_pca(int max_components = 10);
+
+    YieldResult estimate_yield(double clock_period);
+
+    std::vector<StatSlack> compute_statistical_slacks();
+
+    SstaResult run_enhanced();
+
 private:
     const Netlist& nl_;
     const LibertyLibrary* lib_;
@@ -158,6 +213,14 @@ private:
     struct GatePos { double x = 0, y = 0; };
     std::unordered_map<GateId, GatePos> gate_positions_;
 
+    // Spatial correlation model (user-supplied or auto-generated)
+    SpatialCorrelation spatial_corr_;
+    bool has_spatial_corr_ = false;
+
+    // PCA state
+    PcaResult pca_result_;
+    bool has_pca_ = false;
+
     // Core MC helpers
     double nominal_gate_delay(GateId gid) const;
     double sample_gate_delay(GateId gid, double global_var, double local_var) const;
@@ -168,6 +231,13 @@ private:
     double spatial_correlation(GateId a, GateId b) const;
     std::vector<double> generate_correlated_locals(
         std::mt19937& rng, const std::vector<GateId>& gates) const;
+
+    // Enhanced helpers
+    static double phi_cdf(double x);   // standard normal CDF Φ(x)
+    static double phi_pdf(double x);   // standard normal PDF φ(x)
+    static CanonicalDelay canonical_max(const CanonicalDelay& a, const CanonicalDelay& b);
+    void build_correlation_matrix(const std::vector<GateId>& gates,
+                                  std::vector<std::vector<double>>& corr) const;
 };
 
 } // namespace sf

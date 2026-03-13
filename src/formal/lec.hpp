@@ -9,6 +9,8 @@
 #include "core/aig.hpp"
 #include <string>
 #include <vector>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace sf {
 
@@ -28,6 +30,49 @@ struct LecResult {
     std::string message;
 };
 
+// Structural matching key-point identification
+struct KeyPoint {
+    int net_idx = -1;
+    std::string name;
+    enum Type { PRIMARY_IO, REGISTER, INTERNAL_CUT } type = PRIMARY_IO;
+    bool matched = false;
+    int match_idx = -1;
+};
+
+struct StructuralMatch {
+    int total_key_points = 0;
+    int matched = 0;
+    int unmatched = 0;
+    std::vector<std::pair<int,int>> match_pairs;
+    std::vector<int> unmatched_ref;
+    std::vector<int> unmatched_impl;
+};
+
+// Cone-of-influence reduction
+struct ConeReduction {
+    std::vector<int> relevant_gates;
+    int original_size = 0;
+    int reduced_size = 0;
+    double reduction_pct = 0;
+};
+
+// Sequential equivalence checking
+struct SeqEquivResult {
+    bool equivalent = false;
+    int unrolling_depth = 0;
+    int registers_matched = 0;
+    std::string message;
+};
+
+// Counter-example trace
+struct LecCex {
+    std::vector<std::pair<std::string,bool>> input_values;
+    std::string output_name;
+    bool ref_value = false;
+    bool impl_value = false;
+    std::vector<std::pair<std::string,bool>> internal_diffs;
+};
+
 class LecEngine {
 public:
     LecEngine(const Netlist& golden, const Netlist& revised)
@@ -35,9 +80,31 @@ public:
 
     LecResult check();
 
+    // Structural matching: identify key points in a netlist
+    std::vector<KeyPoint> identify_key_points(const Netlist& nl);
+
+    // Structural comparison between golden and revised
+    StructuralMatch structural_compare();
+
+    // Cone-of-influence reduction for a single output
+    ConeReduction reduce_cone(int output_idx);
+
+    // Sequential equivalence checking
+    SeqEquivResult check_sequential(int max_depth = 10);
+
+    // Get counterexample trace for last failure
+    LecCex get_counterexample();
+
+    // Enhanced LEC flow: structural + COI + sequential + CEX
+    LecResult run_enhanced();
+
 private:
     const Netlist& golden_;
     const Netlist& revised_;
+
+    // Cached last-failure info for get_counterexample()
+    LecCex last_cex_;
+    bool has_cex_ = false;
 
     // Build AIG from netlist for a single output
     AigLit build_cone(AigGraph& aig, const Netlist& nl, NetId output,

@@ -110,6 +110,47 @@ public:
         net_timing_ = map;
     }
 
+    // Steiner tree decomposition (RSMT for each net)
+    struct SteinerDecomp {
+        struct Edge { int from, to; double length; int preferred_layer; };
+        std::vector<std::pair<double,double>> points;  // includes Steiner points
+        std::vector<Edge> edges;
+    };
+    SteinerDecomp build_steiner(const std::vector<std::pair<int,int>>& pins);
+
+    // Layer assignment
+    struct LayerAssignment {
+        int edge_idx;
+        int layer;
+        int via_count;
+    };
+    std::vector<LayerAssignment> assign_layers(const SteinerDecomp& tree, int num_layers = 6);
+
+    // Congestion-driven rip-up and reroute
+    struct RRConfig {
+        int max_iterations = 50;
+        double overflow_threshold = 0.0;  // stop when overflow = 0
+        double history_weight = 1.0;       // penalize repeatedly congested edges
+        double congestion_penalty = 10.0;  // multiplier for overflow cost
+    };
+    void set_rr_config(const RRConfig& cfg) { rr_cfg_ = cfg; }
+
+    // Congestion map
+    struct CongestionMap {
+        std::vector<std::vector<double>> usage;     // gcell usage
+        std::vector<std::vector<double>> capacity;   // gcell capacity
+        double total_overflow;
+        double max_overflow;
+        int overflow_gcells;
+    };
+    CongestionMap get_congestion_map() const;
+
+    // Enhanced routing with rip-up reroute
+    RouteResult route_with_rr();
+
+    // Via minimization
+    int minimize_vias(std::vector<LayerAssignment>& la);
+
 private:
     PhysicalDesign& pd_;
     int grid_x_, grid_y_;
@@ -151,6 +192,21 @@ private:
     struct NetWireRange { int net_idx; size_t wire_start, wire_end; };
     std::vector<NetWireRange> net_wire_ranges_;
     std::set<int> successfully_routed_;
+
+    RRConfig rr_cfg_;
+
+    // History-based cost (for Lagrangian relaxation)
+    std::vector<std::vector<double>> history_cost_;
+
+    // Rip-up and reroute helpers
+    std::vector<int> find_overflowed_nets();
+    bool reroute_net(int net_idx, double penalty_factor);
+
+    // Edge cost with congestion and history
+    double edge_cost(int gx, int gy, int direction, double penalty) const;
+
+    // Lagrangian update
+    void update_lagrangian_multipliers(double step_size);
 };
 
 } // namespace sf

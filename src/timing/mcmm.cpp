@@ -319,4 +319,217 @@ McmmResult McmmAnalyzer::analyze() {
     return r;
 }
 
+// ============================================================================
+// Corner Pruning (sensitivity-based)
+// ============================================================================
+
+McmmAnalyzer::CornerPruning McmmAnalyzer::prune_corners(double sensitivity_threshold) {
+    CornerPruning result;
+    result.original_corners = static_cast<int>(corners_.size());
+
+    if (corners_.empty()) {
+        result.pruned_corners = 0;
+        result.reason = "No corners to prune";
+        return result;
+    }
+
+    // Run a quick STA for each corner with the first active mode to get timing deltas
+    FunctionalMode ref_mode;
+    bool found_mode = false;
+    for (auto& m : modes_) {
+        if (m.clock_freq_mhz > 0 || m.clock_period_ns > 0) {
+            ref_mode = m;
+            found_mode = true;
+            break;
+        }
+    }
+    if (!found_mode) {
+        // No suitable mode; keep all corners
+        for (auto& c : corners_)
+            result.active_corners.push_back(c.name);
+        result.pruned_corners = 0;
+        result.reason = "No active mode for timing comparison";
+        return result;
+    }
+
+    // Find nominal corner (TT or first typical)
+    int nominal_idx = 0;
+    for (int i = 0; i < static_cast<int>(corners_.size()); ++i) {
+        if (corners_[i].process == PvtCorner::TYPICAL) {
+            nominal_idx = i;
+            break;
+        }
+    }
+
+    auto nominal_sta = run_scenario_sta(corners_[nominal_idx], ref_mode);
+    double nominal_wns = nominal_sta.wns;
+
+    std::vector<bool> keep(corners_.size(), false);
+    keep[nominal_idx] = true;  // always keep nominal
+
+    for (int i = 0; i < static_cast<int>(corners_.size()); ++i) {
+        if (i == nominal_idx) continue;
+        auto sta = run_scenario_sta(corners_[i], ref_mode);
+        double delta = std::abs(sta.wns - nominal_wns);
+
+        // Corner is significant if its WNS differs by more than threshold
+        if (delta >= sensitivity_threshold) {
+            keep[i] = true;
+        }
+    }
+
+    for (int i = 0; i < static_cast<int>(corners_.size()); ++i) {
+        if (keep[i])
+            result.active_corners.push_back(corners_[i].name);
+        else
+            result.pruned_away.push_back(corners_[i].name);
+    }
+
+    result.pruned_corners = static_cast<int>(result.pruned_away.size());
+    result.reason = "Pruned corners with WNS delta < " +
+                    std::to_string(sensitivity_threshold) + "ns vs nominal";
+    return result;
+}
+
+// ============================================================================
+// PVT Interpolation (trilinear)
+// ============================================================================
+
+double McmmAnalyzer::interpolate_pvt(const std::vector<PvtPoint>& table,
+                                      double p, double v, double t)
+{
+    if (table.empty()) return 1.0;
+    if (table.size() == 1) return table[0].delay_factor;
+
+    // Find nearest points and perform inverse-distance-weighted interpolation
+    // in PVT space. For sparse tables this degrades gracefully to nearest-neighbor.
+    double total_weight = 0;
+    double weighted_sum = 0;
+
+    for (auto& pt : table) {
+        // Normalized distances in each dimension
+        double dp = (pt.process - p);
+        double dv = (pt.voltage - v) * 10.0;  // scale V to comparable range
+        double dt = (pt.temperature - t) / 100.0;  // scale T
+
+        double dist_sq = dp * dp + dv * dv + dt * dt;
+        if (dist_sq < 1e-12) return pt.delay_factor;  // exact match
+
+        double w = 1.0 / dist_sq;
+        total_weight += w;
+        weighted_sum += w * pt.delay_factor;
+    }
+
+    return (total_weight > 0) ? weighted_sum / total_weight : 1.0;
+}
+
+// ============================================================================
+// Scenario Reduction (clustering-based)
+// ============================================================================
+
+McmmAnalyzer::ScenarioReduction McmmAnalyzer::reduce_scenarios(int target_count) {
+    ScenarioReduction result;
+    int total = static_cast<int>(corners_.size()) * static_cast<int>(modes_.size());
+    result.original_scenarios = total;
+
+    if (total <= target_count) {
+        result.reduced_scenarios = total;
+        for (int i = 0; i < total; ++i)
+            result.active_scenario_ids.push_back(i);
+        result.accuracy_loss = 0;
+        return result;
+    }
+
+    // Build scenario feature vectors: (WNS, hold_WNS, power) for clustering
+    struct ScenarioFeature {
+        int id;
+        double wns;
+        double hold_wns;
+        double power;
+    };
+    std::vector<ScenarioFeature> features;
+
+    FunctionalMode ref_mode;
+    bool found_mode = false;
+    for (auto& m : modes_) {
+        if (m.clock_freq_mhz > 0 || m.clock_period_ns > 0) {
+            ref_mode = m; found_mode = true; break;
+        }
+    }
+
+    int sid = 0;
+    for (auto& corner : corners_) {
+        for (auto& mode : modes_) {
+            ScenarioFeature sf;
+            sf.id = sid++;
+            if (found_mode && (mode.clock_freq_mhz > 0 || mode.clock_period_ns > 0)) {
+                auto sta = run_scenario_sta(corner, mode);
+                sf.wns = sta.wns;
+                sf.hold_wns = sta.hold_wns;
+            } else {
+                sf.wns = 0;
+                sf.hold_wns = 0;
+            }
+            PowerAnalyzer pa(nl_);
+            double freq = mode.clock_freq_mhz > 0 ? mode.clock_freq_mhz : 1.0;
+            auto pwr = pa.analyze(freq, corner.voltage, mode.switching_activity);
+            sf.power = pwr.total_power_mw * corner.power_scale;
+            features.push_back(sf);
+        }
+    }
+
+    // Greedy clustering: iteratively merge closest pair until target_count
+    std::vector<std::vector<int>> clusters;
+    for (auto& f : features)
+        clusters.push_back({f.id});
+
+    auto dist = [&](int a, int b) {
+        auto& fa = features[a];
+        auto& fb = features[b];
+        double dw = (fa.wns - fb.wns) * 10.0;
+        double dh = (fa.hold_wns - fb.hold_wns) * 10.0;
+        double dp = (fa.power - fb.power) / std::max(1.0, fa.power);
+        return dw * dw + dh * dh + dp * dp;
+    };
+
+    while (static_cast<int>(clusters.size()) > target_count) {
+        double best_dist = 1e18;
+        int mi = 0, mj = 1;
+        for (int i = 0; i < static_cast<int>(clusters.size()); ++i) {
+            for (int j = i + 1; j < static_cast<int>(clusters.size()); ++j) {
+                double d = dist(clusters[i][0], clusters[j][0]);
+                if (d < best_dist) { best_dist = d; mi = i; mj = j; }
+            }
+        }
+        // Merge cluster mj into mi
+        for (auto id : clusters[mj])
+            clusters[mi].push_back(id);
+        clusters.erase(clusters.begin() + mj);
+    }
+
+    // Pick representative from each cluster (worst WNS = most critical)
+    double max_wns_loss = 0;
+    for (auto& cluster : clusters) {
+        int best_id = cluster[0];
+        double worst_wns = features[cluster[0]].wns;
+        for (auto id : cluster) {
+            if (features[id].wns < worst_wns) {
+                worst_wns = features[id].wns;
+                best_id = id;
+            }
+        }
+        result.active_scenario_ids.push_back(best_id);
+
+        // Accuracy loss: max WNS difference within cluster
+        for (auto id : cluster) {
+            double loss = std::abs(features[id].wns - worst_wns);
+            max_wns_loss = std::max(max_wns_loss, loss);
+        }
+    }
+
+    result.reduced_scenarios = static_cast<int>(result.active_scenario_ids.size());
+    result.accuracy_loss = max_wns_loss;
+    return result;
+}
+
 } // namespace sf

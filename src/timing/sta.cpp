@@ -654,6 +654,7 @@ std::vector<TimingPath> StaEngine::extract_paths(int count, bool include_hold) {
 
 StaResult StaEngine::analyze_corner(double clock_period, int num_paths, const CornerDerate& d) {
     derate_ = d;
+    last_clock_period_ = clock_period;
     auto t0 = std::chrono::high_resolution_clock::now();
 
     build_timing_graph();
@@ -1185,6 +1186,453 @@ MultiClockStaResult run_multi_clock_sta(
     }
 
     return result;
+}
+
+// ============================================================================
+// RC Corner Support
+// ============================================================================
+
+void StaEngine::add_rc_corner(const RcCorner& corner) {
+    rc_corners_.push_back(corner);
+    if (active_corner_.empty())
+        active_corner_ = corner.name;
+}
+
+void StaEngine::set_active_corner(const std::string& name) {
+    for (auto& rc : rc_corners_) {
+        if (rc.name == name) {
+            active_corner_ = name;
+            return;
+        }
+    }
+}
+
+// ============================================================================
+// External Delay Annotation
+// ============================================================================
+
+void StaEngine::set_external_delays(const std::vector<ExternalDelay>& delays) {
+    external_delays_ = delays;
+}
+
+// ============================================================================
+// PBA Helpers
+// ============================================================================
+
+StaEngine::PbaResult::PathDetail StaEngine::trace_path(
+    int endpoint, const std::vector<double>& arrival)
+{
+    PbaResult::PathDetail detail;
+
+    // Back-trace from endpoint to startpoint through worst-arrival inputs
+    std::vector<int> gate_seq;
+    NetId curr = static_cast<NetId>(endpoint);
+    for (int depth = 0; depth < 200; ++depth) {
+        GateId drv = nl_.net(curr).driver;
+        if (drv < 0) break;
+        auto& g = nl_.gate(drv);
+        if (g.type == GateType::DFF || g.type == GateType::INPUT) break;
+        gate_seq.push_back(drv);
+
+        // Follow worst-arrival input
+        NetId worst_in = -1;
+        double worst_arr = -1;
+        for (auto ni : g.inputs) {
+            double arr = (ni < static_cast<int>(arrival.size())) ? arrival[ni] : 0;
+            if (arr > worst_arr) { worst_arr = arr; worst_in = ni; }
+        }
+        if (worst_in < 0) break;
+        curr = worst_in;
+    }
+    std::reverse(gate_seq.begin(), gate_seq.end());
+    detail.gates = gate_seq;
+
+    // Exact slew propagation through path gates
+    double current_slew = 0.01;
+    double cumulative = 0;
+    for (auto gid : gate_seq) {
+        auto& g = nl_.gate(gid);
+        double gd = gate_delay(gid, current_slew);
+        NetId from = g.inputs.empty() ? -1 : g.inputs[0];
+        double wd = wire_delay(from, g.output);
+
+        detail.cell_delays.push_back(gd);
+        detail.wire_delays.push_back(wd);
+        cumulative += gd + wd;
+        detail.arrivals.push_back(cumulative);
+
+        double load = (g.output >= 0) ? net_load_cap(g.output) : 0.002;
+        current_slew = output_slew(gid, current_slew, load);
+    }
+
+    detail.total_delay = cumulative;
+    return detail;
+}
+
+double StaEngine::compute_path_delay_exact(const std::vector<int>& gates) {
+    double current_slew = 0.01;
+    double total = 0;
+    for (auto gid : gates) {
+        auto& g = nl_.gate(gid);
+        double gd = gate_delay(gid, current_slew);
+        NetId from = g.inputs.empty() ? -1 : g.inputs[0];
+        double wd = wire_delay(from, g.output);
+        total += gd + wd;
+        double load = (g.output >= 0) ? net_load_cap(g.output) : 0.002;
+        current_slew = output_slew(gid, current_slew, load);
+    }
+    return total;
+}
+
+// ============================================================================
+// Path-Based Analysis (PBA)
+// ============================================================================
+
+StaEngine::PbaResult StaEngine::run_path_based(int num_paths) {
+    PbaResult result;
+    result.pba_wns = 0;
+    result.pba_tns = 0;
+    result.paths_improved = 0;
+
+    // 1. Run standard graph-based STA to seed arrival times
+    if (pin_timing_.empty()) {
+        build_timing_graph();
+        forward_propagation();
+        hold_forward_propagation();
+        if (last_clock_period_ > 0) {
+            backward_propagation(last_clock_period_);
+            hold_backward_propagation();
+        }
+        compute_slacks();
+    }
+
+    // Build arrival vector for trace_path back-tracking
+    std::vector<double> arrival_vec(nl_.num_nets(), 0);
+    for (auto& [nid, pt] : pin_timing_)
+        arrival_vec[nid] = pt.worst_arrival();
+
+    // 2. Collect endpoints sorted by worst graph-based slack
+    struct EpInfo { NetId net; double slack; double graph_delay; };
+    std::vector<EpInfo> endpoints;
+    for (auto po : nl_.primary_outputs()) {
+        auto& pt = pin_timing_[po];
+        endpoints.push_back({po, pt.worst_slack(), pt.worst_arrival()});
+    }
+    for (auto gid : nl_.flip_flops()) {
+        auto& ff = nl_.gate(gid);
+        if (!ff.inputs.empty()) {
+            NetId d = ff.inputs[0];
+            auto& pt = pin_timing_[d];
+            endpoints.push_back({d, pt.worst_slack(), pt.worst_arrival()});
+        }
+    }
+    std::sort(endpoints.begin(), endpoints.end(),
+              [](auto& a, auto& b) { return a.slack < b.slack; });
+
+    int count = std::min(num_paths, static_cast<int>(endpoints.size()));
+
+    // 3. For each critical path, recompute with exact slew propagation
+    for (int i = 0; i < count; ++i) {
+        auto detail = trace_path(endpoints[i].net, arrival_vec);
+        double req = last_clock_period_ > 0 ? last_clock_period_ : 1e18;
+        NetId ep = endpoints[i].net;
+        if (pin_timing_.count(ep)) {
+            req = std::min(pin_timing_.at(ep).required_rise,
+                           pin_timing_.at(ep).required_fall);
+        }
+        detail.slack = req - detail.total_delay;
+        detail.is_critical = (detail.slack < 0);
+
+        // PBA typically recovers pessimism
+        if (detail.total_delay < endpoints[i].graph_delay)
+            result.paths_improved++;
+
+        if (detail.slack < 0)
+            result.pba_tns += detail.slack;
+        result.pba_wns = std::min(result.pba_wns, detail.slack);
+        result.paths.push_back(std::move(detail));
+    }
+
+    return result;
+}
+
+// ============================================================================
+// SI Helpers
+// ============================================================================
+
+std::vector<int> StaEngine::find_aggressors(int net_idx) {
+    std::vector<int> aggressors;
+    if (!pd_ || pd_->wires.empty()) return aggressors;
+
+    // Find wires belonging to victim net
+    for (size_t i = 0; i < pd_->wires.size(); ++i) {
+        auto& victim = pd_->wires[i];
+        if (victim.net_id != net_idx) continue;
+
+        for (size_t j = 0; j < pd_->wires.size(); ++j) {
+            if (i == j) continue;
+            auto& agg = pd_->wires[j];
+            if (agg.layer != victim.layer) continue;
+            if (agg.net_id == net_idx) continue;
+
+            double dx = (agg.start.x + agg.end.x) / 2.0 -
+                        (victim.start.x + victim.end.x) / 2.0;
+            double dy = (agg.start.y + agg.end.y) / 2.0 -
+                        (victim.start.y + victim.end.y) / 2.0;
+            double spacing = std::sqrt(dx * dx + dy * dy);
+            if (spacing <= xtalk_.max_coupling_distance_um && agg.net_id >= 0) {
+                // Avoid duplicates
+                bool found = false;
+                for (auto a : aggressors)
+                    if (a == agg.net_id) { found = true; break; }
+                if (!found)
+                    aggressors.push_back(agg.net_id);
+            }
+        }
+        break;
+    }
+    return aggressors;
+}
+
+double StaEngine::compute_crosstalk_delay(int victim_net,
+                                           const std::vector<int>& aggressors)
+{
+    if (!pd_ || pd_->wires.empty()) return 0;
+
+    double victim_cap = net_load_cap(static_cast<NetId>(victim_net));
+    double total_delta = 0;
+
+    for (size_t i = 0; i < pd_->wires.size(); ++i) {
+        auto& vw = pd_->wires[i];
+        if (vw.net_id != victim_net) continue;
+        double victim_len = vw.start.dist(vw.end);
+        if (victim_len < 0.001) continue;
+
+        for (int agg_net : aggressors) {
+            for (size_t j = 0; j < pd_->wires.size(); ++j) {
+                auto& aw = pd_->wires[j];
+                if (aw.net_id != agg_net) continue;
+                if (aw.layer != vw.layer) continue;
+
+                double agg_len = aw.start.dist(aw.end);
+                double prl = std::min(victim_len, agg_len);
+                double coupling_cap = xtalk_.coupling_cap_per_um * prl;
+
+                // SI delta = coupling_cap × aggressor_slew / victim_cap
+                double si_delta = coupling_cap * xtalk_.aggressor_slew /
+                                  std::max(0.001, victim_cap);
+                total_delta += si_delta;
+                break;
+            }
+        }
+        break;
+    }
+    return total_delta;
+}
+
+// ============================================================================
+// SI-Aware Delay Computation
+// ============================================================================
+
+std::vector<StaEngine::SiDelay> StaEngine::compute_si_delays() {
+    std::vector<SiDelay> results;
+    if (!si_enabled_ && !xtalk_.enabled) return results;
+
+    for (size_t nid = 0; nid < nl_.num_nets(); ++nid) {
+        auto& net = nl_.net(static_cast<NetId>(nid));
+        if (net.driver < 0) continue;
+
+        auto aggressors = find_aggressors(static_cast<int>(nid));
+        if (aggressors.empty()) continue;
+
+        SiDelay sid;
+        sid.victim_net = static_cast<int>(nid);
+        sid.aggressors = aggressors;
+
+        // Nominal delay: wire delay without SI
+        sid.nominal_delay = wire_delay(static_cast<NetId>(nid),
+                                       static_cast<NetId>(nid));
+        sid.si_delta = compute_crosstalk_delay(static_cast<int>(nid), aggressors);
+        sid.total_delay = sid.nominal_delay + sid.si_delta;
+        results.push_back(sid);
+    }
+    return results;
+}
+
+// ============================================================================
+// Incremental STA
+// ============================================================================
+
+std::vector<int> StaEngine::find_affected_cone(const std::vector<int>& changed) {
+    std::unordered_set<int> affected_set(changed.begin(), changed.end());
+    std::queue<int> worklist;
+
+    // Seed: all nets driven by changed gates
+    for (int gid : changed) {
+        auto& g = nl_.gate(static_cast<GateId>(gid));
+        if (g.output >= 0) worklist.push(g.output);
+    }
+
+    // BFS forward through fanout cone
+    while (!worklist.empty()) {
+        int nid = worklist.front(); worklist.pop();
+        auto& net = nl_.net(static_cast<NetId>(nid));
+        for (auto fo_gid : net.fanout) {
+            if (affected_set.count(fo_gid)) continue;
+            affected_set.insert(fo_gid);
+            auto& g = nl_.gate(fo_gid);
+            if (g.output >= 0)
+                worklist.push(g.output);
+        }
+    }
+
+    // Return in topo order for correct propagation
+    std::vector<int> result;
+    for (auto gid : topo_) {
+        if (affected_set.count(gid))
+            result.push_back(gid);
+    }
+    return result;
+}
+
+StaEngine::IncrStaResult StaEngine::run_incremental(
+    const std::vector<int>& changed_gates)
+{
+    auto t0 = std::chrono::high_resolution_clock::now();
+    IncrStaResult result;
+
+    // Ensure timing graph and base timing exist
+    if (topo_.empty()) build_timing_graph();
+    if (pin_timing_.empty()) {
+        forward_propagation();
+        hold_forward_propagation();
+        if (last_clock_period_ > 0) {
+            backward_propagation(last_clock_period_);
+            hold_backward_propagation();
+        }
+        compute_slacks();
+    }
+
+    // Find forward cone of affected gates
+    auto cone = find_affected_cone(changed_gates);
+    result.cones_updated = static_cast<int>(cone.size());
+
+    // Re-propagate arrivals only through affected cone
+    analyzing_late_ = true;
+    double pi_slew = 0.01;
+    for (int gid : cone) {
+        auto& g = nl_.gate(static_cast<GateId>(gid));
+        if (g.type == GateType::DFF || g.type == GateType::INPUT ||
+            g.type == GateType::OUTPUT || g.output < 0) continue;
+
+        double max_arr = 0;
+        double worst_slew = pi_slew;
+        for (auto ni : g.inputs) {
+            double arr = pin_timing_[ni].worst_arrival();
+            if (arr > max_arr) {
+                max_arr = arr;
+                worst_slew = std::max(pin_timing_[ni].slew_rise,
+                                       pin_timing_[ni].slew_fall);
+            }
+        }
+
+        double gd = gate_delay(static_cast<GateId>(gid), worst_slew);
+        double wd = wire_delay(g.inputs.empty() ? -1 : g.inputs[0], g.output);
+        double out_arr = max_arr + gd + wd;
+
+        auto& pt = pin_timing_[g.output];
+        pt.arrival_rise = out_arr;
+        pt.arrival_fall = out_arr;
+
+        double load = net_load_cap(g.output);
+        double out_slew = output_slew(static_cast<GateId>(gid), worst_slew, load);
+        pt.slew_rise = out_slew;
+        pt.slew_fall = out_slew;
+    }
+
+    // Re-propagate required times backward through affected cone (reverse)
+    if (last_clock_period_ > 0) {
+        for (int idx = static_cast<int>(cone.size()) - 1; idx >= 0; --idx) {
+            int gid = cone[idx];
+            auto& g = nl_.gate(static_cast<GateId>(gid));
+            if (g.type == GateType::DFF || g.type == GateType::INPUT ||
+                g.type == GateType::OUTPUT || g.output < 0) continue;
+
+            double out_req = std::min(pin_timing_[g.output].required_rise,
+                                       pin_timing_[g.output].required_fall);
+            double worst_slew_bp = 0.01;
+            for (auto ni : g.inputs)
+                worst_slew_bp = std::max(worst_slew_bp, pin_timing_[ni].slew_rise);
+            double gd = gate_delay(static_cast<GateId>(gid), worst_slew_bp);
+            for (auto ni : g.inputs) {
+                double in_req = out_req - gd;
+                pin_timing_[ni].required_rise = std::min(pin_timing_[ni].required_rise, in_req);
+                pin_timing_[ni].required_fall = std::min(pin_timing_[ni].required_fall, in_req);
+            }
+        }
+    }
+
+    // Recompute slacks and gather WNS/TNS
+    compute_slacks();
+    result.wns = 0;
+    result.tns = 0;
+    for (auto po : nl_.primary_outputs()) {
+        double slack = pin_timing_[po].worst_slack();
+        if (slack < 0) { result.tns += slack; result.wns = std::min(result.wns, slack); }
+    }
+    for (auto gid : nl_.flip_flops()) {
+        auto& ff = nl_.gate(gid);
+        if (!ff.inputs.empty()) {
+            double slack = pin_timing_[ff.inputs[0]].worst_slack();
+            if (slack < 0) { result.tns += slack; result.wns = std::min(result.wns, slack); }
+        }
+    }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    result.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    return result;
+}
+
+// ============================================================================
+// Bottleneck Analysis
+// ============================================================================
+
+std::vector<StaEngine::Bottleneck> StaEngine::analyze_bottlenecks(int top_n) {
+    // Extract a large set of critical paths
+    auto paths = extract_paths(std::max(top_n * 5, 100), false);
+
+    // For each gate on critical paths, count how many pass through it and
+    // accumulate the slack impact (gate_delay × num_paths_through).
+    std::unordered_map<int, int> path_count;
+    std::unordered_map<int, double> slack_impact;
+
+    for (auto& path : paths) {
+        if (path.slack >= 0) continue;  // only consider violating paths
+        for (auto gid : path.gates) {
+            path_count[gid]++;
+            double gd = gate_delay(gid, 0.01);
+            slack_impact[gid] += gd * std::abs(path.slack);
+        }
+    }
+
+    // Build sorted bottleneck list
+    std::vector<Bottleneck> bottlenecks;
+    for (auto& [gid, count] : path_count) {
+        Bottleneck bn;
+        bn.gate_id = gid;
+        bn.gate_name = nl_.gate(static_cast<GateId>(gid)).name;
+        bn.num_critical_paths_through = count;
+        bn.total_slack_impact = slack_impact[gid];
+        bottlenecks.push_back(bn);
+    }
+
+    std::sort(bottlenecks.begin(), bottlenecks.end(),
+              [](auto& a, auto& b) { return a.total_slack_impact > b.total_slack_impact; });
+
+    if (static_cast<int>(bottlenecks.size()) > top_n)
+        bottlenecks.resize(top_n);
+
+    return bottlenecks;
 }
 
 } // namespace sf

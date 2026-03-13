@@ -32,6 +32,46 @@ public:
     };
     const Stats& stats() const { return stats_; }
 
+    // VSIDS activity-based branching
+    void enable_vsids(bool enable = true);
+
+    // LBD-based clause deletion
+    struct ClauseDbConfig {
+        int max_learned_clauses;
+        int lbd_threshold;          // delete clauses with LBD > this
+        double decay_factor;
+    };
+    void set_clause_db_config(const ClauseDbConfig& cfg);
+    void reduce_clause_db();
+
+    // Restart policy
+    enum class RestartPolicy { LUBY, GEOMETRIC, GLUCOSE };
+    void set_restart_policy(RestartPolicy policy);
+
+    // Phase saving
+    void enable_phase_saving(bool enable = true);
+
+    // Preprocessing
+    struct PreprocessResult {
+        int unit_propagated;
+        int pure_literals;
+        int subsumptions;
+        int self_subsumptions;
+    };
+    PreprocessResult preprocess();
+
+    // Statistics
+    struct SolverStats {
+        uint64_t decisions;
+        uint64_t propagations;
+        uint64_t conflicts;
+        uint64_t learned_clauses;
+        uint64_t deleted_clauses;
+        uint64_t restarts;
+        double time_ms;
+    };
+    SolverStats get_stats() const;
+
 private:
     enum class LBool : uint8_t { UNDEF = 0, TRUE = 1, FALSE = 2 };
 
@@ -59,6 +99,14 @@ private:
     int qhead_ = 0;
     Stats stats_;
     bool ok_ = true;
+
+    bool vsids_enabled_ = true;
+    ClauseDbConfig clause_db_cfg_ = {2000, 6, 0.95};
+    RestartPolicy restart_policy_ = RestartPolicy::GEOMETRIC;
+    bool phase_saving_ = false;
+    std::vector<bool> saved_phase_;
+    uint64_t learned_count_ = 0;
+    uint64_t deleted_count_ = 0;
 
     void ensure_var(int v);
     int decision_level() const { return (int)trail_lim_.size(); }

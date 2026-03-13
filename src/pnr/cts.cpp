@@ -7,6 +7,10 @@
 #include <sstream>
 #include <iomanip>
 #include <numeric>
+#include <set>
+#include <limits>
+#include <cassert>
+#include <utility>
 
 namespace sf {
 
@@ -1126,6 +1130,858 @@ CtsEngine::UsefulSkewResult CtsEngine::apply_useful_skew_opt(
                      std::to_string(static_cast<int>(result.slack_improvement)) +
                      "ps total slack improvement, max skew=" +
                      std::to_string(static_cast<int>(result.max_applied_skew)) + "ps";
+    return result;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Advanced CTS Implementation — Buffer Library, RSMT, Multi-source, Clock Mesh,
+// OCV-aware Balancing, Power-aware Optimization
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── set_config ──────────────────────────────────────────────────────────────
+
+void CtsEngine::set_config(const CtsConfig& cfg) {
+    cts_config_ = cfg;
+}
+
+// ── Default buffer library (3 sizes × 3 Vt flavors) ────────────────────────
+
+static std::vector<CtsBuffer> default_buffer_library() {
+    std::vector<CtsBuffer> lib;
+    // Small buffers
+    lib.push_back({"CLKBUF_X1_SVT", 0.035, 0.005, 1.0, 2.0, 0.010, CtsVtType::SVT});
+    lib.push_back({"CLKBUF_X1_LVT", 0.025, 0.006, 1.2, 2.2, 0.015, CtsVtType::LVT});
+    lib.push_back({"CLKBUF_X1_HVT", 0.050, 0.004, 0.8, 1.8, 0.006, CtsVtType::HVT});
+    // Medium buffers
+    lib.push_back({"CLKBUF_X4_SVT", 0.030, 0.020, 4.0, 6.0, 0.035, CtsVtType::SVT});
+    lib.push_back({"CLKBUF_X4_LVT", 0.020, 0.024, 4.8, 6.6, 0.050, CtsVtType::LVT});
+    lib.push_back({"CLKBUF_X4_HVT", 0.045, 0.016, 3.2, 5.4, 0.020, CtsVtType::HVT});
+    // Large buffers
+    lib.push_back({"CLKBUF_X8_SVT", 0.025, 0.040, 8.0, 10.0, 0.065, CtsVtType::SVT});
+    lib.push_back({"CLKBUF_X8_LVT", 0.018, 0.048, 9.6, 11.0, 0.090, CtsVtType::LVT});
+    lib.push_back({"CLKBUF_X8_HVT", 0.040, 0.032, 6.4, 9.0, 0.038, CtsVtType::HVT});
+    return lib;
+}
+
+// ── select_cts_buffer ───────────────────────────────────────────────────────
+
+CtsBuffer CtsEngine::select_cts_buffer(double load_cap, double max_slew,
+                                        bool critical_path) {
+    auto& lib = cts_config_.buffer_library;
+    if (lib.empty()) {
+        lib = default_buffer_library();
+    }
+
+    // Filter buffers that can drive the load within slew constraint
+    // Simplified model: slew ≈ delay × (1 + load_cap / drive)
+    std::vector<std::pair<double, int>> candidates; // (cost, index)
+    for (int i = 0; i < static_cast<int>(lib.size()); ++i) {
+        const auto& buf = lib[i];
+        double effective_slew = buf.delay * (1.0 + load_cap / std::max(buf.drive * 0.01, 1e-9));
+        if (effective_slew > max_slew && max_slew > 0) continue;
+
+        // Cost: for critical paths, minimize delay; otherwise minimize power
+        double cost;
+        if (critical_path) {
+            cost = buf.delay * 1000.0; // heavily weight delay
+            if (buf.vt == CtsVtType::LVT) cost *= 0.7;  // prefer LVT
+            if (buf.vt == CtsVtType::HVT) cost *= 1.5;   // penalize HVT
+        } else {
+            cost = buf.power * 1000.0; // heavily weight power
+            if (buf.vt == CtsVtType::HVT) cost *= 0.6;  // prefer HVT
+            if (buf.vt == CtsVtType::LVT) cost *= 1.5;   // penalize LVT
+        }
+        candidates.emplace_back(cost, i);
+    }
+
+    if (candidates.empty()) {
+        // Fallback: return the medium SVT buffer
+        for (int i = 0; i < static_cast<int>(lib.size()); ++i) {
+            if (lib[i].vt == CtsVtType::SVT && lib[i].drive >= 3.0) return lib[i];
+        }
+        return lib[0]; // absolute fallback
+    }
+
+    std::sort(candidates.begin(), candidates.end());
+    return lib[candidates.front().second];
+}
+
+// ── build_hanan_grid ────────────────────────────────────────────────────────
+
+std::vector<std::pair<double,double>> CtsEngine::build_hanan_grid(
+        const std::vector<std::pair<double,double>>& points) {
+    // Collect unique X and Y coordinates
+    std::set<double> xs, ys;
+    for (auto& p : points) {
+        xs.insert(p.first);
+        ys.insert(p.second);
+    }
+
+    // Hanan grid = all intersections of these horizontal/vertical lines
+    std::set<std::pair<double,double>> point_set(points.begin(), points.end());
+    std::vector<std::pair<double,double>> grid;
+    for (double x : xs) {
+        for (double y : ys) {
+            auto candidate = std::make_pair(x, y);
+            if (point_set.find(candidate) == point_set.end()) {
+                grid.push_back(candidate);
+            }
+        }
+    }
+    return grid;
+}
+
+// ── steiner_from_hanan ──────────────────────────────────────────────────────
+// Greedy RSMT: start with MST of sinks, iteratively add Steiner points that
+// reduce total wirelength.
+
+SteinerTree CtsEngine::steiner_from_hanan(
+        const std::vector<std::pair<double,double>>& sinks,
+        const std::vector<std::pair<double,double>>& hanan) {
+    SteinerTree st;
+    if (sinks.empty()) return st;
+
+    int n = static_cast<int>(sinks.size());
+
+    // Initialize nodes for sinks
+    for (int i = 0; i < n; ++i) {
+        SteinerTree::SteinerNode node;
+        node.x = sinks[i].first;
+        node.y = sinks[i].second;
+        node.is_steiner = false;
+        node.sink_idx = i;
+        st.nodes.push_back(node);
+    }
+
+    if (n == 1) {
+        st.root = 0;
+        st.total_wirelength = 0;
+        return st;
+    }
+
+    // Build MST using Prim's algorithm on Manhattan distance
+    std::vector<bool> in_mst(n, false);
+    std::vector<double> min_cost(n, std::numeric_limits<double>::max());
+    std::vector<int> parent(n, -1);
+    min_cost[0] = 0;
+
+    for (int iter = 0; iter < n; ++iter) {
+        int u = -1;
+        double best = std::numeric_limits<double>::max();
+        for (int i = 0; i < n; ++i) {
+            if (!in_mst[i] && min_cost[i] < best) {
+                best = min_cost[i];
+                u = i;
+            }
+        }
+        if (u < 0) break;
+        in_mst[u] = true;
+
+        for (int v = 0; v < n; ++v) {
+            if (in_mst[v]) continue;
+            double d = std::abs(sinks[u].first - sinks[v].first) +
+                       std::abs(sinks[u].second - sinks[v].second);
+            if (d < min_cost[v]) {
+                min_cost[v] = d;
+                parent[v] = u;
+            }
+        }
+    }
+
+    // Record MST edges
+    struct Edge { int u, v; double w; };
+    std::vector<Edge> mst_edges;
+    double mst_wl = 0;
+    for (int i = 1; i < n; ++i) {
+        if (parent[i] >= 0) {
+            double d = std::abs(sinks[i].first - sinks[parent[i]].first) +
+                       std::abs(sinks[i].second - sinks[parent[i]].second);
+            mst_edges.push_back({parent[i], i, d});
+            mst_wl += d;
+        }
+    }
+
+    // Build parent-child in tree
+    for (auto& e : mst_edges) {
+        st.nodes[e.u].children.push_back(e.v);
+    }
+
+    // Greedy Steiner point insertion: try each Hanan point, add if it reduces WL
+    double current_wl = mst_wl;
+    int max_steiner_iters = std::min(static_cast<int>(hanan.size()), 50);
+
+    for (int hi = 0; hi < max_steiner_iters; ++hi) {
+        double hx = hanan[hi].first;
+        double hy = hanan[hi].second;
+
+        // Find the two closest existing nodes
+        double d1 = std::numeric_limits<double>::max();
+        double d2 = std::numeric_limits<double>::max();
+        int n1 = -1, n2 = -1;
+        for (int i = 0; i < static_cast<int>(st.nodes.size()); ++i) {
+            double d = std::abs(st.nodes[i].x - hx) + std::abs(st.nodes[i].y - hy);
+            if (d < d1) { d2 = d1; n2 = n1; d1 = d; n1 = i; }
+            else if (d < d2) { d2 = d; n2 = i; }
+        }
+        if (n1 < 0 || n2 < 0) continue;
+
+        // Direct distance between n1 and n2
+        double direct = std::abs(st.nodes[n1].x - st.nodes[n2].x) +
+                        std::abs(st.nodes[n1].y - st.nodes[n2].y);
+        double via_steiner = d1 + d2;
+
+        if (via_steiner < direct * 0.95) { // at least 5% improvement
+            SteinerTree::SteinerNode sp;
+            sp.x = hx;
+            sp.y = hy;
+            sp.is_steiner = true;
+            sp.sink_idx = -1;
+            int sp_idx = static_cast<int>(st.nodes.size());
+            sp.children.push_back(n1);
+            sp.children.push_back(n2);
+            st.nodes.push_back(sp);
+
+            // Remove n2 from n1's children if present
+            auto& c = st.nodes[n1].children;
+            c.erase(std::remove(c.begin(), c.end(), n2), c.end());
+
+            current_wl = current_wl - direct + via_steiner;
+        }
+    }
+
+    // Root is the last added node (or node 0 if no Steiner points added)
+    st.root = static_cast<int>(st.nodes.size()) - 1;
+    if (st.root < 0) st.root = 0;
+    st.total_wirelength = std::max(current_wl, 0.0);
+
+    return st;
+}
+
+// ── build_rsmt ──────────────────────────────────────────────────────────────
+
+SteinerTree CtsEngine::build_rsmt(const std::vector<std::pair<double,double>>& sinks) {
+    if (sinks.empty()) return SteinerTree{};
+    if (sinks.size() == 1) {
+        SteinerTree st;
+        SteinerTree::SteinerNode node;
+        node.x = sinks[0].first;
+        node.y = sinks[0].second;
+        node.is_steiner = false;
+        node.sink_idx = 0;
+        st.nodes.push_back(node);
+        st.root = 0;
+        st.total_wirelength = 0;
+        return st;
+    }
+
+    auto hanan = build_hanan_grid(sinks);
+    return steiner_from_hanan(sinks, hanan);
+}
+
+// ── size_buffers ────────────────────────────────────────────────────────────
+// Walk the Steiner tree and assign buffer types based on subtree load.
+
+void CtsEngine::size_buffers(SteinerTree& tree, double target_slew) {
+    if (tree.nodes.empty()) return;
+
+    // Bottom-up pass: compute capacitive load at each node
+    std::vector<double> load(tree.nodes.size(), 0.0);
+    const double wire_cap_per_unit = 0.001; // pF per unit Manhattan distance
+    const double sink_cap = 0.005;          // pF per sink
+
+    // Topological order (reverse DFS from root)
+    std::vector<int> order;
+    std::vector<bool> visited(tree.nodes.size(), false);
+    std::function<void(int)> dfs = [&](int u) {
+        if (u < 0 || u >= static_cast<int>(tree.nodes.size()) || visited[u]) return;
+        visited[u] = true;
+        for (int c : tree.nodes[u].children) dfs(c);
+        order.push_back(u);
+    };
+    dfs(tree.root);
+
+    for (int u : order) {
+        auto& node = tree.nodes[u];
+        if (node.children.empty()) {
+            load[u] = sink_cap; // leaf load
+        } else {
+            load[u] = 0;
+            for (int c : node.children) {
+                double wire_len = std::abs(node.x - tree.nodes[c].x) +
+                                  std::abs(node.y - tree.nodes[c].y);
+                load[u] += load[c] + wire_len * wire_cap_per_unit;
+            }
+        }
+
+        // If load exceeds max, insert buffer (tracked via buffer_delays_)
+        if (load[u] > cts_config_.max_cap_load_pf && node.is_steiner) {
+            bool is_critical = (node.children.size() <= 2);
+            CtsBuffer buf = select_cts_buffer(load[u], target_slew, is_critical);
+            buffer_delays_.push_back(buf.delay);
+            buffer_vt_assignments_.push_back(buf.vt);
+            load[u] = buf.input_cap; // buffer isolates downstream load
+        }
+    }
+}
+
+// ── kmeans_partition_sinks ──────────────────────────────────────────────────
+// Simple k-means clustering of sink positions into k groups.
+
+std::vector<std::vector<int>> CtsEngine::kmeans_partition_sinks(
+        const std::vector<std::pair<double,double>>& sinks, int k) {
+    int n = static_cast<int>(sinks.size());
+    if (n == 0 || k <= 0) return {};
+    k = std::min(k, n);
+
+    // Initialize centroids: evenly spaced from sink list
+    std::vector<double> cx(k), cy(k);
+    for (int i = 0; i < k; ++i) {
+        int idx = (i * n) / k;
+        cx[i] = sinks[idx].first;
+        cy[i] = sinks[idx].second;
+    }
+
+    std::vector<int> assignment(n, 0);
+    constexpr int max_iter = 50;
+
+    for (int iter = 0; iter < max_iter; ++iter) {
+        bool changed = false;
+
+        // Assign each sink to nearest centroid (Manhattan distance)
+        for (int i = 0; i < n; ++i) {
+            double best_dist = std::numeric_limits<double>::max();
+            int best_k = 0;
+            for (int j = 0; j < k; ++j) {
+                double d = std::abs(sinks[i].first - cx[j]) +
+                           std::abs(sinks[i].second - cy[j]);
+                if (d < best_dist) { best_dist = d; best_k = j; }
+            }
+            if (assignment[i] != best_k) { assignment[i] = best_k; changed = true; }
+        }
+        if (!changed) break;
+
+        // Update centroids
+        std::vector<double> sum_x(k, 0), sum_y(k, 0);
+        std::vector<int> count(k, 0);
+        for (int i = 0; i < n; ++i) {
+            sum_x[assignment[i]] += sinks[i].first;
+            sum_y[assignment[i]] += sinks[i].second;
+            count[assignment[i]]++;
+        }
+        for (int j = 0; j < k; ++j) {
+            if (count[j] > 0) {
+                cx[j] = sum_x[j] / count[j];
+                cy[j] = sum_y[j] / count[j];
+            }
+        }
+    }
+
+    std::vector<std::vector<int>> clusters(k);
+    for (int i = 0; i < n; ++i) {
+        clusters[assignment[i]].push_back(i);
+    }
+
+    // Remove empty clusters
+    clusters.erase(
+        std::remove_if(clusters.begin(), clusters.end(),
+                       [](const std::vector<int>& c) { return c.empty(); }),
+        clusters.end());
+
+    return clusters;
+}
+
+// ── compute_ocv_delay ───────────────────────────────────────────────────────
+
+double CtsEngine::compute_ocv_delay(double nominal_delay, double margin, bool early) {
+    if (early) {
+        return nominal_delay * (1.0 - margin); // early = faster
+    } else {
+        return nominal_delay * (1.0 + margin); // late = slower
+    }
+}
+
+// ── synthesize_multi_source ─────────────────────────────────────────────────
+
+MultiSourceResult CtsEngine::synthesize_multi_source(int max_sources) {
+    MultiSourceResult result;
+
+    // Collect sink positions from tree
+    std::vector<std::pair<double,double>> sink_positions;
+    std::vector<int> sink_indices;
+    for (int i = 0; i < static_cast<int>(tree_.size()); ++i) {
+        if (tree_[i].cell_id >= 0) {
+            sink_positions.emplace_back(tree_[i].position.x, tree_[i].position.y);
+            sink_indices.push_back(i);
+        }
+    }
+
+    if (sink_positions.empty()) {
+        result.message = "No sinks available for multi-source CTS";
+        return result;
+    }
+
+    // Determine number of sources based on sink count
+    int num_sources = std::min(max_sources,
+        std::max(1, static_cast<int>(sink_positions.size()) / 200));
+    if (num_sources <= 1) {
+        result.num_sources = 1;
+        result.source_assignments.assign(sink_positions.size(), 0);
+        // Source at centroid
+        double sx = 0, sy = 0;
+        for (auto& p : sink_positions) { sx += p.first; sy += p.second; }
+        sx /= static_cast<double>(sink_positions.size());
+        sy /= static_cast<double>(sink_positions.size());
+        result.source_x = {sx};
+        result.source_y = {sy};
+        result.max_skew = 0;
+        result.message = "Single source CTS (insufficient sinks for multi-source)";
+        return result;
+    }
+
+    // K-means partitioning
+    auto clusters = kmeans_partition_sinks(sink_positions, num_sources);
+    result.num_sources = static_cast<int>(clusters.size());
+    result.source_assignments.resize(sink_positions.size(), 0);
+
+    // Compute source location (centroid) for each cluster
+    for (int c = 0; c < static_cast<int>(clusters.size()); ++c) {
+        double sx = 0, sy = 0;
+        for (int idx : clusters[c]) {
+            result.source_assignments[idx] = c;
+            sx += sink_positions[idx].first;
+            sy += sink_positions[idx].second;
+        }
+        sx /= static_cast<double>(clusters[c].size());
+        sy /= static_cast<double>(clusters[c].size());
+        result.source_x.push_back(sx);
+        result.source_y.push_back(sy);
+    }
+
+    // Build subtree for each cluster and compute per-cluster max delay
+    std::vector<double> cluster_max_delay(clusters.size(), 0);
+    std::vector<double> cluster_min_delay(clusters.size(), std::numeric_limits<double>::max());
+
+    for (int c = 0; c < static_cast<int>(clusters.size()); ++c) {
+        for (int idx : clusters[c]) {
+            int tree_idx = sink_indices[idx];
+            double dist = std::abs(tree_[tree_idx].position.x - result.source_x[c]) +
+                          std::abs(tree_[tree_idx].position.y - result.source_y[c]);
+            double delay = dist * 0.001; // simple wire delay model
+            cluster_max_delay[c] = std::max(cluster_max_delay[c], delay);
+            cluster_min_delay[c] = std::min(cluster_min_delay[c], delay);
+        }
+    }
+
+    // Balance inter-source skew: adjust source delays so all clusters have same max latency
+    double global_max = *std::max_element(cluster_max_delay.begin(), cluster_max_delay.end());
+    double worst_skew = 0;
+    for (int c = 0; c < static_cast<int>(clusters.size()); ++c) {
+        double skew = cluster_max_delay[c] - cluster_min_delay[c];
+        worst_skew = std::max(worst_skew, skew);
+        // Insert delay padding at source to equalize
+        double padding = global_max - cluster_max_delay[c];
+        (void)padding; // padding applied during physical implementation
+    }
+
+    result.max_skew = worst_skew;
+    std::ostringstream oss;
+    oss << "Multi-source CTS: " << result.num_sources << " sources, "
+        << sink_positions.size() << " sinks, worst skew="
+        << std::fixed << std::setprecision(3) << result.max_skew << "ns";
+    result.message = oss.str();
+    return result;
+}
+
+// ── synthesize_mesh ─────────────────────────────────────────────────────────
+
+ClockMeshResult CtsEngine::synthesize_mesh(double mesh_pitch) {
+    ClockMeshResult result;
+    result.mesh_pitch = mesh_pitch;
+
+    if (mesh_pitch <= 0 || tree_.empty()) {
+        result.message = "Invalid mesh pitch or empty tree";
+        return result;
+    }
+
+    // Determine bounding box of all sinks
+    double min_x = std::numeric_limits<double>::max();
+    double max_x = std::numeric_limits<double>::lowest();
+    double min_y = std::numeric_limits<double>::max();
+    double max_y = std::numeric_limits<double>::lowest();
+    int sink_count = 0;
+
+    for (auto& node : tree_) {
+        if (node.cell_id >= 0) {
+            min_x = std::min(min_x, node.position.x);
+            max_x = std::max(max_x, node.position.x);
+            min_y = std::min(min_y, node.position.y);
+            max_y = std::max(max_y, node.position.y);
+            sink_count++;
+        }
+    }
+
+    if (sink_count == 0) {
+        result.message = "No sinks in tree for mesh construction";
+        return result;
+    }
+
+    // Create regular grid of mesh points
+    result.mesh_cols = std::max(1, static_cast<int>((max_x - min_x) / mesh_pitch) + 1);
+    result.mesh_rows = std::max(1, static_cast<int>((max_y - min_y) / mesh_pitch) + 1);
+
+    for (int r = 0; r < result.mesh_rows; ++r) {
+        for (int c = 0; c < result.mesh_cols; ++c) {
+            double mx = min_x + c * mesh_pitch;
+            double my = min_y + r * mesh_pitch;
+            result.mesh_points.emplace_back(mx, my);
+        }
+    }
+
+    // Connect each sink to the nearest mesh point via stub
+    result.stubs_inserted = 0;
+    for (auto& node : tree_) {
+        if (node.cell_id < 0) continue;
+        double best_dist = std::numeric_limits<double>::max();
+        for (auto& mp : result.mesh_points) {
+            double d = std::abs(node.position.x - mp.first) +
+                       std::abs(node.position.y - mp.second);
+            best_dist = std::min(best_dist, d);
+        }
+        if (best_dist < mesh_pitch * 2.0) {
+            result.stubs_inserted++;
+        }
+    }
+
+    std::ostringstream oss;
+    oss << "Clock mesh: " << result.mesh_rows << "x" << result.mesh_cols
+        << " grid (" << result.mesh_points.size() << " points), pitch="
+        << std::fixed << std::setprecision(1) << mesh_pitch
+        << "um, " << result.stubs_inserted << " stubs";
+    result.message = oss.str();
+    return result;
+}
+
+// ── balance_with_ocv ────────────────────────────────────────────────────────
+// OCV-aware insertion delay balancing: adjust buffer delays so that worst-case
+// skew (late_max - early_min) stays within target.
+
+void CtsEngine::balance_with_ocv(double ocv_margin) {
+    if (tree_.empty()) return;
+
+    double target_skew = cts_config_.target_skew_ns > 0 ? cts_config_.target_skew_ns : 0.05;
+
+    // Compute path delays from root to each sink
+    // Use DFS traversal to accumulate delays
+    struct PathInfo { int node; double delay; };
+    std::vector<PathInfo> sink_paths;
+
+    int root = static_cast<int>(tree_.size()) - 1;
+    // BFS/DFS to find root (node with no parent)
+    std::vector<int> parent_of(tree_.size(), -1);
+    for (int i = 0; i < static_cast<int>(tree_.size()); ++i) {
+        if (tree_[i].left >= 0) parent_of[tree_[i].left] = i;
+        if (tree_[i].right >= 0) parent_of[tree_[i].right] = i;
+    }
+    for (int i = static_cast<int>(tree_.size()) - 1; i >= 0; --i) {
+        if (parent_of[i] < 0) { root = i; break; }
+    }
+
+    // Compute cumulative delay from root to each leaf
+    std::function<void(int, double)> traverse = [&](int node, double cum_delay) {
+        if (node < 0 || node >= static_cast<int>(tree_.size())) return;
+        double new_delay = cum_delay + tree_[node].delay;
+        if (tree_[node].cell_id >= 0) {
+            sink_paths.push_back({node, new_delay});
+        }
+        if (tree_[node].left >= 0) traverse(tree_[node].left, new_delay);
+        if (tree_[node].right >= 0) traverse(tree_[node].right, new_delay);
+    };
+    traverse(root, 0.0);
+
+    if (sink_paths.empty()) return;
+
+    // Compute early and late arrivals for each sink
+    double worst_late = std::numeric_limits<double>::lowest();
+    double best_early = std::numeric_limits<double>::max();
+
+    for (auto& sp : sink_paths) {
+        double late = compute_ocv_delay(sp.delay, ocv_margin, false);
+        double early = compute_ocv_delay(sp.delay, ocv_margin, true);
+        worst_late = std::max(worst_late, late);
+        best_early = std::min(best_early, early);
+    }
+
+    double ocv_skew = worst_late - best_early;
+
+    // If OCV skew exceeds target, reduce by adding delay padding to early paths
+    if (ocv_skew > target_skew) {
+        double target_arrival = (worst_late + best_early) / 2.0;
+        for (auto& sp : sink_paths) {
+            double early = compute_ocv_delay(sp.delay, ocv_margin, true);
+            if (early < target_arrival - target_skew / 2.0) {
+                double needed = target_arrival - target_skew / 2.0 - early;
+                tree_[sp.node].delay += needed;
+            }
+            double late = compute_ocv_delay(sp.delay, ocv_margin, false);
+            if (late > target_arrival + target_skew / 2.0) {
+                double excess = late - (target_arrival + target_skew / 2.0);
+                tree_[sp.node].delay = std::max(0.0, tree_[sp.node].delay - excess * 0.5);
+            }
+        }
+    }
+}
+
+// ── optimize_power ──────────────────────────────────────────────────────────
+// After tree synthesis: swap non-critical buffers to HVT for power reduction.
+
+PowerAwareCtsResult CtsEngine::optimize_power() {
+    PowerAwareCtsResult result;
+
+    if (tree_.empty()) {
+        result.message = "No tree built for power optimization";
+        return result;
+    }
+
+    double target_skew = cts_config_.target_skew_ns > 0 ? cts_config_.target_skew_ns : 0.05;
+
+    // Find root and compute path delays
+    int root = static_cast<int>(tree_.size()) - 1;
+    std::vector<int> parent_of(tree_.size(), -1);
+    for (int i = 0; i < static_cast<int>(tree_.size()); ++i) {
+        if (tree_[i].left >= 0) parent_of[tree_[i].left] = i;
+        if (tree_[i].right >= 0) parent_of[tree_[i].right] = i;
+    }
+    for (int i = static_cast<int>(tree_.size()) - 1; i >= 0; --i) {
+        if (parent_of[i] < 0) { root = i; break; }
+    }
+
+    // Compute delay to each sink
+    std::vector<double> sink_delays;
+    std::function<void(int, double)> collect_delays = [&](int node, double cum) {
+        if (node < 0 || node >= static_cast<int>(tree_.size())) return;
+        double d = cum + tree_[node].delay;
+        if (tree_[node].cell_id >= 0) sink_delays.push_back(d);
+        if (tree_[node].left >= 0) collect_delays(tree_[node].left, d);
+        if (tree_[node].right >= 0) collect_delays(tree_[node].right, d);
+    };
+    collect_delays(root, 0.0);
+
+    double max_delay = sink_delays.empty() ? 0 :
+        *std::max_element(sink_delays.begin(), sink_delays.end());
+    double min_delay = sink_delays.empty() ? 0 :
+        *std::min_element(sink_delays.begin(), sink_delays.end());
+
+    // Count internal (buffer) nodes
+    int total_buf = 0;
+    int hvt_count = 0;
+    int lvt_count = 0;
+    double original_power = 0;
+    double optimized_power = 0;
+
+    // Power model: each internal node is a buffer
+    for (int i = 0; i < static_cast<int>(tree_.size()); ++i) {
+        if (tree_[i].cell_id >= 0) continue; // skip sinks
+        if (tree_[i].left < 0 && tree_[i].right < 0) continue; // isolated
+        total_buf++;
+
+        // Compute slack: how much extra delay this buffer path has
+        double node_delay = tree_[i].delay;
+        double slack = max_delay - min_delay - target_skew;
+        original_power += 1.0; // normalized power unit
+
+        if (slack > target_skew * 2.0 && node_delay < max_delay * 0.8) {
+            // Non-critical buffer → swap to HVT
+            hvt_count++;
+            tree_[i].delay *= 1.15; // HVT is ~15% slower
+            optimized_power += 0.6; // HVT saves ~40% dynamic power
+        } else if (node_delay >= max_delay * 0.9) {
+            // Critical path buffer → use LVT
+            lvt_count++;
+            optimized_power += 1.3; // LVT uses ~30% more power
+        } else {
+            // Keep SVT
+            optimized_power += 1.0;
+        }
+    }
+
+    result.total_buffers = total_buf;
+    result.hvt_buffers = hvt_count;
+    result.lvt_buffers = lvt_count;
+    result.power_savings_pct = (original_power > 0) ?
+        (1.0 - optimized_power / original_power) * 100.0 : 0.0;
+
+    std::ostringstream oss;
+    oss << "Power-aware CTS: " << total_buf << " buffers ("
+        << hvt_count << " HVT, " << lvt_count << " LVT, "
+        << (total_buf - hvt_count - lvt_count) << " SVT), "
+        << std::fixed << std::setprecision(1) << result.power_savings_pct
+        << "% power savings";
+    result.message = oss.str();
+    return result;
+}
+
+// ── synthesize_advanced ─────────────────────────────────────────────────────
+// Full enhanced CTS flow combining all advanced techniques.
+
+CtsResult CtsEngine::synthesize_advanced() {
+    auto t0 = std::chrono::high_resolution_clock::now();
+    CtsResult result;
+
+    buffer_delays_.clear();
+    buffer_vt_assignments_.clear();
+
+    // Collect sink positions from physical design cells in tree
+    std::vector<std::pair<double,double>> sink_positions;
+    std::vector<int> sink_cell_ids;
+    for (int i = 0; i < static_cast<int>(tree_.size()); ++i) {
+        if (tree_[i].cell_id >= 0) {
+            sink_positions.emplace_back(tree_[i].position.x, tree_[i].position.y);
+            sink_cell_ids.push_back(tree_[i].cell_id);
+        }
+    }
+
+    // If tree is empty, try to build from physical design cells
+    if (sink_positions.empty()) {
+        auto& cells = pd_.cells;
+        for (int i = 0; i < static_cast<int>(cells.size()); ++i) {
+            if (cells[i].cell_type.find("FF") != std::string::npos ||
+                cells[i].cell_type.find("ff") != std::string::npos ||
+                cells[i].cell_type.find("DFF") != std::string::npos) {
+                sink_positions.emplace_back(cells[i].position.x, cells[i].position.y);
+                sink_cell_ids.push_back(i);
+            }
+        }
+    }
+
+    if (sink_positions.empty()) {
+        result.message = "No clock sinks found for advanced CTS";
+        return result;
+    }
+
+    // Step 1: Build RSMT topology
+    SteinerTree rsmt = build_rsmt(sink_positions);
+    result.wirelength = rsmt.total_wirelength;
+
+    // Step 2: Multi-source partitioning (if enabled and large design)
+    MultiSourceResult ms_result;
+    if (cts_config_.enable_multi_source && sink_positions.size() > 500) {
+        // Need a tree built first for multi-source to work on
+        if (tree_.empty()) {
+            // Build a basic tree from RSMT for multi-source analysis
+            tree_.clear();
+            for (auto& sn : rsmt.nodes) {
+                TreeNode tn;
+                tn.position = Point(sn.x, sn.y);
+                tn.cell_id = sn.is_steiner ? -1 : (sn.sink_idx >= 0 &&
+                    sn.sink_idx < static_cast<int>(sink_cell_ids.size()) ?
+                    sink_cell_ids[sn.sink_idx] : -1);
+                if (!sn.children.empty()) {
+                    tn.left = sn.children[0];
+                    if (sn.children.size() > 1) tn.right = sn.children[1];
+                }
+                tree_.push_back(tn);
+            }
+        }
+        ms_result = synthesize_multi_source(4);
+    }
+
+    // Step 3: Buffer insertion with library selection
+    double target_slew = cts_config_.max_transition_ns > 0 ?
+        cts_config_.max_transition_ns : 0.5;
+    size_buffers(rsmt, target_slew);
+    result.buffers_inserted = static_cast<int>(buffer_delays_.size());
+
+    // Step 4: Ensure tree_ is populated from RSMT for subsequent passes
+    if (tree_.empty() || tree_.size() < rsmt.nodes.size()) {
+        tree_.clear();
+        for (auto& sn : rsmt.nodes) {
+            TreeNode tn;
+            tn.position = Point(sn.x, sn.y);
+            tn.cell_id = sn.is_steiner ? -1 : (sn.sink_idx >= 0 &&
+                sn.sink_idx < static_cast<int>(sink_cell_ids.size()) ?
+                sink_cell_ids[sn.sink_idx] : -1);
+            if (!sn.children.empty()) {
+                tn.left = sn.children[0];
+                if (sn.children.size() > 1) tn.right = sn.children[1];
+            }
+            // Assign wire delay based on distance to children
+            double wire_delay = 0;
+            for (int c : sn.children) {
+                wire_delay += (std::abs(sn.x - rsmt.nodes[c].x) +
+                               std::abs(sn.y - rsmt.nodes[c].y)) * 0.001;
+            }
+            tn.delay = wire_delay;
+            tree_.push_back(tn);
+        }
+    }
+
+    // Step 5: Clock mesh overlay (if enabled)
+    ClockMeshResult mesh_result;
+    if (cts_config_.enable_clock_mesh) {
+        double pitch = 50.0; // default mesh pitch
+        mesh_result = synthesize_mesh(pitch);
+    }
+
+    // Step 6: OCV-aware balancing
+    balance_with_ocv(cts_config_.ocv_margin);
+
+    // Step 7: Power optimization (if enabled)
+    PowerAwareCtsResult power_result;
+    if (cts_config_.enable_power_opt) {
+        power_result = optimize_power();
+    }
+
+    // Compute final skew from tree
+    double max_lat = std::numeric_limits<double>::lowest();
+    double min_lat = std::numeric_limits<double>::max();
+
+    int root = static_cast<int>(tree_.size()) - 1;
+    std::vector<int> parent_of(tree_.size(), -1);
+    for (int i = 0; i < static_cast<int>(tree_.size()); ++i) {
+        if (tree_[i].left >= 0) parent_of[tree_[i].left] = i;
+        if (tree_[i].right >= 0) parent_of[tree_[i].right] = i;
+    }
+    for (int i = static_cast<int>(tree_.size()) - 1; i >= 0; --i) {
+        if (parent_of[i] < 0) { root = i; break; }
+    }
+
+    std::function<void(int, double)> compute_latency = [&](int node, double cum) {
+        if (node < 0 || node >= static_cast<int>(tree_.size())) return;
+        double d = cum + tree_[node].delay;
+        if (tree_[node].cell_id >= 0) {
+            max_lat = std::max(max_lat, d);
+            min_lat = std::min(min_lat, d);
+        }
+        if (tree_[node].left >= 0) compute_latency(tree_[node].left, d);
+        if (tree_[node].right >= 0) compute_latency(tree_[node].right, d);
+    };
+    compute_latency(root, 0.0);
+
+    if (max_lat > std::numeric_limits<double>::lowest() &&
+        min_lat < std::numeric_limits<double>::max()) {
+        result.skew = max_lat - min_lat;
+        result.max_latency_ps = max_lat * 1000.0; // ns to ps
+        result.min_latency_ps = min_lat * 1000.0;
+    }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    result.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    std::ostringstream oss;
+    oss << "Advanced CTS: " << sink_positions.size() << " sinks, "
+        << result.buffers_inserted << " buffers, WL="
+        << std::fixed << std::setprecision(1) << result.wirelength
+        << ", skew=" << std::setprecision(3) << result.skew << "ns";
+    if (cts_config_.enable_multi_source && !ms_result.message.empty()) {
+        oss << " | " << ms_result.message;
+    }
+    if (cts_config_.enable_clock_mesh && !mesh_result.message.empty()) {
+        oss << " | " << mesh_result.message;
+    }
+    if (cts_config_.enable_power_opt && !power_result.message.empty()) {
+        oss << " | " << power_result.message;
+    }
+    result.message = oss.str();
     return result;
 }
 

@@ -7,6 +7,7 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace sf {
 
@@ -16,6 +17,59 @@ struct ClkBufType {
     double input_cap;      // fF
     double intrinsic_delay; // ps
     double area;           // um²
+};
+
+// ── Buffer library for advanced CTS ─────────────────────────────────────────
+enum class CtsVtType { SVT = 0, LVT = 1, HVT = 2 };
+
+struct CtsBuffer {
+    std::string name;
+    double delay = 0;       // intrinsic delay (ns)
+    double input_cap = 0;   // input capacitance (pF)
+    double drive = 0;       // output drive strength
+    double area = 0;
+    double power = 0;       // dynamic power per toggle (uW)
+    CtsVtType vt = CtsVtType::SVT;
+};
+
+// ── RSMT (Rectilinear Steiner Minimum Tree) ────────────────────────────────
+struct SteinerTree {
+    struct SteinerNode {
+        double x = 0, y = 0;
+        bool is_steiner = false;  // true = Steiner point, false = sink
+        int sink_idx = -1;        // -1 for Steiner points
+        std::vector<int> children;
+    };
+    std::vector<SteinerNode> nodes;
+    int root = -1;
+    double total_wirelength = 0;
+};
+
+// ── Multi-source CTS result ─────────────────────────────────────────────────
+struct MultiSourceResult {
+    int num_sources = 0;
+    std::vector<int> source_assignments;  // sink_idx -> source_idx
+    std::vector<double> source_x, source_y;
+    double max_skew = 0;
+    std::string message;
+};
+
+// ── Clock mesh result ───────────────────────────────────────────────────────
+struct ClockMeshResult {
+    std::vector<std::pair<double,double>> mesh_points;
+    int mesh_rows = 0, mesh_cols = 0;
+    double mesh_pitch = 0;
+    int stubs_inserted = 0;
+    std::string message;
+};
+
+// ── Power-aware CTS result ──────────────────────────────────────────────────
+struct PowerAwareCtsResult {
+    int total_buffers = 0;
+    int hvt_buffers = 0;    // high-Vt for non-critical
+    int lvt_buffers = 0;    // low-Vt for critical
+    double power_savings_pct = 0;
+    std::string message;
 };
 
 struct CtsResult {
@@ -59,6 +113,16 @@ struct CtsConfig {
     bool power_aware = false;           // minimize clock power
     double clock_gating_threshold = 0.3; // ICG insertion threshold
     double useful_skew_max_ps = 200.0;  // max allowed useful skew per path
+
+    // ── Advanced CTS configuration ──────────────────────────────────────────
+    double max_transition_ns = 0.5;     // ns, max slew for advanced flow
+    double max_cap_load_pf = 0.1;       // pF, max cap per buffer output
+    double target_skew_ns = 0.05;       // ns, target skew for advanced flow
+    bool enable_multi_source = false;
+    bool enable_clock_mesh = false;
+    bool enable_power_opt = true;
+    double ocv_margin = 0.1;            // 10% OCV uncertainty
+    std::vector<CtsBuffer> buffer_library;
 };
 
 struct MultiCtsResult {
@@ -173,6 +237,30 @@ public:
     int tree_size() const { return (int)tree_.size(); }
     int clock_wire_count() const { return clock_wire_count_; }
 
+    // ── Advanced CTS APIs ───────────────────────────────────────────────────
+
+    // Buffer library management
+    void set_config(const CtsConfig& cfg);
+    CtsBuffer select_cts_buffer(double load_cap, double max_slew, bool critical_path);
+
+    // RSMT construction (Hanan grid based)
+    SteinerTree build_rsmt(const std::vector<std::pair<double,double>>& sinks);
+
+    // Multi-source CTS (for large designs)
+    MultiSourceResult synthesize_multi_source(int max_sources = 4);
+
+    // Clock mesh synthesis
+    ClockMeshResult synthesize_mesh(double mesh_pitch);
+
+    // OCV-aware balancing
+    void balance_with_ocv(double ocv_margin);
+
+    // Power-aware buffer selection
+    PowerAwareCtsResult optimize_power();
+
+    // Enhanced CTS flow
+    CtsResult synthesize_advanced();
+
 private:
     PhysicalDesign& pd_;
 
@@ -216,6 +304,29 @@ private:
 
     // Phase 43: Find nearest tree node to a point
     int find_nearest_tree_node(const Point& p, bool internal_only) const;
+
+    // ── Advanced CTS internals ──────────────────────────────────────────────
+    CtsConfig cts_config_;
+
+    // RSMT helpers (Hanan grid based)
+    std::vector<std::pair<double,double>> build_hanan_grid(
+        const std::vector<std::pair<double,double>>& points);
+    SteinerTree steiner_from_hanan(const std::vector<std::pair<double,double>>& sinks,
+        const std::vector<std::pair<double,double>>& hanan);
+
+    // Buffer sizing on Steiner tree
+    void size_buffers(SteinerTree& tree, double target_slew);
+
+    // Multi-source partitioning (k-means on sinks)
+    std::vector<std::vector<int>> kmeans_partition_sinks(
+        const std::vector<std::pair<double,double>>& sinks, int k);
+
+    // OCV helpers
+    double compute_ocv_delay(double nominal_delay, double margin, bool early);
+
+    // Per-buffer Vt tracking for power optimization
+    std::vector<CtsVtType> buffer_vt_assignments_;
+    std::vector<double> buffer_delays_;
 };
 
 } // namespace sf

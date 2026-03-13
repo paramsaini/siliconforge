@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <utility>
 
 namespace sf {
 
@@ -131,6 +132,43 @@ struct IrDropResult {
 
 // ── Analyzer ─────────────────────────────────────────────────────────────
 
+// ── Dynamic IR drop (transient) ──────────────────────────────────────
+
+struct DynamicIrResult {
+    double peak_drop_mv;
+    double avg_drop_mv;
+    std::vector<std::pair<double,double>> waveform;  // time, voltage_drop
+    std::string worst_region;
+    int time_steps;
+};
+
+// ── VCD-driven vectored analysis ─────────────────────────────────────
+
+struct VectoredIrResult {
+    double peak_drop_mv;
+    int peak_cycle;
+    std::vector<double> per_cycle_drops;
+    std::string message;
+};
+
+// ── Voltage-drop-aware STA ───────────────────────────────────────────
+
+struct VoltageAwareTimingResult {
+    double nominal_wns;
+    double voltage_aware_wns;
+    double timing_degradation_pct;
+    std::vector<std::pair<int,double>> gate_delay_increases;  // gate, extra_delay_ns
+};
+
+// ── Hotspot clustering ───────────────────────────────────────────────
+
+struct IrHotspot {
+    double x, y;
+    double radius;
+    double avg_drop_mv;
+    int cells_affected;
+};
+
 class IrDropAnalyzer {
 public:
     IrDropAnalyzer(const PhysicalDesign& pd, double vdd = 1.8, double total_current_ma = 100)
@@ -154,9 +192,29 @@ public:
     // Legacy API (backward-compatible)
     IrDropResult analyze_legacy(int grid_res = 10);
 
+    // ── Enhanced IR drop features ────────────────────────────────────
+
+    DynamicIrResult analyze_dynamic(double time_step_ps = 10.0, int num_steps = 100);
+
+    VectoredIrResult analyze_vectored(const std::vector<std::vector<bool>>& stimulus,
+                                       double clock_period_ns = 1.0);
+
+    VoltageAwareTimingResult analyze_voltage_timing();
+
+    std::vector<IrHotspot> find_hotspots(double threshold_mv = 50.0);
+
+    IrDropResult run_enhanced();
+
 private:
     const PhysicalDesign& pd_;
     IrDropConfig cfg_;
+
+    // Cached last analysis result for enhanced methods
+    IrDropResult last_result_;
+    bool has_result_ = false;
+    int last_grid_n_ = 0;
+    double last_cell_w_ = 0, last_cell_h_ = 0;
+    std::vector<std::vector<double>> last_current_map_;
 
     // Power pad generation
     void generate_pads(int grid_res);

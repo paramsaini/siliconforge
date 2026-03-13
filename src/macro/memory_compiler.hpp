@@ -105,9 +105,58 @@ struct MemoryResult {
     std::string message;
 };
 
+// Multi-port SRAM
+struct MultiPortConfig {
+    int read_ports;
+    int write_ports;
+    int rw_ports;
+    int word_width;
+    int depth;
+    bool has_byte_enable;
+};
+struct MultiPortResult {
+    double area;
+    double read_delay_ns;
+    double write_delay_ns;
+    double leakage_uw;
+    int total_transistors;
+};
+
+// Timing model generation (.lib format)
+struct TimingModelResult {
+    std::string cell_name;
+    double setup_time;
+    double hold_time;
+    double clk_to_q;
+    double read_access_time;
+    double write_access_time;
+    std::string lib_format;
+};
+
+// Column/row redundancy
+struct RedundancyResult {
+    int spare_cols;
+    int spare_rows;
+    double yield_improvement_pct;
+    double area_overhead_pct;
+};
+
+// BIST wrapper
+struct BistWrapperResult {
+    std::string wrapper_name;
+    int march_algorithms;
+    double test_time_cycles;
+    bool self_repair;
+};
+
 class MemoryCompiler {
 public:
     MemoryResult compile(const MemoryConfig& cfg);
+    MultiPortResult generate_multi_port(const MultiPortConfig& cfg);
+    TimingModelResult generate_timing_model(const MultiPortConfig& cfg);
+    RedundancyResult add_redundancy(int spare_cols = 2, int spare_rows = 2);
+    BistWrapperResult generate_bist_wrapper(bool with_repair = false);
+    MemoryResult run_enhanced(const MemoryConfig& cfg = {});
 
 private:
     void generate_netlist(const MemoryConfig& cfg, MemoryResult& r);
@@ -122,6 +171,7 @@ private:
     void compute_corner_derating(const MemoryConfig& cfg, MemoryResult& r);
     void generate_mbist_wrapper(const MemoryConfig& cfg, MemoryResult& r);
     void generate_detailed_report(const MemoryConfig& cfg, MemoryResult& r);
+    MemoryConfig last_cfg_;
 };
 
 } // namespace sf

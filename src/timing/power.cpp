@@ -6,6 +6,7 @@
 #include <iostream>
 #include <cmath>
 #include <unordered_map>
+#include <unordered_set>
 #include <fstream>
 #include <sstream>
 #include <climits>
@@ -118,6 +119,11 @@ PowerResult PowerAnalyzer::analyze(double clock_freq_mhz, double supply_voltage,
     PowerResult result;
     result.clock_freq_mhz = clock_freq_mhz;
     result.supply_voltage = supply_voltage;
+
+    // Cache params for enhanced methods
+    last_freq_mhz_ = clock_freq_mhz;
+    last_vdd_ = supply_voltage;
+    last_default_activity_ = default_activity;
 
     auto topo = nl_.topo_order();
 
@@ -414,6 +420,346 @@ bool PowerAnalyzer::load_saif(const std::string& filename) {
         }
     }
     return true;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Enhanced Power Analysis
+// ══════════════════════════════════════════════════════════════════════
+
+// ── Set bulk activity data ───────────────────────────────────────────
+
+void PowerAnalyzer::set_activity(const ActivityData& act) {
+    activity_data_ = act;
+    has_activity_data_ = true;
+
+    // Map signal names to net IDs
+    for (auto& [sig_name, toggle_rate] : act.toggle_rates) {
+        for (size_t i = 0; i < nl_.num_nets(); ++i) {
+            if (nl_.net(i).name == sig_name ||
+                nl_.net(i).name.find(sig_name) != std::string::npos) {
+                activities_[static_cast<NetId>(i)] = std::min(toggle_rate, 1.0);
+                break;
+            }
+        }
+    }
+}
+
+// ── RTL power estimation (early stage) ───────────────────────────────
+// switching = 0.5 × α × Cload × V² × f for each gate
+// Internal = from library cells. Leakage = sum of cell leakage.
+
+PowerAnalyzer::RtlPowerResult PowerAnalyzer::estimate_rtl_power() {
+    RtlPowerResult result{};
+    double freq_hz = has_activity_data_ ? activity_data_.clock_freq_hz : 1e9;
+    double freq_mhz = freq_hz / 1e6;
+    double vdd = last_vdd_ > 0 ? last_vdd_ : 1.8;
+    double default_alpha = last_default_activity_ > 0 ? last_default_activity_ : 0.1;
+
+    for (size_t gid = 0; gid < nl_.num_gates(); ++gid) {
+        auto& g = nl_.gate(gid);
+        if (g.type == GateType::INPUT || g.type == GateType::OUTPUT) continue;
+
+        double alpha = default_alpha;
+        if (g.output >= 0) {
+            auto it = activities_.find(g.output);
+            if (it != activities_.end()) alpha = it->second;
+        }
+
+        double cell_vdd = gate_vdd(static_cast<GateId>(gid), vdd);
+
+        // Switching power: P_sw = 0.5 × α × C_load × V² × f
+        double c_load = (g.output >= 0) ? net_capacitance(g.output) : 0.001;
+        double p_sw = 0.5 * alpha * c_load * cell_vdd * cell_vdd * freq_mhz * 1e6 * 1e-9;
+        result.switching_mw += p_sw;
+
+        // Internal power: ~15% of switching (from short-circuit currents)
+        double p_int = p_sw * 0.15;
+        result.internal_mw += p_int;
+
+        // Leakage
+        double p_leak = cell_leakage(static_cast<GateId>(gid)) * 1e-6;
+        p_leak *= (cell_vdd / vdd) * (cell_vdd / vdd);
+        result.leakage_mw += p_leak;
+    }
+
+    result.total_mw = result.switching_mw + result.internal_mw + result.leakage_mw;
+    result.message = "RTL power: " + std::to_string(result.total_mw) + " mW "
+                     "(sw=" + std::to_string(result.switching_mw) +
+                     " int=" + std::to_string(result.internal_mw) +
+                     " leak=" + std::to_string(result.leakage_mw) + ")";
+    return result;
+}
+
+// ── Clock tree power analysis ────────────────────────────────────────
+// Identify clock network gates/buffers. Clock toggles at 2× (rise+fall).
+
+PowerAnalyzer::ClockPowerResult PowerAnalyzer::analyze_clock_power() {
+    ClockPowerResult result{};
+    double freq_mhz = last_freq_mhz_ > 0 ? last_freq_mhz_ : 1000.0;
+    double vdd = last_vdd_ > 0 ? last_vdd_ : 1.8;
+
+    int num_dff = 0;
+    double dff_clock_power = 0.0;
+
+    for (size_t gid = 0; gid < nl_.num_gates(); ++gid) {
+        auto& g = nl_.gate(gid);
+        if (g.type == GateType::DFF) {
+            num_dff++;
+            // DFF clock pin toggles every cycle (activity = 1.0 for clock input)
+            double p_clk = cell_dynamic(static_cast<GateId>(gid), freq_mhz, vdd, 1.0);
+            dff_clock_power += p_clk;
+        }
+    }
+
+    // Clock tree buffer estimation: ~1 buffer per 8 DFFs
+    int cts_buffers = (num_dff + 7) / 8;
+    result.clock_buffers = cts_buffers;
+
+    // Each CTS buffer: activity=2.0 (both edges), C_buf=5fF
+    double c_buf = 0.005;
+    double buf_power = cts_buffers * 2.0 * c_buf * vdd * vdd * freq_mhz * 1e6 * 1e-9;
+    result.buffer_power_mw = buf_power;
+
+    result.clock_network_mw = dff_clock_power + buf_power;
+
+    // Compute total power for fraction calculation
+    double total = 0.0;
+    for (size_t gid = 0; gid < nl_.num_gates(); ++gid) {
+        auto& g = nl_.gate(gid);
+        if (g.type == GateType::INPUT || g.type == GateType::OUTPUT) continue;
+        double alpha = 0.1;
+        if (g.output >= 0) {
+            auto it = activities_.find(g.output);
+            if (it != activities_.end()) alpha = it->second;
+        }
+        total += cell_dynamic(static_cast<GateId>(gid), freq_mhz, vdd, alpha);
+        total += cell_leakage(static_cast<GateId>(gid)) * 1e-6;
+    }
+    total += result.clock_network_mw;
+
+    result.clock_fraction_pct = (total > 0) ? (result.clock_network_mw / total) * 100.0 : 0.0;
+    return result;
+}
+
+// ── Memory power models ──────────────────────────────────────────────
+// Identify DFF-based register files and estimate their power.
+
+std::vector<PowerAnalyzer::MemoryPower> PowerAnalyzer::analyze_memory_power() {
+    std::vector<MemoryPower> results;
+    double freq_mhz = last_freq_mhz_ > 0 ? last_freq_mhz_ : 1000.0;
+    double vdd = last_vdd_ > 0 ? last_vdd_ : 1.8;
+
+    // Group DFFs by name prefix to identify register files
+    std::unordered_map<std::string, std::vector<GateId>> reg_groups;
+    for (size_t gid = 0; gid < nl_.num_gates(); ++gid) {
+        auto& g = nl_.gate(gid);
+        if (g.type != GateType::DFF) continue;
+
+        std::string prefix = g.name;
+        // Strip trailing index: reg[0] → reg, mem_0 → mem
+        auto bracket = prefix.find('[');
+        if (bracket != std::string::npos) prefix = prefix.substr(0, bracket);
+        auto underscore = prefix.rfind('_');
+        if (underscore != std::string::npos) {
+            std::string suffix = prefix.substr(underscore + 1);
+            bool all_digits = !suffix.empty();
+            for (char c : suffix) { if (!std::isdigit(c)) { all_digits = false; break; } }
+            if (all_digits) prefix = prefix.substr(0, underscore);
+        }
+        if (prefix.empty()) prefix = "reg";
+        reg_groups[prefix].push_back(static_cast<GateId>(gid));
+    }
+
+    // Each group with >1 DFF is a potential memory/register file
+    for (auto& [name, dffs] : reg_groups) {
+        if (dffs.size() < 2) continue;
+
+        MemoryPower mp;
+        mp.instance = name + "[" + std::to_string(dffs.size()) + "]";
+        mp.read_power_mw = 0;
+        mp.write_power_mw = 0;
+        mp.leakage_mw = 0;
+
+        for (auto gid : dffs) {
+            double alpha = 0.1;
+            auto& g = nl_.gate(gid);
+            if (g.output >= 0) {
+                auto it = activities_.find(g.output);
+                if (it != activities_.end()) alpha = it->second;
+            }
+            double cell_vdd = gate_vdd(gid, vdd);
+            // Read power: output switching
+            mp.read_power_mw += cell_dynamic(gid, freq_mhz, cell_vdd, alpha) * 0.4;
+            // Write power: input switching  
+            mp.write_power_mw += cell_dynamic(gid, freq_mhz, cell_vdd, alpha) * 0.6;
+            mp.leakage_mw += cell_leakage(gid) * 1e-6;
+        }
+        mp.total_mw = mp.read_power_mw + mp.write_power_mw + mp.leakage_mw;
+        results.push_back(mp);
+    }
+
+    std::sort(results.begin(), results.end(),
+              [](auto& a, auto& b) { return a.total_mw > b.total_mw; });
+    return results;
+}
+
+// ── Per-instance power reporting ─────────────────────────────────────
+// For each gate: compute switching + internal + leakage. Sort by total descending.
+
+std::vector<PowerAnalyzer::InstancePower> PowerAnalyzer::report_instance_power() {
+    std::vector<InstancePower> results;
+    double freq_mhz = last_freq_mhz_ > 0 ? last_freq_mhz_ : 1000.0;
+    double vdd = last_vdd_ > 0 ? last_vdd_ : 1.8;
+    double default_alpha = last_default_activity_ > 0 ? last_default_activity_ : 0.1;
+
+    for (size_t gid = 0; gid < nl_.num_gates(); ++gid) {
+        auto& g = nl_.gate(gid);
+        if (g.type == GateType::INPUT || g.type == GateType::OUTPUT) continue;
+
+        double alpha = default_alpha;
+        if (g.output >= 0) {
+            auto it = activities_.find(g.output);
+            if (it != activities_.end()) alpha = it->second;
+        }
+
+        double cell_vdd = gate_vdd(static_cast<GateId>(gid), vdd);
+        double leakage_mw = cell_leakage(static_cast<GateId>(gid)) * 1e-6;
+        leakage_mw *= (cell_vdd / vdd) * (cell_vdd / vdd);
+
+        double switching_mw = cell_dynamic(static_cast<GateId>(gid), freq_mhz, cell_vdd, alpha);
+        double internal_mw = switching_mw * 0.15;
+
+        InstancePower ip;
+        ip.gate_id = static_cast<int>(gid);
+        ip.name = g.name.empty() ? ("g" + std::to_string(gid)) : g.name;
+        ip.cell_type = gate_type_str(g.type);
+        ip.switching_mw = switching_mw;
+        ip.internal_mw = internal_mw;
+        ip.leakage_mw = leakage_mw;
+        ip.total_mw = switching_mw + internal_mw + leakage_mw;
+        results.push_back(ip);
+    }
+
+    std::sort(results.begin(), results.end(),
+              [](auto& a, auto& b) { return a.total_mw > b.total_mw; });
+    return results;
+}
+
+// ── Power state analysis (UPF-driven) ────────────────────────────────
+// Compute power for each possible power state (all-on, each domain off, etc.)
+
+std::vector<PowerAnalyzer::PowerState> PowerAnalyzer::analyze_power_states() {
+    std::vector<PowerState> results;
+    double freq_mhz = last_freq_mhz_ > 0 ? last_freq_mhz_ : 1000.0;
+    double vdd = last_vdd_ > 0 ? last_vdd_ : 1.8;
+    double default_alpha = last_default_activity_ > 0 ? last_default_activity_ : 0.1;
+
+    // State 1: All domains active
+    {
+        PowerState ps;
+        ps.state_name = "all_on";
+        ps.total_power_mw = 0;
+        for (auto& [name, info] : power_domains_) {
+            ps.active_domains.push_back(name);
+        }
+        // Full power
+        for (size_t gid = 0; gid < nl_.num_gates(); ++gid) {
+            auto& g = nl_.gate(gid);
+            if (g.type == GateType::INPUT || g.type == GateType::OUTPUT) continue;
+            double alpha = default_alpha;
+            if (g.output >= 0) {
+                auto it = activities_.find(g.output);
+                if (it != activities_.end()) alpha = it->second;
+            }
+            double cell_vdd = gate_vdd(static_cast<GateId>(gid), vdd);
+            ps.total_power_mw += cell_dynamic(static_cast<GateId>(gid), freq_mhz, cell_vdd, alpha);
+            ps.total_power_mw += cell_leakage(static_cast<GateId>(gid)) * 1e-6 *
+                                 (cell_vdd / vdd) * (cell_vdd / vdd);
+        }
+        results.push_back(ps);
+    }
+
+    // State 2+: Each domain powered off individually
+    for (auto& [off_domain, off_info] : power_domains_) {
+        PowerState ps;
+        ps.state_name = off_domain + "_off";
+        ps.total_power_mw = 0;
+
+        std::unordered_set<GateId> off_gates(off_info.gates.begin(), off_info.gates.end());
+        for (auto& [name, info] : power_domains_) {
+            if (name != off_domain) ps.active_domains.push_back(name);
+        }
+
+        for (size_t gid = 0; gid < nl_.num_gates(); ++gid) {
+            auto& g = nl_.gate(gid);
+            if (g.type == GateType::INPUT || g.type == GateType::OUTPUT) continue;
+            if (off_gates.count(static_cast<GateId>(gid))) {
+                // Powered-off domain: only retention leakage (~5% of normal)
+                ps.total_power_mw += cell_leakage(static_cast<GateId>(gid)) * 1e-6 * 0.05;
+                continue;
+            }
+            double alpha = default_alpha;
+            if (g.output >= 0) {
+                auto it = activities_.find(g.output);
+                if (it != activities_.end()) alpha = it->second;
+            }
+            double cell_vdd = gate_vdd(static_cast<GateId>(gid), vdd);
+            ps.total_power_mw += cell_dynamic(static_cast<GateId>(gid), freq_mhz, cell_vdd, alpha);
+            ps.total_power_mw += cell_leakage(static_cast<GateId>(gid)) * 1e-6 *
+                                 (cell_vdd / vdd) * (cell_vdd / vdd);
+        }
+        results.push_back(ps);
+    }
+
+    // If no domains defined, just report nominal state
+    if (power_domains_.empty()) {
+        PowerState ps;
+        ps.state_name = "nominal";
+        ps.active_domains.push_back("default");
+        ps.total_power_mw = 0;
+        for (size_t gid = 0; gid < nl_.num_gates(); ++gid) {
+            auto& g = nl_.gate(gid);
+            if (g.type == GateType::INPUT || g.type == GateType::OUTPUT) continue;
+            double alpha = default_alpha;
+            if (g.output >= 0) {
+                auto it = activities_.find(g.output);
+                if (it != activities_.end()) alpha = it->second;
+            }
+            ps.total_power_mw += cell_dynamic(static_cast<GateId>(gid), freq_mhz, vdd, alpha);
+            ps.total_power_mw += cell_leakage(static_cast<GateId>(gid)) * 1e-6;
+        }
+        results.push_back(ps);
+    }
+
+    return results;
+}
+
+// ── Enhanced power run ───────────────────────────────────────────────
+
+PowerResult PowerAnalyzer::run_enhanced() {
+    double freq_mhz = last_freq_mhz_ > 0 ? last_freq_mhz_ : 1000.0;
+    double vdd = last_vdd_ > 0 ? last_vdd_ : 1.8;
+    double default_alpha = last_default_activity_ > 0 ? last_default_activity_ : 0.1;
+
+    // Run standard analysis
+    auto result = analyze(freq_mhz, vdd, default_alpha);
+
+    // Augment with clock tree analysis
+    auto clock_result = analyze_clock_power();
+    result.clock_power_mw = clock_result.clock_network_mw;
+
+    // Recalculate totals
+    result.dynamic_power_mw = result.switching_power_mw + result.internal_power_mw +
+                               result.glitch_power_mw;
+    result.total_power_mw = result.dynamic_power_mw + result.static_power_mw +
+                             result.clock_power_mw;
+
+    result.message = "Enhanced: " + std::to_string(result.total_power_mw) + " mW " +
+                     "(dyn=" + std::to_string(result.dynamic_power_mw) +
+                     " stat=" + std::to_string(result.static_power_mw) +
+                     " clk=" + std::to_string(result.clock_power_mw) +
+                     " glitch=" + std::to_string(result.glitch_power_mw) + ")";
+    return result;
 }
 
 } // namespace sf

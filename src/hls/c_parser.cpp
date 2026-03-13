@@ -608,4 +608,248 @@ void HlsSynthesizer::synthesize_to_netlist(const std::vector<CfgBlock>& cdfg, Ne
     }
 }
 
+// ============================================================================
+// HlsEnhanced — Loop Pipelining
+// ============================================================================
+HlsPipelineResult HlsEnhanced::pipeline_loop(const std::string& loop_name,
+                                               const HlsPipelineConfig& cfg) {
+    HlsPipelineResult result{};
+    result.achieved_ii = cfg.target_ii;
+    result.stages = 0;
+
+    // Find loop blocks matching the name (label or loop_header)
+    std::vector<CfgBlock*> loop_blocks;
+    for (auto& b : cdfg_) {
+        if (b.is_loop_header && (b.label == loop_name || loop_name.empty()))
+            loop_blocks.push_back(&b);
+    }
+
+    if (loop_blocks.empty()) {
+        // No matching loop — return minimal result
+        result.achieved_ii = cfg.target_ii;
+        result.stages = 1;
+        result.throughput_improvement = 1.0;
+        return result;
+    }
+
+    // Compute resource-constrained II: max concurrent usage of any resource
+    int res_ii = 1;
+    for (auto* blk : loop_blocks) {
+        std::map<HlsOp, int> op_count;
+        for (auto& n : blk->datapath) {
+            if (HlsScheduler::get_latency(n.op) > 0)
+                op_count[n.op]++;
+        }
+        // Resource constraint: ceil(op_count / available_units)
+        // Assume 2 adders, 1 multiplier, 1 divider as default constraint
+        for (auto& [op, cnt] : op_count) {
+            int avail = 2;
+            if (op == HlsOp::MUL) avail = 1;
+            if (op == HlsOp::DIV) avail = 1;
+            int needed = (cnt + avail - 1) / avail;
+            res_ii = std::max(res_ii, needed);
+        }
+    }
+
+    // Compute dependency-constrained II (recurrence bound)
+    int dep_ii = 1;
+    for (auto* blk : loop_blocks) {
+        for (auto& n : blk->datapath) {
+            int chain_lat = HlsScheduler::get_latency(n.op);
+            for (int in_id : n.inputs) {
+                for (auto& pred : blk->datapath) {
+                    if (pred.id == in_id)
+                        chain_lat = std::max(chain_lat,
+                            HlsScheduler::get_latency(pred.op) + HlsScheduler::get_latency(n.op));
+                }
+            }
+            dep_ii = std::max(dep_ii, chain_lat);
+        }
+    }
+
+    // Achieved II is the max of target, resource, and dependency constraints
+    result.achieved_ii = std::max(cfg.target_ii, std::max(res_ii, dep_ii));
+
+    // Count total cycles across loop body to determine number of pipeline stages
+    int max_cycle = 0;
+    for (auto* blk : loop_blocks) {
+        for (auto& n : blk->datapath) {
+            int end = n.cycle + HlsScheduler::get_latency(n.op);
+            if (end > max_cycle) max_cycle = end;
+        }
+    }
+    result.stages = std::min(cfg.max_stages,
+                             std::max(1, (max_cycle + result.achieved_ii - 1) / result.achieved_ii));
+
+    // Throughput improvement: sequential latency / achieved_ii
+    int seq_latency = std::max(1, max_cycle);
+    result.throughput_improvement = static_cast<double>(seq_latency) / result.achieved_ii;
+
+    return result;
+}
+
+// ============================================================================
+// HlsEnhanced — Scheduling
+// ============================================================================
+HlsScheduleResult HlsEnhanced::schedule(HlsScheduleAlgo algo) {
+    HlsScheduleResult result{};
+
+    switch (algo) {
+        case HlsScheduleAlgo::ASAP:
+            HlsScheduler::schedule_asap(cdfg_);
+            break;
+        case HlsScheduleAlgo::ALAP: {
+            HlsScheduler::schedule_asap(cdfg_);
+            int deadline = 1;
+            for (auto& b : cdfg_)
+                for (auto& n : b.datapath)
+                    deadline = std::max(deadline, n.cycle + HlsScheduler::get_latency(n.op));
+            HlsScheduler::schedule_alap(cdfg_, deadline);
+            break;
+        }
+        case HlsScheduleAlgo::FORCE_DIRECTED:
+            HlsScheduler::schedule_asap(cdfg_);
+            HlsScheduler::schedule_alap(cdfg_, 20);
+            HlsScheduler::compute_mobility(cdfg_);
+            break;
+        case HlsScheduleAlgo::LIST: {
+            HlsConfig list_cfg;
+            HlsScheduler::schedule_list(cdfg_, list_cfg);
+            break;
+        }
+    }
+
+    // Collect metrics
+    int max_cycle = 0;
+    int total_ops = 0;
+    for (auto& b : cdfg_) {
+        for (auto& n : b.datapath) {
+            int end = n.cycle + HlsScheduler::get_latency(n.op);
+            if (end > max_cycle) max_cycle = end;
+
+            if (HlsScheduler::get_latency(n.op) > 0) {
+                total_ops++;
+                std::string name = std::string(hls_op_str(n.op)) + "_" + std::to_string(n.id);
+                result.op_to_cycle.emplace_back(name, n.cycle);
+            }
+        }
+    }
+    result.total_cycles = max_cycle;
+    result.total_operations = total_ops;
+
+    // Resource utilization: ops * avg_latency / (max_cycle * estimated_FUs)
+    double total_latency = 0;
+    for (auto& b : cdfg_)
+        for (auto& n : b.datapath)
+            total_latency += HlsScheduler::get_latency(n.op);
+    int estimated_fus = std::max(1, total_ops / std::max(1, max_cycle));
+    result.resource_utilization = (max_cycle > 0 && estimated_fus > 0)
+        ? total_latency / (static_cast<double>(max_cycle) * estimated_fus)
+        : 0.0;
+
+    return result;
+}
+
+// ============================================================================
+// HlsEnhanced — Resource Binding
+// ============================================================================
+HlsBindingResult HlsEnhanced::bind_resources() {
+    HlsBindingResult result{};
+    HlsConfig default_cfg;
+
+    auto resources = HlsResourceAllocator::allocate(cdfg_, default_cfg);
+    HlsResourceAllocator::bind(cdfg_, resources);
+
+    // Count functional units
+    int total_fus = 0;
+    for (auto& r : resources)
+        total_fus += r.count;
+    result.functional_units = total_fus;
+
+    // Count registers (variables alive across cycles)
+    std::unordered_set<std::string> vars;
+    for (auto& b : cdfg_)
+        for (auto& n : b.datapath)
+            if (n.op == HlsOp::ASSIGN || n.op == HlsOp::READ_VAR)
+                if (!n.var_name.empty()) vars.insert(n.var_name);
+    result.registers = static_cast<int>(vars.size());
+
+    // Estimate muxes: each FU with shared inputs needs a mux
+    int mux_count = 0;
+    for (auto& r : resources) {
+        if (r.count > 0) {
+            // Count distinct nodes bound to each instance
+            std::map<int, int> instance_usage;
+            for (auto& b : cdfg_)
+                for (auto& n : b.datapath)
+                    if (n.op == r.type && n.resource_id >= 0)
+                        instance_usage[n.resource_id]++;
+            for (auto& [inst, usage] : instance_usage) {
+                if (usage > 1) mux_count++;  // shared FU needs input mux
+            }
+        }
+    }
+    result.muxes = mux_count;
+
+    // Build op_to_fu mapping
+    for (auto& b : cdfg_) {
+        for (auto& n : b.datapath) {
+            if (n.resource_id >= 0) {
+                std::string name = std::string(hls_op_str(n.op)) + "_" + std::to_string(n.id);
+                result.op_to_fu.emplace_back(name, n.resource_id);
+            }
+        }
+    }
+
+    return result;
+}
+
+// ============================================================================
+// HlsEnhanced — Array Partitioning
+// ============================================================================
+ArrayPartResult HlsEnhanced::partition_array(const std::string& name, int factor) {
+    ArrayPartResult result{};
+    result.array_name = name;
+    result.partitions = std::max(1, factor);
+
+    // Determine partition type heuristic based on factor
+    if (factor <= 1) {
+        result.type = ArrayPartResult::BLOCK;
+    } else if (factor >= 16) {
+        result.type = ArrayPartResult::COMPLETE;
+    } else {
+        result.type = ArrayPartResult::CYCLIC;
+    }
+
+    // Bank width: assume 32-bit elements, each partition serves one element per cycle
+    result.bank_width = 32 / std::max(1, factor);
+    if (result.bank_width < 1) result.bank_width = 1;
+
+    return result;
+}
+
+// ============================================================================
+// HlsEnhanced — Full Enhanced Flow
+// ============================================================================
+HlsResult HlsEnhanced::run_enhanced(const HlsConfig& cfg) {
+    // Step 1: Schedule using force-directed
+    schedule(HlsScheduleAlgo::FORCE_DIRECTED);
+
+    // Step 2: Bind resources
+    bind_resources();
+
+    // Step 3: Pipeline any loop blocks
+    for (auto& b : cdfg_) {
+        if (b.is_loop_header) {
+            HlsPipelineConfig pcfg;
+            pcfg.target_ii = cfg.pipeline_ii > 0 ? cfg.pipeline_ii : 1;
+            pcfg.max_stages = 16;
+            pipeline_loop(b.label, pcfg);
+        }
+    }
+
+    // Step 4: Synthesize using existing HlsSynthesizer
+    return HlsSynthesizer::synthesize(cdfg_, cfg);
+}
+
 } // namespace sf

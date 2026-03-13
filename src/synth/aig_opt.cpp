@@ -14,6 +14,8 @@
 #include <cassert>
 #include <cstring>
 #include <numeric>
+#include <random>
+#include <array>
 
 namespace sf {
 
@@ -275,7 +277,7 @@ void AigOptimizer::rewrite() {
         if (aig_.is_and(v)) and_nodes.push_back(v);
     }
 
-    if (and_nodes.empty() || and_nodes.size() > 5000) {
+    if (and_nodes.empty() || and_nodes.size() > 10000) {
         // Skip rewriting for very large circuits (perf safety)
         sweep();
         return;
@@ -327,7 +329,7 @@ void AigOptimizer::rewrite() {
 // ============================================================
 void AigOptimizer::refactor() {
     // Skip for very large circuits
-    if (aig_.num_ands() > 5000) { sweep(); return; }
+    if (aig_.num_ands() > 10000) { sweep(); return; }
     // For each AND node, compute its Maximum Fanout-Free Cone (MFFC)
     // An MFFC of a node is the set of nodes in its transitive fanin
     // that have no other fanout (only feed this cone)
@@ -485,7 +487,7 @@ void AigOptimizer::balance() {
 }
 
 // ============================================================
-// OPTIMIZE — Multi-pass convergence loop
+// OPTIMIZE — Enhanced multi-pass convergence loop (10-pass)
 // ============================================================
 OptStats AigOptimizer::optimize(int num_passes) {
     auto t0 = std::chrono::high_resolution_clock::now();
@@ -498,16 +500,38 @@ OptStats AigOptimizer::optimize(int num_passes) {
     AigGraph best_aig = aig_;
     uint32_t best_ands = aig_.num_ands();
 
+    // 10-pass pattern:
+    // rewrite → refactor → balance → rewrite → refactor →
+    // phase_opt → rewrite → balance → redundancy → sweep
+    enum class PassType { Rewrite, Refactor, Balance, PhaseOpt, Redundancy, Sweep };
+    std::vector<PassType> pattern = {
+        PassType::Rewrite,     // 0
+        PassType::Refactor,    // 1
+        PassType::Balance,     // 2
+        PassType::Rewrite,     // 3
+        PassType::Refactor,    // 4
+        PassType::PhaseOpt,    // 5
+        PassType::Rewrite,     // 6
+        PassType::Balance,     // 7
+        PassType::Redundancy,  // 8
+        PassType::Sweep,       // 9
+    };
+
+    int no_improve_count = 0;
+
     for (int p = 0; p < num_passes; ++p) {
-        AigGraph saved = aig_;
         uint32_t before = aig_.num_ands();
 
-        // Pass sequence: rewrite → balance → refactor → sweep → SAT sweep
-        rewrite();
-        balance();
-        refactor();
-        sweep();
-        sat_sweep();
+        // Execute the pass for this iteration
+        PassType pt = pattern[static_cast<size_t>(p) % pattern.size()];
+        switch (pt) {
+            case PassType::Rewrite:     rewrite();            break;
+            case PassType::Refactor:    refactor();           break;
+            case PassType::Balance:     balance();            break;
+            case PassType::PhaseOpt:    phase_optimize();     break;
+            case PassType::Redundancy:  redundancy_removal(); break;
+            case PassType::Sweep:       sweep(); sat_sweep(); break;
+        }
 
         uint32_t after = aig_.num_ands();
 
@@ -515,6 +539,9 @@ OptStats AigOptimizer::optimize(int num_passes) {
         if (after < best_ands) {
             best_aig = aig_;
             best_ands = after;
+            no_improve_count = 0;
+        } else {
+            no_improve_count++;
         }
 
         // If this pass made things worse, revert to best
@@ -524,8 +551,8 @@ OptStats AigOptimizer::optimize(int num_passes) {
 
         stats.passes++;
 
-        // Convergence check: if no improvement, stop early
-        if (after >= before && p > 0) break;
+        // Early termination: no improvement for 2 consecutive passes
+        if (no_improve_count >= 2 && p > 0) break;
     }
 
     // Always use best result
@@ -629,6 +656,501 @@ void AigOptimizer::sat_sweep() {
     }
 
     if (removed > 0) sweep(); // clean up after constant replacement
+}
+
+// ============================================================
+// PHASE_OPTIMIZE — Toggle complementation to reduce AND count
+// Based on De Morgan's law: AND(a,b) = NOT(OR(NOT(a),NOT(b)))
+// For each node, check if complementing both fanins and output
+// produces a representation with fewer total AND gates.
+// ============================================================
+void AigOptimizer::phase_optimize() {
+    if (aig_.num_ands() == 0 || aig_.num_ands() > 10000) return;
+
+    // Build fanout map: which nodes use each variable
+    std::unordered_map<uint32_t, std::vector<uint32_t>> fanout_users;
+    std::vector<uint32_t> and_nodes;
+    for (uint32_t v = 1; v <= aig_.max_var(); ++v) {
+        if (!aig_.is_and(v)) continue;
+        and_nodes.push_back(v);
+        const auto& nd = aig_.and_node(v);
+        fanout_users[aig_var(nd.fanin0)].push_back(v);
+        fanout_users[aig_var(nd.fanin1)].push_back(v);
+    }
+
+    // For output lits, track which variables are output roots
+    std::unordered_set<uint32_t> output_vars;
+    for (auto olit : aig_.outputs()) output_vars.insert(aig_var(olit));
+    for (auto& l : aig_.latches()) output_vars.insert(aig_var(l.next));
+
+    int improvements = 0;
+
+    for (auto var : and_nodes) {
+        if (!aig_.is_and(var)) continue;
+        // Skip output roots — complementing them changes circuit semantics
+        if (output_vars.count(var)) continue;
+
+        const auto& nd = aig_.and_node(var);
+        AigLit f0 = nd.fanin0;
+        AigLit f1 = nd.fanin1;
+
+        // Current: AND(f0, f1) = var
+        // Alternative (De Morgan): var' = OR(f0', f1') = NOT(AND(NOT(f0), NOT(f1)))
+        // The alternative inverts the node's polarity.
+        // Check if all users of this node have complemented edges to it.
+        // If so, complementing this node saves inversions downstream.
+
+        auto& users = fanout_users[var];
+        if (users.empty()) continue;
+
+        int complemented_uses = 0;
+        int total_uses = static_cast<int>(users.size());
+
+        for (auto user : users) {
+            if (!aig_.is_and(user)) continue;
+            const auto& und = aig_.and_node(user);
+            if (aig_var(und.fanin0) == var && aig_sign(und.fanin0)) complemented_uses++;
+            if (aig_var(und.fanin1) == var && aig_sign(und.fanin1)) complemented_uses++;
+        }
+
+        // If majority of uses are complemented, toggle the phase
+        if (complemented_uses > total_uses / 2) {
+            // Rewrite: new node = AND(NOT(f0), NOT(f1))
+            // This makes the node compute NOT(OR(f0_orig, f1_orig))
+            // All complemented users become non-complemented and vice versa
+            auto& nd_mut = aig_.and_node_mut(var);
+            nd_mut.fanin0 = aig_not(f0);
+            nd_mut.fanin1 = aig_not(f1);
+
+            // Flip all user edges
+            for (auto user : users) {
+                if (!aig_.is_and(user)) continue;
+                auto& und = aig_.and_node_mut(user);
+                if (aig_var(und.fanin0) == var) und.fanin0 = aig_not(und.fanin0);
+                if (aig_var(und.fanin1) == var) und.fanin1 = aig_not(und.fanin1);
+            }
+
+            // Flip output edges that reference this var
+            // (We skipped output vars above, but if something references
+            //  this var in outputs indirectly, we need to handle it)
+            improvements++;
+        }
+    }
+
+    if (improvements > 0) sweep();
+}
+
+// ============================================================
+// SIMULATE_RANDOM — Random simulation for equivalence detection
+// Assign random 64-bit patterns to inputs, propagate through AND gates
+// ============================================================
+std::unordered_map<uint32_t, AigOptimizer::SimData>
+AigOptimizer::simulate_random(int num_patterns) {
+    std::unordered_map<uint32_t, SimData> sim;
+    std::mt19937_64 rng(42); // Fixed seed for reproducibility
+
+    // Assign random patterns to inputs
+    sim[0] = {0ULL}; // constant 0
+    for (auto inp : aig_.inputs()) {
+        sim[inp] = {rng()};
+    }
+
+    // Propagate through AND gates in topological order
+    for (uint32_t v = 1; v <= aig_.max_var(); ++v) {
+        if (!aig_.is_and(v)) continue;
+        const auto& nd = aig_.and_node(v);
+
+        uint32_t v0 = aig_var(nd.fanin0);
+        uint32_t v1 = aig_var(nd.fanin1);
+        uint64_t s0 = sim.count(v0) ? sim[v0].sim_val : 0ULL;
+        uint64_t s1 = sim.count(v1) ? sim[v1].sim_val : 0ULL;
+
+        if (aig_sign(nd.fanin0)) s0 = ~s0;
+        if (aig_sign(nd.fanin1)) s1 = ~s1;
+
+        sim[v] = {s0 & s1};
+    }
+
+    return sim;
+}
+
+// ============================================================
+// REDUNDANCY_REMOVAL — Simulation + SAT equivalence checking
+// 1. Random simulate to find candidate equivalent pairs
+// 2. Verify with SAT
+// 3. Replace equivalent nodes (keep lower depth)
+// ============================================================
+void AigOptimizer::redundancy_removal() {
+    if (aig_.num_ands() == 0 || aig_.num_ands() > 10000) return;
+
+    // Step 1: Random simulation
+    auto sim = simulate_random(64);
+
+    // Step 2: Group nodes by simulation signature
+    // Nodes with same sim value (or complemented) are candidates
+    std::unordered_map<uint64_t, std::vector<uint32_t>> sig_groups;
+    for (uint32_t v = 1; v <= aig_.max_var(); ++v) {
+        if (!aig_.is_and(v)) continue;
+        uint64_t sv = sim.count(v) ? sim[v].sim_val : 0ULL;
+        // Normalize: use the smaller of sv and ~sv as key
+        uint64_t key = std::min(sv, ~sv);
+        sig_groups[key].push_back(v);
+    }
+
+    // Step 3: Compute depths for replacement decisions
+    std::unordered_map<uint32_t, uint32_t> depth;
+    depth[0] = 0;
+    for (auto inp : aig_.inputs()) depth[inp] = 0;
+    for (uint32_t v = 1; v <= aig_.max_var(); ++v) {
+        if (!aig_.is_and(v)) continue;
+        const auto& nd = aig_.and_node(v);
+        uint32_t d0 = depth.count(aig_var(nd.fanin0)) ? depth[aig_var(nd.fanin0)] : 0;
+        uint32_t d1 = depth.count(aig_var(nd.fanin1)) ? depth[aig_var(nd.fanin1)] : 0;
+        depth[v] = std::max(d0, d1) + 1;
+    }
+
+    int merged = 0;
+    int sat_limit = (effort_ >= 2) ? 200 : 50; // Limit SAT checks based on effort
+    int sat_checks = 0;
+
+    for (auto& [key, group] : sig_groups) {
+        if (group.size() < 2) continue;
+
+        // Compare pairs within the group
+        for (size_t i = 0; i < group.size() && sat_checks < sat_limit; ++i) {
+            for (size_t j = i + 1; j < group.size() && sat_checks < sat_limit; ++j) {
+                uint32_t va = group[i], vb = group[j];
+                if (!aig_.is_and(va) || !aig_.is_and(vb)) continue;
+
+                uint64_t sa = sim[va].sim_val;
+                uint64_t sb = sim[vb].sim_val;
+                bool complemented = (sa == ~sb);
+                if (sa != sb && !complemented) continue;
+
+                // SAT check: are va and vb functionally equivalent?
+                AigGraph test_aig;
+                std::unordered_map<uint32_t, AigLit> var_map;
+
+                std::function<AigLit(AigLit)> translate = [&](AigLit lit) -> AigLit {
+                    uint32_t lv = aig_var(lit);
+                    if (lv == 0) return aig_sign(lit) ? AIG_TRUE : AIG_FALSE;
+                    if (var_map.count(lv)) {
+                        AigLit base = var_map[lv];
+                        return aig_sign(lit) ? aig_not(base) : base;
+                    }
+                    if (!aig_.is_and(lv)) {
+                        AigLit inp = test_aig.create_input("v" + std::to_string(lv));
+                        var_map[lv] = inp;
+                        return aig_sign(lit) ? aig_not(inp) : inp;
+                    }
+                    const auto& nd = aig_.and_node(lv);
+                    AigLit f0 = translate(nd.fanin0);
+                    AigLit f1 = translate(nd.fanin1);
+                    AigLit result = test_aig.create_and(f0, f1);
+                    var_map[lv] = result;
+                    return aig_sign(lit) ? aig_not(result) : result;
+                };
+
+                AigLit la = translate(aig_make(va));
+                AigLit lb = translate(aig_make(vb));
+
+                // XOR of the two: if UNSAT, they're equivalent
+                AigLit diff = complemented
+                    ? test_aig.create_xor(la, aig_not(lb))
+                    : test_aig.create_xor(la, lb);
+                test_aig.add_output(diff, "diff");
+
+                TseitinEncoder enc;
+                CnfFormula cnf = enc.encode(test_aig);
+                CnfLit target = enc.aig_lit_to_cnf(diff);
+                cnf.add_unit(target);
+
+                CdclSolver solver;
+                for (auto& cl : cnf.clauses()) solver.add_clause(cl);
+                auto result = solver.solve();
+                sat_checks++;
+
+                if (result == SatResult::UNSAT) {
+                    // Equivalent! Replace the higher-depth one with the lower-depth one
+                    uint32_t keeper = (depth[va] <= depth[vb]) ? va : vb;
+                    uint32_t victim = (keeper == va) ? vb : va;
+                    bool needs_complement = complemented;
+
+                    // Replace victim: make it point to keeper
+                    auto& vnd = aig_.and_node_mut(victim);
+                    AigLit keeper_lit = aig_make(keeper);
+                    if (needs_complement) keeper_lit = aig_not(keeper_lit);
+                    // AND(x, TRUE) = x
+                    vnd.fanin0 = keeper_lit;
+                    vnd.fanin1 = AIG_TRUE;
+                    merged++;
+                }
+            }
+        }
+    }
+
+    if (merged > 0) sweep();
+}
+
+// ============================================================
+// NPN_CANONICAL — NPN class computation
+// Try all input permutations and complementations (negation of
+// inputs and output), return the lexicographically smallest truth table.
+// For n inputs: n! × 2^(n+1) configurations
+// ============================================================
+uint16_t AigOptimizer::npn_canonical(uint16_t tt, int nvars) {
+    if (nvars <= 0 || nvars > 4) return tt;
+
+    int num_entries = 1 << nvars;
+    uint16_t mask = static_cast<uint16_t>((1u << num_entries) - 1);
+    tt &= mask;
+
+    uint16_t best = tt;
+
+    // Generate all permutations of nvars inputs
+    std::array<int, 4> perm = {0, 1, 2, 3};
+
+    // Apply permutation to truth table
+    auto permute_tt = [&](uint16_t orig, const std::array<int, 4>& p) -> uint16_t {
+        uint16_t result = 0;
+        for (int pat = 0; pat < num_entries; ++pat) {
+            if (!((orig >> pat) & 1)) continue;
+            int new_pat = 0;
+            for (int i = 0; i < nvars; ++i) {
+                if ((pat >> p[i]) & 1) new_pat |= (1 << i);
+            }
+            result |= static_cast<uint16_t>(1u << new_pat);
+        }
+        return result & mask;
+    };
+
+    // Complement input i in truth table
+    auto complement_input = [&](uint16_t orig, int input_idx) -> uint16_t {
+        uint16_t result = 0;
+        for (int pat = 0; pat < num_entries; ++pat) {
+            if (!((orig >> pat) & 1)) continue;
+            int new_pat = pat ^ (1 << input_idx);
+            result |= static_cast<uint16_t>(1u << new_pat);
+        }
+        return result & mask;
+    };
+
+    // Try all permutations
+    std::sort(perm.begin(), perm.begin() + nvars);
+    do {
+        uint16_t ptt = permute_tt(tt, perm);
+
+        // Try all 2^nvars input complementation combinations
+        for (int comp = 0; comp < (1 << nvars); ++comp) {
+            uint16_t ctt = ptt;
+            for (int i = 0; i < nvars; ++i) {
+                if ((comp >> i) & 1) ctt = complement_input(ctt, i);
+            }
+
+            // Try with and without output complementation
+            best = std::min(best, ctt);
+            uint16_t neg_ctt = static_cast<uint16_t>((~ctt) & mask);
+            best = std::min(best, neg_ctt);
+        }
+    } while (std::next_permutation(perm.begin(), perm.begin() + nvars));
+
+    return best;
+}
+
+// ============================================================
+// ENUMERATE_PRIORITY_CUTS — Up to 6-input cuts with area flow
+// Keep top-8 priority cuts per node sorted by area_flow
+// ============================================================
+std::vector<AigOptimizer::PriorityCut>
+AigOptimizer::enumerate_priority_cuts(uint32_t var, int max_cut_size) {
+    std::vector<PriorityCut> result;
+
+    // Trivial cut: the node itself
+    result.push_back({{var}, var, 0, 0});
+
+    if (!aig_.is_and(var)) return result;
+
+    // Compute depth for area-flow estimation
+    std::unordered_map<uint32_t, uint32_t> depth_cache;
+    std::function<uint32_t(uint32_t)> get_depth = [&](uint32_t v) -> uint32_t {
+        if (v == 0) return 0;
+        auto it = depth_cache.find(v);
+        if (it != depth_cache.end()) return it->second;
+        if (!aig_.is_and(v)) { depth_cache[v] = 0; return 0; }
+        const auto& nd = aig_.and_node(v);
+        uint32_t d = std::max(get_depth(aig_var(nd.fanin0)),
+                              get_depth(aig_var(nd.fanin1))) + 1;
+        depth_cache[v] = d;
+        return d;
+    };
+
+    // BFS-style cut enumeration: expand frontier nodes
+    // Start with direct fanins, then expand one level at a time
+    struct Frontier {
+        std::vector<uint32_t> leaves;
+    };
+
+    auto merge_leaves = [&](const std::vector<uint32_t>& a,
+                            const std::vector<uint32_t>& b) -> std::vector<uint32_t> {
+        std::vector<uint32_t> merged;
+        merged.reserve(a.size() + b.size());
+        for (auto x : a) if (x != 0) merged.push_back(x);
+        for (auto x : b) if (x != 0) merged.push_back(x);
+        std::sort(merged.begin(), merged.end());
+        merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
+        return merged;
+    };
+
+    // Collect cuts by expanding the cone of the node
+    std::vector<std::vector<uint32_t>> cut_sets;
+
+    // Level 1: direct fanins
+    const auto& nd = aig_.and_node(var);
+    uint32_t v0 = aig_var(nd.fanin0), v1 = aig_var(nd.fanin1);
+    if (v0 != 0 && v1 != 0 && v0 != v1) {
+        std::vector<uint32_t> c = {std::min(v0, v1), std::max(v0, v1)};
+        cut_sets.push_back(c);
+    }
+
+    // Level 2: expand each fanin one level if it's an AND
+    auto expand_one = [&](uint32_t v) -> std::vector<uint32_t> {
+        if (!aig_.is_and(v)) return {v};
+        const auto& n = aig_.and_node(v);
+        uint32_t a = aig_var(n.fanin0), b = aig_var(n.fanin1);
+        std::vector<uint32_t> r;
+        if (a != 0) r.push_back(a);
+        if (b != 0) r.push_back(b);
+        return r;
+    };
+
+    // 3-input cuts
+    if (max_cut_size >= 3) {
+        if (aig_.is_and(v0)) {
+            auto expanded = expand_one(v0);
+            expanded.push_back(v1);
+            std::sort(expanded.begin(), expanded.end());
+            expanded.erase(std::unique(expanded.begin(), expanded.end()), expanded.end());
+            if (static_cast<int>(expanded.size()) <= max_cut_size)
+                cut_sets.push_back(expanded);
+        }
+        if (aig_.is_and(v1)) {
+            auto expanded = expand_one(v1);
+            expanded.push_back(v0);
+            std::sort(expanded.begin(), expanded.end());
+            expanded.erase(std::unique(expanded.begin(), expanded.end()), expanded.end());
+            if (static_cast<int>(expanded.size()) <= max_cut_size)
+                cut_sets.push_back(expanded);
+        }
+    }
+
+    // 4-input cuts: expand both fanins
+    if (max_cut_size >= 4 && aig_.is_and(v0) && aig_.is_and(v1)) {
+        auto e0 = expand_one(v0);
+        auto e1 = expand_one(v1);
+        auto merged = merge_leaves(e0, e1);
+        if (static_cast<int>(merged.size()) <= max_cut_size)
+            cut_sets.push_back(merged);
+    }
+
+    // 5 and 6-input cuts: expand one more level
+    if (max_cut_size >= 5) {
+        for (auto& base_cut : std::vector<std::vector<uint32_t>>(cut_sets)) {
+            if (static_cast<int>(base_cut.size()) >= max_cut_size) continue;
+            for (auto leaf : base_cut) {
+                if (!aig_.is_and(leaf)) continue;
+                auto expanded = expand_one(leaf);
+                // Replace leaf with its children
+                std::vector<uint32_t> new_cut;
+                for (auto l : base_cut) {
+                    if (l == leaf) {
+                        for (auto e : expanded) new_cut.push_back(e);
+                    } else {
+                        new_cut.push_back(l);
+                    }
+                }
+                std::sort(new_cut.begin(), new_cut.end());
+                new_cut.erase(std::unique(new_cut.begin(), new_cut.end()), new_cut.end());
+                if (static_cast<int>(new_cut.size()) <= max_cut_size)
+                    cut_sets.push_back(new_cut);
+            }
+        }
+    }
+
+    // Deduplicate cuts
+    std::sort(cut_sets.begin(), cut_sets.end());
+    cut_sets.erase(std::unique(cut_sets.begin(), cut_sets.end()), cut_sets.end());
+
+    // Convert to PriorityCut with area_flow and depth
+    for (auto& leaves : cut_sets) {
+        if (leaves.empty()) continue;
+        uint32_t cut_depth = 0;
+        uint32_t area = static_cast<uint32_t>(leaves.size());
+        for (auto l : leaves) {
+            cut_depth = std::max(cut_depth, get_depth(l));
+        }
+        result.push_back({leaves, var, area, cut_depth});
+    }
+
+    // Sort by area_flow (ascending) and keep top 8
+    std::sort(result.begin(), result.end(),
+              [](const PriorityCut& a, const PriorityCut& b) {
+                  if (a.area_flow != b.area_flow) return a.area_flow < b.area_flow;
+                  return a.depth < b.depth;
+              });
+
+    if (result.size() > 8) result.resize(8);
+
+    return result;
+}
+
+// ============================================================
+// CHOICE_REWRITE — Build choice nodes for better rewriting
+// For each AND node, enumerate 6-input priority cuts, compute
+// truth table, find NPN canonical form, and check if a better
+// implementation exists via NPN-optimal decomposition.
+// ============================================================
+void AigOptimizer::choice_rewrite() {
+    if (aig_.num_ands() == 0 || aig_.num_ands() > 10000) return;
+
+    std::vector<uint32_t> and_nodes;
+    for (uint32_t v = 1; v <= aig_.max_var(); ++v) {
+        if (aig_.is_and(v)) and_nodes.push_back(v);
+    }
+
+    int improvements = 0;
+
+    for (auto var : and_nodes) {
+        if (!aig_.is_and(var)) continue;
+
+        auto pcuts = enumerate_priority_cuts(var, 6);
+
+        for (auto& pcut : pcuts) {
+            // Only use cuts with ≤4 leaves for truth table rewriting
+            // (truth table based rewriting is limited to 4 inputs = 16-bit TT)
+            if (pcut.leaves.size() <= 1 || pcut.leaves.size() > 4) continue;
+
+            uint32_t current_cost = count_subgraph_ands(aig_, var, pcut.leaves);
+            if (current_cost <= 1) continue;
+
+            uint16_t tt = compute_truth_table(aig_, var, pcut.leaves);
+            uint16_t canonical = npn_canonical(tt, static_cast<int>(pcut.leaves.size()));
+
+            // If the canonical form is simpler (fewer set bits suggest simpler logic),
+            // try to rebuild using the canonical form
+            // Note: we rebuild from the original tt (not canonical) since we need
+            // the actual function, but we use canonical to assess complexity
+            uint32_t before_ands = aig_.num_ands();
+            AigLit new_impl = rebuild_from_truth_table(tt, pcut.leaves);
+            uint32_t new_cost = aig_.num_ands() - before_ands;
+
+            if (new_cost < current_cost) {
+                improvements++;
+                break;
+            }
+        }
+    }
+
+    if (improvements > 0) sweep();
 }
 
 } // namespace sf

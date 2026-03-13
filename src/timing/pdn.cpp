@@ -337,4 +337,155 @@ PdnResult PdnAnalyzer::analyze(int grid_res) {
     return r;
 }
 
+// ── Enhanced: Target Impedance Detail ────────────────────────────────
+
+TargetImpedance PdnAnalyzer::compute_target_impedance_detail(
+    double voltage, double max_current_a, double ripple_pct) {
+    TargetImpedance ti;
+    ti.voltage = voltage;
+    ti.max_current = max_current_a;
+    ti.ripple_pct = ripple_pct;
+    ti.frequency_hz = 1e9;
+    if (max_current_a > 0)
+        ti.z_target_ohms = (voltage * ripple_pct / 100.0) / max_current_a;
+    else
+        ti.z_target_ohms = 0.1;
+    double z_actual = std::abs(pdn_impedance_at(ti.frequency_hz));
+    ti.meets_target = z_actual <= ti.z_target_ohms;
+    return ti;
+}
+
+// ── Enhanced: Decoupling Optimization ────────────────────────────────
+
+DecapOptResult PdnAnalyzer::optimize_decoupling(double budget_area) {
+    DecapOptResult result{};
+
+    // Run spatial analysis to find highest IR-drop locations
+    PdnResult baseline;
+    baseline.nodes.clear();
+    spatial_analysis(10, baseline);
+
+    // Sort nodes by voltage ascending (worst drop first)
+    auto sorted = baseline.nodes;
+    std::sort(sorted.begin(), sorted.end(),
+              [](const PdnResult::PdnNode& a, const PdnResult::PdnNode& b) {
+                  return a.voltage < b.voltage;
+              });
+
+    double z_before = std::abs(pdn_impedance_at(1e9)) * 1000.0;
+    double area_used = 0;
+    double cap_per_decap = 10.0;
+    double area_per_decap = 100.0;
+    int max_decaps = budget_area > 0 ? (int)(budget_area / area_per_decap) : (int)sorted.size();
+    max_decaps = std::min(max_decaps, (int)sorted.size());
+
+    for (int i = 0; i < max_decaps; ++i) {
+        if (budget_area > 0 && area_used + area_per_decap > budget_area) break;
+        result.locations.push_back({sorted[i].x, sorted[i].y});
+        result.decaps_added++;
+        result.total_capacitance_nf += cap_per_decap;
+        area_used += area_per_decap;
+        cfg_.on_die_cap_nf += cap_per_decap;
+    }
+
+    double z_after = std::abs(pdn_impedance_at(1e9)) * 1000.0;
+    result.impedance_improvement_pct = z_before > 0 ?
+        (z_before - z_after) / z_before * 100.0 : 0;
+    return result;
+}
+
+// ── Enhanced: AC Impedance Profile ───────────────────────────────────
+
+ACImpedanceProfile PdnAnalyzer::compute_ac_impedance(
+    double f_start, double f_end, int points) {
+    ACImpedanceProfile prof;
+    prof.first_resonance_hz = 0;
+    prof.anti_resonance_hz = 0;
+
+    double log_s = std::log10(f_start);
+    double log_e = std::log10(f_end);
+    int npts = std::max(10, points);
+
+    for (int i = 0; i < npts; ++i) {
+        double log_f = log_s + (log_e - log_s) * i / (npts - 1);
+        double f = std::pow(10.0, log_f);
+
+        // Include package model contribution
+        double omega = 2.0 * M_PI * f;
+        double r_pkg = pkg_model_.pkg_resistance_mohm * 1e-3;
+        double l_pkg = pkg_model_.pkg_inductance_nh * 1e-9;
+        double c_pkg = pkg_model_.pkg_capacitance_pf * 1e-12;
+        double l_brd = pkg_model_.board_inductance_nh * 1e-9;
+        double c_brd = pkg_model_.board_capacitance_uf * 1e-6;
+
+        auto z_pdn = pdn_impedance_at(f);
+
+        // Package: R + jwL + 1/jwC (series RLC)
+        std::complex<double> z_pkg(r_pkg,
+            omega * l_pkg - (omega * c_pkg > 0 ? 1.0 / (omega * c_pkg) : 0));
+
+        // Board decap contribution (parallel)
+        std::complex<double> z_brd(0.001,
+            omega * l_brd - (omega * c_brd > 0 ? 1.0 / (omega * c_brd) : 0));
+
+        // Combine: (pdn || board) + package in series
+        std::complex<double> y_par = 1.0 / z_pdn;
+        if (std::abs(z_brd) > 0) y_par += 1.0 / z_brd;
+        std::complex<double> z_total = (std::abs(y_par) > 0 ? 1.0 / y_par : z_pdn) + z_pkg;
+
+        double mag = std::abs(z_total);
+        double phase = std::atan2(z_total.imag(), z_total.real()) * 180.0 / M_PI;
+
+        prof.frequencies.push_back(f);
+        prof.impedance_mag.push_back(mag);
+        prof.impedance_phase.push_back(phase);
+
+        // Detect first resonance (local min) and anti-resonance (local max)
+        if (i >= 2) {
+            double m2 = prof.impedance_mag[i - 2];
+            double m1 = prof.impedance_mag[i - 1];
+            double m0 = mag;
+            if (prof.first_resonance_hz == 0 && m1 < m2 && m1 < m0)
+                prof.first_resonance_hz = prof.frequencies[i - 1];
+            if (prof.anti_resonance_hz == 0 && m1 > m2 && m1 > m0)
+                prof.anti_resonance_hz = prof.frequencies[i - 1];
+        }
+    }
+    return prof;
+}
+
+// ── Enhanced: Set Package Model ──────────────────────────────────────
+
+void PdnAnalyzer::set_package_model(const PdnPackageModel& pkg) {
+    pkg_model_ = pkg;
+}
+
+// ── Enhanced: Full Enhanced PDN Run ──────────────────────────────────
+
+PdnResult PdnAnalyzer::run_enhanced() {
+    // 1. Static analysis
+    PdnResult r = analyze(10);
+
+    // 2. AC impedance profile
+    auto ac = compute_ac_impedance();
+
+    // 3. Target impedance check
+    double i_max_a = cfg_.max_transient_current_ma * 1e-3;
+    auto ti = compute_target_impedance_detail(cfg_.vdd, i_max_a, cfg_.voltage_ripple_pct);
+    if (!ti.meets_target) {
+        r.pi_signoff_pass = false;
+        r.pi_summary += " | Target-Z FAIL (need " +
+            std::to_string(ti.z_target_ohms * 1000) + "mOhm)";
+    }
+
+    // 4. Decap optimization if impedance fails
+    if (!ti.meets_target) {
+        auto decap = optimize_decoupling(0);
+        r.total_decap_nf += decap.total_capacitance_nf;
+    }
+
+    r.message += " [enhanced]";
+    return r;
+}
+
 } // namespace sf

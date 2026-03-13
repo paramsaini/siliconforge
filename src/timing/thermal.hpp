@@ -144,6 +144,45 @@ struct ThermalResult {
     int grid_nx = 0, grid_ny = 0;
 };
 
+// ── Thermal-Aware Placement Result ──────────────────────────────────────
+struct ThermalPlacementResult {
+    int cells_moved = 0;
+    double peak_temp_before = 0;
+    double peak_temp_after = 0;
+    double improvement_pct = 0;
+};
+
+// ── Enhanced Package Thermal Model ──────────────────────────────────────
+struct EnhancedPackageThermalModel {
+    double theta_ja = 30.0;
+    double theta_jc = 5.0;
+    double theta_ca = 25.0;
+    double ambient_temp_c = 25.0;
+};
+
+// ── Transient Thermal Result ────────────────────────────────────────────
+struct TransientThermalResult {
+    std::vector<double> time_points;
+    std::vector<double> peak_temps;
+    double steady_state_temp = 0;
+    double thermal_time_constant_ms = 0;
+};
+
+// ── Thermal Via Result ──────────────────────────────────────────────────
+struct ThermalViaResult {
+    int vias_inserted = 0;
+    double temp_reduction_c = 0;
+    std::vector<std::pair<double,double>> via_locations;
+};
+
+// ── Power-Thermal Iteration Result ──────────────────────────────────────
+struct PowerThermalResult {
+    int iterations = 0;
+    double converged_temp = 0;
+    double converged_power = 0;
+    bool converged = false;
+};
+
 // ── Thermal Analysis Engine ─────────────────────────────────────────────────
 class ThermalAnalyzer {
 public:
@@ -194,11 +233,22 @@ public:
     const ThermalConfig& config() const { return cfg_; }
     const std::vector<ThermalCell>& grid() const { return grid_; }
 
+    // Enhanced thermal analysis
+    void set_physical_design(const PhysicalDesign& pd) { pd_ = &pd; }
+    ThermalPlacementResult thermal_driven_placement();
+    void set_package_thermal(const EnhancedPackageThermalModel& pkg);
+    TransientThermalResult analyze_transient(double total_time_s = 1.0, int steps = 100);
+    ThermalViaResult insert_thermal_vias(double hotspot_threshold_c = 100.0);
+    PowerThermalResult iterate_power_thermal(int max_iter = 10);
+    ThermalResult run_enhanced();
+
 private:
     ThermalConfig cfg_;
     std::vector<ThermalCell> grid_;   // nx × ny
     std::vector<ThermalSensor> sensors_;
     ThermalResult last_result_;
+    const PhysicalDesign* pd_ = nullptr;
+    EnhancedPackageThermalModel enhanced_pkg_;
 
     // Finite-difference SOR solver
     void sor_iteration(std::vector<double>& T, const std::vector<double>& Q,

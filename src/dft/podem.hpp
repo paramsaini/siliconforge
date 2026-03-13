@@ -34,6 +34,38 @@ struct FaultCoverage {
     std::vector<std::pair<Fault, std::vector<std::pair<NetId, Logic4>>>> tests;
 };
 
+// Parallel-pattern fault simulation
+struct ParallelFaultSimResult {
+    int faults_simulated;
+    int faults_detected;
+    double coverage_pct;
+    double time_ms;
+    int patterns_used;
+};
+
+// Fault collapsing
+struct CollapseResult {
+    int original_faults;
+    int collapsed_faults;
+    int equivalence_removed;
+    int dominance_removed;
+};
+
+// Test compaction
+struct CompactResult {
+    int original_patterns;
+    int compacted_patterns;
+    double reduction_pct;
+};
+
+// Transition fault ATPG
+struct TransitionResult {
+    int transition_faults;
+    int detected;
+    double coverage_pct;
+    int patterns;
+};
+
 class PodemAtpg {
 public:
     explicit PodemAtpg(Netlist& nl);
@@ -46,6 +78,13 @@ public:
 
     // Enumerate all single stuck-at faults
     std::vector<Fault> enumerate_faults() const;
+
+    // Enhanced ATPG methods
+    ParallelFaultSimResult parallel_fault_sim(int word_width = 64);
+    CollapseResult collapse_faults();
+    CompactResult compact_patterns();
+    TransitionResult generate_transition_patterns();
+    FaultCoverage run_enhanced();
 
 private:
     Netlist& nl_;

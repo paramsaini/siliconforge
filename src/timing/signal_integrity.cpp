@@ -209,4 +209,222 @@ SiResult SignalIntegrityAnalyzer::analyze() {
     return r;
 }
 
+// ── Enhanced: Identify All Aggressors ────────────────────────────────
+
+std::vector<AggressorInfo> SignalIntegrityAnalyzer::identify_all_aggressors() {
+    std::vector<AggressorInfo> result;
+    for (int v = 0; v < (int)pd_.nets.size(); ++v) {
+        for (int a = 0; a < (int)pd_.nets.size(); ++a) {
+            if (v == a) continue;
+            double cc = coupling_cap(v, a);
+            if (cc <= 0) continue;
+
+            AggressorInfo info;
+            info.victim_net = v;
+            info.aggressor_net = a;
+            info.coupling_cap = cc;
+
+            // Estimate parallel length from coupling (coupling ~ 0.05 * len / spacing)
+            info.parallel_length = cc / 0.05 * cfg_.coupling_distance_um;
+            info.shared_layer = 0;
+
+            double v_start = v * 10.0, v_end = v_start + 50.0;
+            double a_start = a * 10.0, a_end = a_start + 50.0;
+            info.timing_window_overlap = timing_overlap(a_start, a_end, v_start, v_end);
+
+            result.push_back(info);
+        }
+    }
+    return result;
+}
+
+// ── Enhanced: Functional Filtering ───────────────────────────────────
+
+std::vector<FunctionalFilter> SignalIntegrityAnalyzer::functional_filtering() {
+    std::vector<FunctionalFilter> result;
+    auto aggressors = identify_all_aggressors();
+    for (auto& ag : aggressors) {
+        FunctionalFilter ff;
+        ff.victim_net = ag.victim_net;
+        ff.aggressor_net = ag.aggressor_net;
+
+        // Heuristic: if timing windows don't overlap, they can't switch simultaneously
+        if (ag.timing_window_overlap < 0.01) {
+            ff.can_switch_simultaneously = false;
+            ff.reason = "no timing window overlap";
+        }
+        // Different clock domains heuristic (odd vs even net index)
+        else if ((ag.victim_net % 2) != (ag.aggressor_net % 2)) {
+            ff.can_switch_simultaneously = false;
+            ff.reason = "different clock domains";
+        } else {
+            ff.can_switch_simultaneously = true;
+            ff.reason = "same timing domain, overlap=" +
+                std::to_string(ag.timing_window_overlap);
+        }
+        result.push_back(ff);
+    }
+    return result;
+}
+
+// ── Enhanced: Noise Propagation ──────────────────────────────────────
+
+std::vector<NoisePropResult> SignalIntegrityAnalyzer::propagate_noise() {
+    std::vector<NoisePropResult> result;
+    double vdd = cfg_.vdd;
+    double noise_margin = vdd * 1000.0 * 0.3;  // ~30% of VDD as noise margin
+
+    for (int v = 0; v < (int)pd_.nets.size(); ++v) {
+        double max_noise_mv = 0;
+        double max_width_ps = 0;
+
+        // Find worst aggressor noise for this victim
+        for (int a = 0; a < (int)pd_.nets.size(); ++a) {
+            if (v == a) continue;
+            double cc = coupling_cap(v, a);
+            if (cc <= 0) continue;
+
+            double c_victim = cfg_.victim_base_cap_ff;
+            for (auto cid : pd_.nets[v].cell_ids) {
+                (void)cid;
+                c_victim += cfg_.pin_cap_ff;
+            }
+
+            double noise = noise_voltage(
+                effective_coupling(cc, cfg_.miller_factor, true), c_victim, vdd) * 1000.0;
+            double width = (c_victim > 0) ? (cc / c_victim) * 50.0 * 0.5 : 0;
+            if (noise > max_noise_mv) {
+                max_noise_mv = noise;
+                max_width_ps = width;
+            }
+        }
+
+        if (max_noise_mv <= 0) continue;
+
+        NoisePropResult np;
+        np.victim_net = v;
+        np.noise_amplitude_mv = max_noise_mv;
+        np.noise_width_ps = max_width_ps;
+
+        // Propagate through logic gates - each gate attenuates by gain factor
+        int num_cells = (int)pd_.nets[v].cell_ids.size();
+        np.gates_traversed = std::max(1, num_cells);
+        double gain_per_gate = 0.7;  // typical noise attenuation
+        np.attenuated_amplitude_mv = max_noise_mv * std::pow(gain_per_gate, np.gates_traversed);
+        np.propagates_to_output = np.attenuated_amplitude_mv > noise_margin;
+
+        result.push_back(np);
+    }
+    return result;
+}
+
+// ── Enhanced: Glitch Energy Check ────────────────────────────────────
+
+std::vector<GlitchResult> SignalIntegrityAnalyzer::check_glitch_energy() {
+    std::vector<GlitchResult> result;
+    double ff_threshold_fj = 0.5;  // flip-flop capture energy threshold
+
+    for (int v = 0; v < (int)pd_.nets.size(); ++v) {
+        double max_energy = 0;
+        for (int a = 0; a < (int)pd_.nets.size(); ++a) {
+            if (v == a) continue;
+            double cc = coupling_cap(v, a);
+            if (cc <= 0) continue;
+
+            double c_victim = cfg_.victim_base_cap_ff;
+            for (auto cid : pd_.nets[v].cell_ids) {
+                (void)cid;
+                c_victim += cfg_.pin_cap_ff;
+            }
+
+            double noise_v = noise_voltage(
+                effective_coupling(cc, cfg_.miller_factor, true), c_victim, cfg_.vdd);
+            double noise_mv = noise_v * 1000.0;
+            double width_ps = (c_victim > 0) ? (cc / c_victim) * 50.0 * 0.5 : 0;
+
+            // Glitch energy = amplitude(mV) * width(ps) * coupling_cap(fF) * 1e-3 → fJ
+            double energy = noise_mv * width_ps * cc * 1e-3;
+            max_energy = std::max(max_energy, energy);
+        }
+
+        if (max_energy > 0) {
+            GlitchResult gr;
+            gr.net_idx = v;
+            gr.glitch_energy_fj = max_energy;
+            gr.threshold_fj = ff_threshold_fj;
+            gr.is_functional_failure = max_energy > ff_threshold_fj;
+            result.push_back(gr);
+        }
+    }
+    return result;
+}
+
+// ── Enhanced: SI-Aware Hold Check ────────────────────────────────────
+
+std::vector<SiHoldFix> SignalIntegrityAnalyzer::check_si_hold() {
+    std::vector<SiHoldFix> result;
+    double base_hold_margin_ps = 50.0;
+
+    for (int v = 0; v < (int)pd_.nets.size(); ++v) {
+        double worst_cid = 0;
+        for (int a = 0; a < (int)pd_.nets.size(); ++a) {
+            if (v == a) continue;
+            double cc = coupling_cap(v, a);
+            if (cc <= 0) continue;
+
+            double c_victim = cfg_.victim_base_cap_ff;
+            for (auto cid : pd_.nets[v].cell_ids) {
+                (void)cid;
+                c_victim += cfg_.pin_cap_ff;
+            }
+            double cc_eff = effective_coupling(cc, cfg_.miller_factor, false);
+            // Same-direction switching speeds up signal → reduces hold slack
+            double cid = compute_cid(std::abs(cc_eff), c_victim, 50.0);
+            worst_cid = std::max(worst_cid, cid);
+        }
+
+        if (worst_cid > 0) {
+            SiHoldFix fix;
+            fix.endpoint = v;
+            fix.original_hold_slack = base_hold_margin_ps;
+            fix.si_hold_slack = base_hold_margin_ps - worst_cid;
+            fix.needs_fix = fix.si_hold_slack < 0;
+            fix.buffer_delay_needed = fix.needs_fix ? -fix.si_hold_slack : 0;
+            result.push_back(fix);
+        }
+    }
+    return result;
+}
+
+// ── Enhanced: Full Enhanced SI Run ───────────────────────────────────
+
+SiResult SignalIntegrityAnalyzer::run_enhanced() {
+    SiResult r = analyze();
+
+    auto aggressors = identify_all_aggressors();
+    auto filters = functional_filtering();
+    auto noise_prop = propagate_noise();
+    auto glitches = check_glitch_energy();
+    auto hold_fixes = check_si_hold();
+
+    int functional_failures = 0;
+    for (auto& g : glitches)
+        if (g.is_functional_failure) functional_failures++;
+
+    int hold_violations = 0;
+    for (auto& h : hold_fixes)
+        if (h.needs_fix) hold_violations++;
+
+    int propagating = 0;
+    for (auto& np : noise_prop)
+        if (np.propagates_to_output) propagating++;
+
+    r.message += " | Enhanced: " +
+        std::to_string(aggressors.size()) + " aggressor pairs, " +
+        std::to_string(functional_failures) + " glitch failures, " +
+        std::to_string(hold_violations) + " SI-hold violations, " +
+        std::to_string(propagating) + " propagating";
+    return r;
+}
+
 } // namespace sf

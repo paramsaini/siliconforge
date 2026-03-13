@@ -194,6 +194,35 @@ public:
     const std::vector<PvtCorner>& corners() const { return corners_; }
     const std::vector<FunctionalMode>& modes() const { return modes_; }
 
+    // ── Corner Pruning (sensitivity-based) ───────────────────────────────
+    struct CornerPruning {
+        int original_corners;
+        int pruned_corners;
+        std::vector<std::string> active_corners;
+        std::vector<std::string> pruned_away;
+        std::string reason;
+    };
+    CornerPruning prune_corners(double sensitivity_threshold = 0.01);
+
+    // ── PVT Interpolation ────────────────────────────────────────────────
+    struct PvtPoint {
+        double process;     // fast/slow sigma
+        double voltage;     // V
+        double temperature; // °C
+        double delay_factor;
+    };
+    double interpolate_pvt(const std::vector<PvtPoint>& table,
+                          double p, double v, double t);
+
+    // ── Scenario Reduction ───────────────────────────────────────────────
+    struct ScenarioReduction {
+        int original_scenarios;
+        int reduced_scenarios;
+        std::vector<int> active_scenario_ids;
+        double accuracy_loss;
+    };
+    ScenarioReduction reduce_scenarios(int target_count);
+
 private:
     const Netlist& nl_;
     const LibertyLibrary* lib_;

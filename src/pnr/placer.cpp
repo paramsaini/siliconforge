@@ -1029,4 +1029,744 @@ void AnalyticalPlacer::congestion_driven_refine(const Netlist& nl) {
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// ePlace-style enhancements: density smoothing, WL gradient, Nesterov
+// ══════════════════════════════════════════════════════════════════════
+
+// ── A) compute_density_map: 2D grid of cell density ──────────────────
+std::vector<std::vector<double>> AnalyticalPlacer::compute_density_map() {
+    int nx = density_cfg_.bin_count_x;
+    int ny = density_cfg_.bin_count_y;
+    std::vector<std::vector<double>> grid(ny, std::vector<double>(nx, 0.0));
+
+    double die_w = pd_.die_area.width();
+    double die_h = pd_.die_area.height();
+    if (die_w < 1e-9 || die_h < 1e-9) return grid;
+
+    double bw = die_w / nx;
+    double bh = die_h / ny;
+    double bin_area = bw * bh;
+    if (bin_area < 1e-12) return grid;
+
+    int n = static_cast<int>(pd_.cells.size());
+    for (int ci = 0; ci < n; ci++) {
+        auto& cell = pd_.cells[ci];
+        double cx0 = cell.position.x;
+        double cy0 = cell.position.y;
+        double cx1 = cx0 + cell.width;
+        double cy1 = cy0 + cell.height;
+
+        // Determine overlapping bin range
+        int bx0 = std::max(0, static_cast<int>((cx0 - pd_.die_area.x0) / bw));
+        int bx1 = std::min(nx - 1, static_cast<int>((cx1 - pd_.die_area.x0) / bw));
+        int by0 = std::max(0, static_cast<int>((cy0 - pd_.die_area.y0) / bh));
+        int by1 = std::min(ny - 1, static_cast<int>((cy1 - pd_.die_area.y0) / bh));
+
+        for (int r = by0; r <= by1; r++) {
+            double row_y0 = pd_.die_area.y0 + r * bh;
+            double row_y1 = row_y0 + bh;
+            double oy = std::max(0.0, std::min(cy1, row_y1) - std::max(cy0, row_y0));
+            for (int c = bx0; c <= bx1; c++) {
+                double col_x0 = pd_.die_area.x0 + c * bw;
+                double col_x1 = col_x0 + bw;
+                double ox = std::max(0.0, std::min(cx1, col_x1) - std::max(cx0, col_x0));
+                grid[r][c] += (ox * oy) / bin_area;
+            }
+        }
+    }
+    return grid;
+}
+
+// ── B) smooth_density: Gaussian smoothing (approximation of DCT) ─────
+void AnalyticalPlacer::smooth_density(std::vector<std::vector<double>>& density) {
+    int ny = static_cast<int>(density.size());
+    if (ny == 0) return;
+    int nx = static_cast<int>(density[0].size());
+    if (nx == 0) return;
+
+    // 3×3 Gaussian kernel (sigma ≈ 0.85)
+    static constexpr double k[3][3] = {
+        {1.0/16, 2.0/16, 1.0/16},
+        {2.0/16, 4.0/16, 2.0/16},
+        {1.0/16, 2.0/16, 1.0/16}
+    };
+
+    for (int iter = 0; iter < density_cfg_.fft_iterations; iter++) {
+        std::vector<std::vector<double>> tmp(ny, std::vector<double>(nx, 0.0));
+        for (int r = 0; r < ny; r++) {
+            for (int c = 0; c < nx; c++) {
+                double sum = 0.0;
+                for (int dr = -1; dr <= 1; dr++) {
+                    int rr = std::clamp(r + dr, 0, ny - 1);
+                    for (int dc = -1; dc <= 1; dc++) {
+                        int cc = std::clamp(c + dc, 0, nx - 1);
+                        sum += k[dr + 1][dc + 1] * density[rr][cc];
+                    }
+                }
+                tmp[r][c] = sum;
+            }
+        }
+        density = std::move(tmp);
+    }
+}
+
+// ── C) compute_density_gradient ──────────────────────────────────────
+AnalyticalPlacer::DensityGradient AnalyticalPlacer::compute_density_gradient() {
+    int n = static_cast<int>(pd_.cells.size());
+    DensityGradient dg;
+    dg.grad_x.assign(n, 0.0);
+    dg.grad_y.assign(n, 0.0);
+    dg.overflow = 0.0;
+
+    auto density = compute_density_map();
+    smooth_density(density);
+
+    int nx = density_cfg_.bin_count_x;
+    int ny = density_cfg_.bin_count_y;
+    double die_w = pd_.die_area.width();
+    double die_h = pd_.die_area.height();
+    if (die_w < 1e-9 || die_h < 1e-9) return dg;
+
+    double bw = die_w / nx;
+    double bh = die_h / ny;
+    double target = density_cfg_.target_density;
+
+    // Compute overflow
+    for (int r = 0; r < ny; r++)
+        for (int c = 0; c < nx; c++)
+            dg.overflow += std::max(0.0, density[r][c] - target);
+
+    // For each cell, compute gradient: direction from high-density to low-density
+    for (int ci = 0; ci < n; ci++) {
+        if (fixed_cells_.count(ci)) continue;
+        double cx = pd_.cells[ci].position.x;
+        double cy = pd_.cells[ci].position.y;
+
+        int bc = std::clamp(static_cast<int>((cx - pd_.die_area.x0) / bw), 0, nx - 1);
+        int br = std::clamp(static_cast<int>((cy - pd_.die_area.y0) / bh), 0, ny - 1);
+
+        double d_here = density[br][bc];
+        if (d_here <= target) continue;
+
+        double excess = d_here - target;
+
+        // Gradient from central differences
+        double d_left  = (bc > 0)      ? density[br][bc - 1] : d_here;
+        double d_right = (bc < nx - 1) ? density[br][bc + 1] : d_here;
+        double d_down  = (br > 0)      ? density[br - 1][bc] : d_here;
+        double d_up    = (br < ny - 1) ? density[br + 1][bc] : d_here;
+
+        // Gradient points toward lower density (negative gradient direction)
+        dg.grad_x[ci] = (d_right - d_left) * 0.5 * excess;
+        dg.grad_y[ci] = (d_up - d_down) * 0.5 * excess;
+    }
+    return dg;
+}
+
+// ── D) compute_wl_gradient: log-sum-exp smooth HPWL gradient ─────────
+AnalyticalPlacer::WLGradient AnalyticalPlacer::compute_wl_gradient() {
+    int n = static_cast<int>(pd_.cells.size());
+    WLGradient wlg;
+    wlg.grad_x.assign(n, 0.0);
+    wlg.grad_y.assign(n, 0.0);
+    wlg.total_wl = 0.0;
+
+    // Log-sum-exp smoothing parameter (smaller = closer to actual HPWL)
+    constexpr double gamma = 5.0;
+    constexpr double inv_gamma = 1.0 / gamma;
+
+    for (auto& net : pd_.nets) {
+        if (net.cell_ids.size() < 2) continue;
+
+        double nw = 1.0;
+        auto wit = net_weights_.find(net.id);
+        if (wit != net_weights_.end()) nw = wit->second;
+
+        // Log-sum-exp for max: LSE_max = gamma * log(sum(exp(x_i / gamma)))
+        // Log-sum-exp for min: LSE_min = -gamma * log(sum(exp(-x_i / gamma)))
+        // Gradient of LSE_max w.r.t. x_i = exp(x_i/gamma) / sum(exp(x_j/gamma))
+        double max_exp_x = -1e18, max_exp_y = -1e18;
+        double min_exp_x = 1e18, min_exp_y = 1e18;
+
+        // Find max for numerical stability
+        for (int cid : net.cell_ids) {
+            if (cid < 0 || cid >= n) continue;
+            double cx = pd_.cells[cid].position.x;
+            double cy = pd_.cells[cid].position.y;
+            max_exp_x = std::max(max_exp_x, cx * inv_gamma);
+            max_exp_y = std::max(max_exp_y, cy * inv_gamma);
+            min_exp_x = std::min(min_exp_x, -cx * inv_gamma);
+            min_exp_y = std::min(min_exp_y, -cy * inv_gamma);
+        }
+
+        double sum_exp_max_x = 0, sum_exp_max_y = 0;
+        double sum_exp_min_x = 0, sum_exp_min_y = 0;
+        std::vector<double> e_max_x, e_max_y, e_min_x, e_min_y;
+        e_max_x.reserve(net.cell_ids.size());
+        e_max_y.reserve(net.cell_ids.size());
+        e_min_x.reserve(net.cell_ids.size());
+        e_min_y.reserve(net.cell_ids.size());
+
+        for (int cid : net.cell_ids) {
+            if (cid < 0 || cid >= n) {
+                e_max_x.push_back(0); e_max_y.push_back(0);
+                e_min_x.push_back(0); e_min_y.push_back(0);
+                continue;
+            }
+            double cx = pd_.cells[cid].position.x;
+            double cy = pd_.cells[cid].position.y;
+
+            double emx = std::exp(cx * inv_gamma - max_exp_x);
+            double emy = std::exp(cy * inv_gamma - max_exp_y);
+            double enx = std::exp(-cx * inv_gamma - min_exp_x);
+            double eny = std::exp(-cy * inv_gamma - min_exp_y);
+
+            e_max_x.push_back(emx); sum_exp_max_x += emx;
+            e_max_y.push_back(emy); sum_exp_max_y += emy;
+            e_min_x.push_back(enx); sum_exp_min_x += enx;
+            e_min_y.push_back(eny); sum_exp_min_y += eny;
+        }
+
+        // LSE-based HPWL approximation
+        double lse_max_x = gamma * (std::log(std::max(sum_exp_max_x, 1e-30)) + max_exp_x);
+        double lse_min_x = -gamma * (std::log(std::max(sum_exp_min_x, 1e-30)) + min_exp_x);
+        double lse_max_y = gamma * (std::log(std::max(sum_exp_max_y, 1e-30)) + max_exp_y);
+        double lse_min_y = -gamma * (std::log(std::max(sum_exp_min_y, 1e-30)) + min_exp_y);
+
+        wlg.total_wl += nw * ((lse_max_x - lse_min_x) + (lse_max_y - lse_min_y));
+
+        // Gradient for each cell
+        for (size_t k = 0; k < net.cell_ids.size(); k++) {
+            int cid = net.cell_ids[k];
+            if (cid < 0 || cid >= n) continue;
+
+            // d(LSE_max)/dx_i = exp(x_i/gamma) / sum(exp(x_j/gamma))
+            // d(LSE_min)/dx_i = -( exp(-x_i/gamma) / sum(exp(-x_j/gamma)) ) * (-1)
+            //                 =  exp(-x_i/gamma) / sum(exp(-x_j/gamma))
+            // Total: d(HPWL)/dx_i = d(max)/dx_i - d(min)/dx_i * (-1) ... but
+            // d(HPWL)/dx = d(LSE_max)/dx - d(LSE_min)/dx
+            double gx = nw * (e_max_x[k] / std::max(sum_exp_max_x, 1e-30)
+                             + e_min_x[k] / std::max(sum_exp_min_x, 1e-30));
+            double gy = nw * (e_max_y[k] / std::max(sum_exp_max_y, 1e-30)
+                             + e_min_y[k] / std::max(sum_exp_min_y, 1e-30));
+
+            wlg.grad_x[cid] += gx;
+            wlg.grad_y[cid] += gy;
+        }
+    }
+    return wlg;
+}
+
+// ── E) nesterov_step: Nesterov accelerated gradient ──────────────────
+void AnalyticalPlacer::nesterov_step(NesterovState& state,
+                                     const WLGradient& wl_grad,
+                                     const DensityGradient& den_grad) {
+    int n = static_cast<int>(state.x.size());
+    double penalty = density_cfg_.smooth_penalty;
+
+    // Momentum coefficient: increases over iterations (capped at 0.9)
+    double momentum = std::min(0.9, static_cast<double>(state.iteration) /
+                                    (state.iteration + 3.0));
+
+    for (int i = 0; i < n; i++) {
+        if (fixed_cells_.count(i)) continue;
+
+        // Combined gradient
+        double gx = wl_grad.grad_x[i] + penalty * den_grad.grad_x[i];
+        double gy = wl_grad.grad_y[i] + penalty * den_grad.grad_y[i];
+
+        // Nesterov update: x_next = x + momentum*(x - x_prev) - step*grad
+        double new_x = state.x[i] + momentum * (state.x[i] - state.x_prev[i])
+                      - state.step_size * gx;
+        double new_y = state.y[i] + momentum * (state.y[i] - state.y_prev[i])
+                      - state.step_size * gy;
+
+        state.x_prev[i] = state.x[i];
+        state.y_prev[i] = state.y[i];
+
+        // Clamp to die area
+        state.x[i] = std::clamp(new_x, pd_.die_area.x0,
+                                pd_.die_area.x1 - pd_.cells[i].width);
+        state.y[i] = std::clamp(new_y, pd_.die_area.y0,
+                                pd_.die_area.y1 - pd_.cells[i].height);
+    }
+
+    // Adaptive step size based on overflow
+    if (den_grad.overflow > 0.5 * density_cfg_.bin_count_x * density_cfg_.bin_count_y) {
+        state.step_size *= 0.95;  // reduce step if very congested
+    } else {
+        state.step_size = std::min(state.step_size * 1.02, 0.1);
+    }
+    state.iteration++;
+}
+
+// ── H) place_io_pads: place IO cells on chip boundary ────────────────
+void AnalyticalPlacer::place_io_pads() {
+    if (io_pads_.empty()) return;
+    int n = static_cast<int>(pd_.cells.size());
+
+    double die_w = pd_.die_area.width();
+    double die_h = pd_.die_area.height();
+
+    // Sort pads per side by requested position
+    std::vector<std::vector<size_t>> side_pads(4); // N, S, E, W
+    for (size_t i = 0; i < io_pads_.size(); i++) {
+        side_pads[static_cast<int>(io_pads_[i].side)].push_back(i);
+    }
+    for (auto& sp : side_pads) {
+        std::sort(sp.begin(), sp.end(), [&](size_t a, size_t b) {
+            return io_pads_[a].position < io_pads_[b].position;
+        });
+    }
+
+    auto place_pad = [&](const IoPad& pad) {
+        int cid = pad.cell_idx;
+        if (cid < 0 || cid >= n) return;
+        auto& cell = pd_.cells[cid];
+        double pos = std::clamp(pad.position, 0.0, 1.0);
+
+        switch (pad.side) {
+            case IoPad::Side::NORTH:
+                cell.position.x = pd_.die_area.x0 + pos * (die_w - cell.width);
+                cell.position.y = pd_.die_area.y1 - cell.height;
+                break;
+            case IoPad::Side::SOUTH:
+                cell.position.x = pd_.die_area.x0 + pos * (die_w - cell.width);
+                cell.position.y = pd_.die_area.y0;
+                break;
+            case IoPad::Side::EAST:
+                cell.position.x = pd_.die_area.x1 - cell.width;
+                cell.position.y = pd_.die_area.y0 + pos * (die_h - cell.height);
+                break;
+            case IoPad::Side::WEST:
+                cell.position.x = pd_.die_area.x0;
+                cell.position.y = pd_.die_area.y0 + pos * (die_h - cell.height);
+                break;
+        }
+        cell.placed = true;
+        fixed_cells_.insert(cid);
+    };
+
+    // Place pads, spacing evenly per-side if positions collide
+    for (int s = 0; s < 4; s++) {
+        auto& sp = side_pads[s];
+        if (sp.empty()) continue;
+
+        // Check for overlapping positions and re-space if needed
+        bool needs_respace = false;
+        for (size_t i = 1; i < sp.size(); i++) {
+            if (std::abs(io_pads_[sp[i]].position - io_pads_[sp[i-1]].position) < 1e-6) {
+                needs_respace = true;
+                break;
+            }
+        }
+        if (needs_respace) {
+            for (size_t i = 0; i < sp.size(); i++) {
+                io_pads_[sp[i]].position = static_cast<double>(i + 1) /
+                                           static_cast<double>(sp.size() + 1);
+            }
+        }
+        for (size_t idx : sp) {
+            place_pad(io_pads_[idx]);
+        }
+    }
+}
+
+// ── I) legalize_lookahead: enhanced legalization ─────────────────────
+void AnalyticalPlacer::legalize_lookahead(std::vector<double>& lx, std::vector<double>& ly) {
+    int n = static_cast<int>(pd_.cells.size());
+    if (n == 0) return;
+
+    int num_rows = std::max(1, static_cast<int>(pd_.die_area.height() / pd_.row_height));
+
+    struct RowState {
+        double next_x;
+        double y;
+    };
+    std::vector<RowState> rows(num_rows);
+    for (int r = 0; r < num_rows; r++) {
+        rows[r].next_x = pd_.die_area.x0;
+        rows[r].y = pd_.die_area.y0 + r * pd_.row_height;
+    }
+
+    // Sort cells by x-coordinate
+    std::vector<int> order(n);
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(), [&](int a, int b) {
+        return lx[a] < lx[b];
+    });
+
+    for (int ci : order) {
+        if (fixed_cells_.count(ci)) continue;
+
+        double cell_w = pd_.cells[ci].width;
+        double cell_h = pd_.cells[ci].height;
+
+        // Determine target row from global placement y
+        int target_row = std::clamp(
+            static_cast<int>((ly[ci] - pd_.die_area.y0) / pd_.row_height),
+            0, num_rows - 1);
+
+        // Try target row and ±2 adjacent rows (look-ahead window)
+        int best_row = target_row;
+        double best_cost = 1e18;
+        double best_x = lx[ci];
+
+        int r_lo = std::max(0, target_row - 2);
+        int r_hi = std::min(num_rows - 1, target_row + 2);
+
+        for (int r = r_lo; r <= r_hi; r++) {
+            double opt_x = std::max(rows[r].next_x, lx[ci]);
+            if (opt_x + cell_w > pd_.die_area.x1) {
+                opt_x = rows[r].next_x;
+            }
+            double cost = std::abs(ly[ci] - rows[r].y) * 2.0
+                        + std::abs(lx[ci] - opt_x);
+            if (opt_x + cell_w > pd_.die_area.x1)
+                cost += 1e6;
+            if (cost < best_cost) {
+                best_cost = cost;
+                best_row = r;
+                best_x = opt_x;
+            }
+        }
+
+        best_x = std::min(best_x, pd_.die_area.x1 - cell_w);
+        lx[ci] = best_x;
+        ly[ci] = rows[best_row].y;
+        pd_.cells[ci].position.x = best_x;
+        pd_.cells[ci].position.y = rows[best_row].y;
+        pd_.cells[ci].placed = true;
+        rows[best_row].next_x = best_x + cell_w;
+    }
+}
+
+// ── Multi-row legalization ───────────────────────────────────────────
+void AnalyticalPlacer::legalize_multi_row(std::vector<double>& lx, std::vector<double>& ly) {
+    if (multi_row_.empty()) return;
+
+    int num_rows = std::max(1, static_cast<int>(pd_.die_area.height() / pd_.row_height));
+
+    // Sort multi-row cells by area (largest first) for priority placement
+    auto sorted = multi_row_;
+    std::sort(sorted.begin(), sorted.end(), [&](const MultiRowCell& a, const MultiRowCell& b) {
+        return a.row_span > b.row_span;
+    });
+
+    for (auto& mr : sorted) {
+        int ci = mr.cell_idx;
+        if (ci < 0 || ci >= static_cast<int>(pd_.cells.size())) continue;
+        if (fixed_cells_.count(ci)) continue;
+
+        double cell_w = pd_.cells[ci].width;
+        int span = mr.row_span;
+
+        // Find best starting row that minimizes displacement
+        int target_row = std::clamp(
+            static_cast<int>((ly[ci] - pd_.die_area.y0) / pd_.row_height),
+            0, num_rows - span);
+
+        int best_row = target_row;
+        double best_cost = 1e18;
+
+        int max_start = std::max(0, num_rows - span);
+        for (int r = 0; r <= max_start; r++) {
+            double ry = pd_.die_area.y0 + r * pd_.row_height;
+            double cost = std::abs(ly[ci] - ry) + std::abs(lx[ci] - pd_.cells[ci].position.x) * 0.5;
+            if (cost < best_cost) {
+                best_cost = cost;
+                best_row = r;
+            }
+        }
+
+        double final_y = pd_.die_area.y0 + best_row * pd_.row_height;
+        double final_x = std::clamp(lx[ci], pd_.die_area.x0, pd_.die_area.x1 - cell_w);
+
+        lx[ci] = final_x;
+        ly[ci] = final_y;
+        pd_.cells[ci].position.x = final_x;
+        pd_.cells[ci].position.y = final_y;
+        pd_.cells[ci].height = mr.height;
+        pd_.cells[ci].placed = true;
+    }
+}
+
+// ── F) place_eplace: full ePlace-style global placement ──────────────
+PlaceResult AnalyticalPlacer::place_eplace() {
+    auto t0 = std::chrono::high_resolution_clock::now();
+    int n = static_cast<int>(pd_.cells.size());
+    PlaceResult r;
+
+    if (n == 0) {
+        r.message = "ePlace: no cells";
+        return r;
+    }
+
+    // Step 1: Place IO pads first (they become fixed)
+    if (!io_pads_.empty()) {
+        place_io_pads();
+    }
+
+    // Step 2: Initialize positions — center placement with small perturbation
+    NesterovState ns;
+    ns.x.resize(n); ns.y.resize(n);
+    ns.x_prev.resize(n); ns.y_prev.resize(n);
+    ns.step_size = 0.01;
+    ns.iteration = 0;
+
+    double cx_init = pd_.die_area.center().x;
+    double cy_init = pd_.die_area.center().y;
+    double spread_x = pd_.die_area.width() * 0.3;
+    double spread_y = pd_.die_area.height() * 0.3;
+
+    for (int i = 0; i < n; i++) {
+        if (fixed_cells_.count(i) && pd_.cells[i].placed) {
+            ns.x[i] = pd_.cells[i].position.x;
+            ns.y[i] = pd_.cells[i].position.y;
+        } else {
+            // Deterministic spread based on cell index
+            double fx = static_cast<double>(i % 17) / 17.0 - 0.5;
+            double fy = static_cast<double>((i / 17) % 13) / 13.0 - 0.5;
+            ns.x[i] = std::clamp(cx_init + fx * spread_x,
+                                 pd_.die_area.x0, pd_.die_area.x1 - pd_.cells[i].width);
+            ns.y[i] = std::clamp(cy_init + fy * spread_y,
+                                 pd_.die_area.y0, pd_.die_area.y1 - pd_.cells[i].height);
+        }
+        ns.x_prev[i] = ns.x[i];
+        ns.y_prev[i] = ns.y[i];
+        pd_.cells[i].position.x = ns.x[i];
+        pd_.cells[i].position.y = ns.y[i];
+        pd_.cells[i].placed = true;
+    }
+
+    // Also initialize internal x_/y_ for B2B model and other methods
+    x_ = ns.x;
+    y_ = ns.y;
+
+    // Step 3: Global placement loop (Nesterov iterations)
+    constexpr int MAX_ITERS = 200;
+    double prev_overflow = 1e18;
+
+    for (int iter = 0; iter < MAX_ITERS; iter++) {
+        // Sync positions
+        for (int i = 0; i < n; i++) {
+            pd_.cells[i].position.x = ns.x[i];
+            pd_.cells[i].position.y = ns.y[i];
+        }
+        x_ = ns.x;
+        y_ = ns.y;
+
+        // Compute gradients
+        auto wl_grad = compute_wl_gradient();
+        auto den_grad = compute_density_gradient();
+
+        // Nesterov step
+        nesterov_step(ns, wl_grad, den_grad);
+
+        // Every 10 iterations: check convergence
+        if (iter % 10 == 9) {
+            double overflow = den_grad.overflow;
+            double total_bins = static_cast<double>(density_cfg_.bin_count_x *
+                                                    density_cfg_.bin_count_y);
+            double overflow_ratio = overflow / std::max(total_bins, 1.0);
+
+            if (overflow_ratio < 0.10) break;  // < 10% overflow
+
+            // Adaptive density penalty
+            if (overflow >= prev_overflow) {
+                density_cfg_.smooth_penalty *= 1.1;
+            }
+            prev_overflow = overflow;
+        }
+    }
+
+    // Step 4: Sync final positions
+    for (int i = 0; i < n; i++) {
+        pd_.cells[i].position.x = ns.x[i];
+        pd_.cells[i].position.y = ns.y[i];
+    }
+    x_ = ns.x;
+    y_ = ns.y;
+
+    // Step 5: Look-ahead legalization
+    legalize_lookahead(x_, y_);
+
+    // Step 6: Multi-row legalization if needed
+    if (!multi_row_.empty()) {
+        legalize_multi_row(x_, y_);
+    }
+
+    // Step 7: Detailed placement — local adjacent-cell swaps
+    {
+        int num_rows = std::max(1, static_cast<int>(pd_.die_area.height() / pd_.row_height));
+        std::vector<std::vector<int>> row_cells(num_rows);
+        for (int i = 0; i < n; i++) {
+            if (fixed_cells_.count(i)) continue;
+            int row = std::clamp(
+                static_cast<int>((pd_.cells[i].position.y - pd_.die_area.y0) / pd_.row_height),
+                0, num_rows - 1);
+            row_cells[row].push_back(i);
+        }
+        for (auto& rcells : row_cells) {
+            if (rcells.size() < 2) continue;
+            std::sort(rcells.begin(), rcells.end(), [&](int a, int b) {
+                return pd_.cells[a].position.x < pd_.cells[b].position.x;
+            });
+            bool improved = true;
+            int passes = 0;
+            while (improved && passes < 3) {
+                improved = false; passes++;
+                for (size_t i = 0; i + 1 < rcells.size(); i++) {
+                    int a = rcells[i], b = rcells[i + 1];
+                    double old_hpwl = compute_hpwl();
+                    std::swap(pd_.cells[a].position.x, pd_.cells[b].position.x);
+                    if (pd_.cells[a].width != pd_.cells[b].width) {
+                        double lx_pos = std::min(pd_.cells[a].position.x,
+                                                 pd_.cells[b].position.x);
+                        pd_.cells[a].position.x = lx_pos;
+                        pd_.cells[b].position.x = lx_pos + pd_.cells[a].width;
+                    }
+                    if (compute_hpwl() < old_hpwl) {
+                        improved = true;
+                        x_[a] = pd_.cells[a].position.x;
+                        x_[b] = pd_.cells[b].position.x;
+                        std::swap(rcells[i], rcells[i + 1]);
+                    } else {
+                        std::swap(pd_.cells[a].position.x, pd_.cells[b].position.x);
+                        if (pd_.cells[a].width != pd_.cells[b].width) {
+                            double lx_pos = std::min(pd_.cells[a].position.x,
+                                                     pd_.cells[b].position.x);
+                            pd_.cells[a].position.x = lx_pos;
+                            pd_.cells[b].position.x = lx_pos + pd_.cells[a].width;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    r.hpwl = compute_hpwl();
+    r.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    r.iterations = ns.iteration;
+    r.legal = !pd_.has_overlaps();
+    r.message = "Placement ";
+    r.message += r.legal ? "legal" : "complete (minor overlaps)";
+    r.message += " (ePlace: Nesterov + density smoothing + lookahead legalization)";
+    return r;
+}
+
+// ── G) incremental_place: ECO placement ──────────────────────────────
+PlaceResult AnalyticalPlacer::incremental_place(const std::vector<int>& modified_cells) {
+    auto t0 = std::chrono::high_resolution_clock::now();
+    int n = static_cast<int>(pd_.cells.size());
+    PlaceResult r;
+
+    if (n == 0 || modified_cells.empty()) {
+        r.message = "incremental_place: nothing to do";
+        return r;
+    }
+
+    // Sync internal vectors
+    x_.resize(n); y_.resize(n);
+    anchor_x_.resize(n); anchor_y_.resize(n);
+    anchor_w_.resize(n);
+
+    std::unordered_set<int> mod_set(modified_cells.begin(), modified_cells.end());
+
+    // Fix all cells except modified ones
+    auto saved_fixed = fixed_cells_;
+    for (int i = 0; i < n; i++) {
+        x_[i] = pd_.cells[i].position.x;
+        y_[i] = pd_.cells[i].position.y;
+        if (!mod_set.count(i)) {
+            fixed_cells_.insert(i);
+        }
+    }
+
+    // Set anchors: for modified cells, anchor to neighbors' centroid
+    for (int ci : modified_cells) {
+        if (ci < 0 || ci >= n) continue;
+
+        // Find connected cells (neighbors via nets)
+        double sum_x = 0, sum_y = 0;
+        int count = 0;
+        for (auto& net : pd_.nets) {
+            bool has_ci = false;
+            for (int cid : net.cell_ids) {
+                if (cid == ci) { has_ci = true; break; }
+            }
+            if (!has_ci) continue;
+            for (int cid : net.cell_ids) {
+                if (cid != ci && cid >= 0 && cid < n) {
+                    sum_x += pd_.cells[cid].position.x;
+                    sum_y += pd_.cells[cid].position.y;
+                    count++;
+                }
+            }
+        }
+        if (count > 0) {
+            anchor_x_[ci] = sum_x / count;
+            anchor_y_[ci] = sum_y / count;
+        } else {
+            anchor_x_[ci] = pd_.die_area.center().x;
+            anchor_y_[ci] = pd_.die_area.center().y;
+        }
+        anchor_w_[ci] = 0.5;
+
+        // Initialize modified cell at centroid of neighbors
+        x_[ci] = anchor_x_[ci];
+        y_[ci] = anchor_y_[ci];
+    }
+
+    // Set fixed cell anchors
+    for (int i = 0; i < n; i++) {
+        if (!mod_set.count(i)) {
+            anchor_x_[i] = x_[i];
+            anchor_y_[i] = y_[i];
+            anchor_w_[i] = 100.0;  // very strong anchor for fixed cells
+        }
+    }
+
+    // Run CG solver (only modifieds move due to fixed_cells_)
+    constexpr int ECO_ITERS = 5;
+    for (int oi = 0; oi < ECO_ITERS; oi++) {
+        solve_quadratic_cg();
+        for (int ci : modified_cells) {
+            if (ci >= 0 && ci < n) {
+                anchor_x_[ci] = x_[ci];
+                anchor_y_[ci] = y_[ci];
+                anchor_w_[ci] *= 1.3;
+            }
+        }
+    }
+
+    // Legalize only modified cells (simple row snap)
+    int num_rows = std::max(1, static_cast<int>(pd_.die_area.height() / pd_.row_height));
+    for (int ci : modified_cells) {
+        if (ci < 0 || ci >= n) continue;
+        int best_row = std::clamp(
+            static_cast<int>((y_[ci] - pd_.die_area.y0) / pd_.row_height),
+            0, num_rows - 1);
+        double ry = pd_.die_area.y0 + best_row * pd_.row_height;
+        double rx = std::clamp(x_[ci], pd_.die_area.x0,
+                               pd_.die_area.x1 - pd_.cells[ci].width);
+        pd_.cells[ci].position.x = rx;
+        pd_.cells[ci].position.y = ry;
+        x_[ci] = rx;
+        y_[ci] = ry;
+    }
+
+    // Restore fixed cells
+    fixed_cells_ = saved_fixed;
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    r.hpwl = compute_hpwl();
+    r.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    r.iterations = ECO_ITERS;
+    r.legal = !pd_.has_overlaps();
+    r.message = "Incremental placement: " + std::to_string(modified_cells.size()) + " cells re-placed";
+    return r;
+}
+
 } // namespace sf

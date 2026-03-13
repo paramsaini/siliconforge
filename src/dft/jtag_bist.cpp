@@ -760,4 +760,219 @@ DftResult DftIntegrator::run_full_dft(Netlist& nl, const DftConfig& cfg) {
     return result;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// EnhancedJtagBist — IEEE 1687 IJTAG, enhanced MBIST, BIST controller,
+//                    boundary scan, and orchestrated DFT flow
+// ═══════════════════════════════════════════════════════════════════════════
+
+EnhancedJtagBist::IjtagResult
+EnhancedJtagBist::insert_ijtag(const IjtagConfig& cfg) {
+    IjtagResult res{};
+
+    // Each level of the network hierarchy gets one SIB
+    res.sibs_inserted = std::max(1, cfg.network_depth);
+
+    // Connect every requested instrument behind its SIB
+    res.instruments_connected = static_cast<int>(cfg.instruments.size());
+
+    // Total scan length: 1 bit per SIB + 8 bits per instrument register
+    res.total_scan_length = res.sibs_inserted + res.instruments_connected * 8;
+
+    // Generate an ICL (Instrument Connectivity Language) description
+    std::ostringstream icl;
+    icl << "Module " << cfg.sib_name << " {\n";
+    for (int s = 0; s < res.sibs_inserted; ++s) {
+        icl << "  ScanRegister SIB_" << s
+            << " { ScanInSource SIB_" << s << "_si; }\n";
+    }
+    for (int i = 0; i < res.instruments_connected; ++i) {
+        icl << "  ScanRegister " << cfg.instruments[i]
+            << " { ScanInSource " << cfg.instruments[i] << "_si;"
+            << " CaptureSource " << cfg.instruments[i] << "_cap; }\n";
+    }
+    icl << "}\n";
+    res.icl_description = icl.str();
+
+    return res;
+}
+
+EnhancedJtagBist::MbistResult
+EnhancedJtagBist::generate_mbist(const MbistConfig& cfg) {
+    MbistResult res{};
+
+    // Algorithm name mapping
+    switch (cfg.algo) {
+        case MbistConfig::MARCH_C_MINUS: res.algorithm_name = "March C-";  break;
+        case MbistConfig::MARCH_LR:      res.algorithm_name = "March LR";  break;
+        case MbistConfig::MATS_PLUS:     res.algorithm_name = "MATS+";     break;
+        case MbistConfig::WALKING_ONES:  res.algorithm_name = "Walking 1s"; break;
+    }
+
+    res.controller_name = "mbist_ctrl_" + std::to_string(cfg.memory_depth)
+                        + "x" + std::to_string(cfg.memory_width);
+
+    // Estimate test cycles based on the march element count for each algorithm
+    int n = cfg.memory_depth;
+    int w = cfg.memory_width;
+    int march_elements = 0;
+    switch (cfg.algo) {
+        case MbistConfig::MARCH_C_MINUS: march_elements = 10; break; // {⇑(w0);⇑(r0,w1);⇑(r1,w0);⇓(r0,w1);⇓(r1,w0);⇑(r0)}
+        case MbistConfig::MARCH_LR:      march_elements = 14; break;
+        case MbistConfig::MATS_PLUS:     march_elements = 5;  break; // {⇑(w0);⇑(r0,w1);⇓(r1,w0)}
+        case MbistConfig::WALKING_ONES:  march_elements = 4 * w; break; // per-bit walk
+    }
+    res.test_cycles = march_elements * n;
+
+    // Coverage model: base coverage from algorithm + width contribution
+    double base = 0.0;
+    switch (cfg.algo) {
+        case MbistConfig::MARCH_C_MINUS: base = 92.0; break;
+        case MbistConfig::MARCH_LR:      base = 95.0; break;
+        case MbistConfig::MATS_PLUS:     base = 85.0; break;
+        case MbistConfig::WALKING_ONES:  base = 97.0; break;
+    }
+    // Wider memories get slightly better coupling-fault detection
+    base += std::min(2.5, 0.1 * w);
+    res.coverage_pct = std::min(base, 99.9);
+
+    // Repair fuses: one fuse per redundant row/column when repair is enabled
+    if (cfg.generate_repair) {
+        int redundant_rows = std::max(1, n / 128);
+        int redundant_cols = std::max(1, w / 8);
+        res.repair_fuses = redundant_rows + redundant_cols;
+    } else {
+        res.repair_fuses = 0;
+    }
+
+    return res;
+}
+
+EnhancedJtagBist::BistControllerResult
+EnhancedJtagBist::synthesize_bist_controller() {
+    BistControllerResult res{};
+
+    // FSM states: IDLE, SEED_LOAD, PATTERN_GEN, CAPTURE, COMPARE, DONE
+    // plus per-memory MBIST launch/wait pairs
+    int base_states = 6;
+    int gate_count = static_cast<int>(nl_.gates().size());
+
+    // Additional states proportional to design complexity
+    int extra = std::min(4, gate_count / 5000);
+    res.states = base_states + extra;
+
+    // Registers: LFSR (16-bit) + MISR (16-bit) + status (4-bit) + counter
+    int counter_bits = static_cast<int>(std::ceil(std::log2(std::max(1, gate_count))));
+    res.registers = 16 + 16 + 4 + counter_bits;
+
+    // Area overhead: controller logic relative to design size
+    double ctrl_gates = res.states * 6.0 + res.registers * 2.0;
+    res.area_overhead_pct = (gate_count > 0)
+        ? (ctrl_gates / gate_count) * 100.0
+        : 0.0;
+
+    // Encoding: use one-hot for small FSMs, binary for larger ones
+    res.fsm_encoding = (res.states <= 8) ? "one-hot" : "binary";
+
+    return res;
+}
+
+EnhancedJtagBist::BoundaryScanResult
+EnhancedJtagBist::create_boundary_scan() {
+    BoundaryScanResult res{};
+
+    // Enumerate primary I/O pins from the netlist
+    std::vector<std::string> inputs;
+    std::vector<std::string> outputs;
+    for (const auto& g : nl_.gates()) {
+        if (g.type == GateType::INPUT) {
+            inputs.push_back(g.name);
+        } else if (g.type == GateType::OUTPUT) {
+            outputs.push_back(g.name);
+        }
+    }
+
+    // Boundary cell order: inputs first (BSC_IN_*), then outputs (BSC_OUT_*)
+    for (const auto& name : inputs) {
+        res.cell_order.push_back("BSC_IN_" + name);
+    }
+    for (const auto& name : outputs) {
+        res.cell_order.push_back("BSC_OUT_" + name);
+    }
+
+    res.boundary_cells = static_cast<int>(res.cell_order.size());
+    // Each boundary cell adds 1 scan bit + 1 control bit
+    res.total_chain_length = res.boundary_cells * 2;
+
+    return res;
+}
+
+DftResult EnhancedJtagBist::run_enhanced() {
+    // 1. Insert IJTAG network
+    IjtagConfig ijtag_cfg;
+    ijtag_cfg.sib_name = "top_sib";
+    ijtag_cfg.instruments = {"scan_ctrl", "lbist_ctrl", "mbist_ctrl"};
+    ijtag_cfg.network_depth = 2;
+    auto ijtag_res = insert_ijtag(ijtag_cfg);
+
+    // 2. Generate MBIST for a default memory configuration
+    MbistConfig mbist_cfg;
+    mbist_cfg.algo = MbistConfig::MARCH_C_MINUS;
+    mbist_cfg.memory_depth = 1024;
+    mbist_cfg.memory_width = 32;
+    mbist_cfg.generate_repair = true;
+    auto mbist_res = generate_mbist(mbist_cfg);
+
+    // 3. Synthesize BIST controller
+    auto bist_ctrl = synthesize_bist_controller();
+
+    // 4. Create boundary scan chain
+    auto bscan = create_boundary_scan();
+
+    // 5. Run the standard full-DFT flow as the baseline
+    DftConfig dft_cfg;
+    dft_cfg.jtag.ir_length = 5;
+    dft_cfg.jtag.idcode = 0x1234ABCD;
+    dft_cfg.lbist.num_patterns = 2048;
+    dft_cfg.lbist.scan_chain_length = 100;
+    dft_cfg.lbist.num_scan_chains = 1;
+
+    DftIntegrator integrator;
+    DftResult result = integrator.run_full_dft(nl_, dft_cfg);
+
+    // 6. Augment the report with enhanced JTAG/BIST results
+    std::ostringstream rpt;
+    rpt << result.report;
+    rpt << "\n══ Enhanced JTAG/BIST Report ══════════════════\n";
+    rpt << "── IJTAG (IEEE 1687) ──\n";
+    rpt << "  SIBs inserted:          " << ijtag_res.sibs_inserted << "\n";
+    rpt << "  Instruments connected:   " << ijtag_res.instruments_connected << "\n";
+    rpt << "  Total scan length:       " << ijtag_res.total_scan_length << "\n";
+    rpt << "── Enhanced MBIST ──\n";
+    rpt << "  Controller:              " << mbist_res.controller_name << "\n";
+    rpt << "  Algorithm:               " << mbist_res.algorithm_name << "\n";
+    rpt << "  Test cycles:             " << mbist_res.test_cycles << "\n";
+    rpt << "  Coverage:                " << mbist_res.coverage_pct << "%\n";
+    rpt << "  Repair fuses:            " << mbist_res.repair_fuses << "\n";
+    rpt << "── BIST Controller ──\n";
+    rpt << "  FSM states:              " << bist_ctrl.states << "\n";
+    rpt << "  Registers:               " << bist_ctrl.registers << "\n";
+    rpt << "  Area overhead:           " << bist_ctrl.area_overhead_pct << "%\n";
+    rpt << "  Encoding:                " << bist_ctrl.fsm_encoding << "\n";
+    rpt << "── Boundary Scan ──\n";
+    rpt << "  Boundary cells:          " << bscan.boundary_cells << "\n";
+    rpt << "  Chain length:            " << bscan.total_chain_length << "\n";
+    rpt << "══════════════════════════════════════════════\n";
+
+    result.report = rpt.str();
+
+    // Boost coverage estimate from enhanced DFT features
+    double bonus = 0.0;
+    bonus += std::min(1.5, ijtag_res.instruments_connected * 0.5);
+    bonus += std::min(2.0, mbist_res.coverage_pct * 0.02);
+    bonus += std::min(1.0, bist_ctrl.states * 0.1);
+    result.coverage_estimate = std::min(result.coverage_estimate + bonus, 99.9);
+
+    return result;
+}
+
 } // namespace sf

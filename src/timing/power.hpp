@@ -57,8 +57,71 @@ public:
     // UPF power intent
     void set_power_domain(const std::string& domain, double voltage, 
                           const std::vector<GateId>& gates) {
+        power_domains_[domain] = {domain, voltage, gates};
         for (auto gid : gates) voltage_domains_[gid] = voltage;
     }
+
+    // ── Enhanced power analysis features ─────────────────────────────
+
+    // SAIF/VCD activity integration (bulk)
+    struct ActivityData {
+        std::unordered_map<std::string, double> toggle_rates;  // signal -> toggles/cycle
+        std::unordered_map<std::string, double> static_probs;  // signal -> P(=1)
+        double clock_freq_hz = 1e9;
+    };
+    void set_activity(const ActivityData& act);
+
+    // RTL power estimation (early stage)
+    struct RtlPowerResult {
+        double total_mw;
+        double switching_mw;
+        double internal_mw;
+        double leakage_mw;
+        std::string message;
+    };
+    RtlPowerResult estimate_rtl_power();
+
+    // Clock tree power
+    struct ClockPowerResult {
+        double clock_network_mw;
+        double clock_fraction_pct;  // clock as % of total
+        int clock_buffers;
+        double buffer_power_mw;
+    };
+    ClockPowerResult analyze_clock_power();
+
+    // Memory power models
+    struct MemoryPower {
+        std::string instance;
+        double read_power_mw;
+        double write_power_mw;
+        double leakage_mw;
+        double total_mw;
+    };
+    std::vector<MemoryPower> analyze_memory_power();
+
+    // Per-instance power reporting
+    struct InstancePower {
+        int gate_id;
+        std::string name;
+        std::string cell_type;
+        double switching_mw;
+        double internal_mw;
+        double leakage_mw;
+        double total_mw;
+    };
+    std::vector<InstancePower> report_instance_power();
+
+    // Power state (UPF-driven)
+    struct PowerState {
+        std::string state_name;
+        std::vector<std::string> active_domains;
+        double total_power_mw;
+    };
+    std::vector<PowerState> analyze_power_states();
+
+    // Enhanced power run
+    PowerResult run_enhanced();
 
 private:
     const Netlist& nl_;
@@ -66,6 +129,23 @@ private:
     std::unordered_map<NetId, double> activities_;
     std::unordered_map<GateId, double> voltage_domains_;
     std::unordered_map<NetId, int> topo_levels_; // for glitch estimation
+
+    // Power domain tracking
+    struct DomainInfo {
+        std::string name;
+        double voltage;
+        std::vector<GateId> gates;
+    };
+    std::unordered_map<std::string, DomainInfo> power_domains_;
+
+    // Activity data (enhanced)
+    ActivityData activity_data_;
+    bool has_activity_data_ = false;
+
+    // Cached analysis parameters
+    double last_freq_mhz_ = 0;
+    double last_vdd_ = 1.8;
+    double last_default_activity_ = 0.1;
 
     double cell_leakage(GateId gid) const;
     double cell_dynamic(GateId gid, double freq, double vdd, double activity) const;

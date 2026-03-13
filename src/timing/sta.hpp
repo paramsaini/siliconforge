@@ -248,6 +248,73 @@ public:
     // Run STA for a specific corner derate (used by MCMM)
     StaResult analyze_corner(double clock_period, int num_paths, const CornerDerate& d);
 
+    // ── Path-Based Analysis (PBA) ────────────────────────────────────────
+    // Recomputes delays with exact per-path slew propagation rather than
+    // shared graph-based values, typically recovering ~10% pessimism.
+    struct PbaResult {
+        struct PathDetail {
+            std::vector<int> gates;           // gate sequence
+            std::vector<double> cell_delays;  // per-gate delay
+            std::vector<double> wire_delays;  // per-net delay
+            std::vector<double> arrivals;     // cumulative arrival
+            double total_delay;
+            double slack;
+            bool is_critical;
+        };
+        std::vector<PathDetail> paths;
+        double pba_wns;
+        double pba_tns;
+        int paths_improved;   // paths that improved vs graph-based
+    };
+    PbaResult run_path_based(int num_paths = 100);
+
+    // ── SI-Aware Delay (Crosstalk) ───────────────────────────────────────
+    struct SiDelay {
+        int victim_net;
+        std::vector<int> aggressors;
+        double nominal_delay;
+        double si_delta;          // additional delay from crosstalk
+        double total_delay;
+    };
+    std::vector<SiDelay> compute_si_delays();
+    void enable_si_analysis(bool enable) { si_enabled_ = enable; }
+
+    // ── RC Corner Support ────────────────────────────────────────────────
+    struct RcCorner {
+        std::string name;        // e.g., "Cmax", "Cmin", "RCbest", "RCworst"
+        double cap_factor;       // multiply wire cap by this
+        double res_factor;       // multiply wire res by this
+    };
+    void add_rc_corner(const RcCorner& corner);
+    void set_active_corner(const std::string& name);
+
+    // ── External Delay Annotation ────────────────────────────────────────
+    struct ExternalDelay {
+        std::string port_name;
+        double input_delay = 0;    // delay at input port
+        double output_delay = 0;   // required time at output port
+        std::string clock_name;    // relative to this clock
+    };
+    void set_external_delays(const std::vector<ExternalDelay>& delays);
+
+    // ── Incremental STA ──────────────────────────────────────────────────
+    struct IncrStaResult {
+        int cones_updated;
+        double wns;
+        double tns;
+        double time_ms;
+    };
+    IncrStaResult run_incremental(const std::vector<int>& changed_gates);
+
+    // ── Bottleneck Analysis ──────────────────────────────────────────────
+    struct Bottleneck {
+        int gate_id;
+        std::string gate_name;
+        int num_critical_paths_through;  // how many critical paths pass through
+        double total_slack_impact;       // if improved, total slack improvement
+    };
+    std::vector<Bottleneck> analyze_bottlenecks(int top_n = 20);
+
 private:
     const Netlist& nl_;
     const LibertyLibrary* lib_;
@@ -283,6 +350,19 @@ private:
     // SDC constraints
     const SdcConstraints* sdc_ = nullptr;
 
+    // SI-aware analysis
+    bool si_enabled_ = false;
+
+    // RC corner support
+    std::vector<RcCorner> rc_corners_;
+    std::string active_corner_;
+
+    // External delay annotation
+    std::vector<ExternalDelay> external_delays_;
+
+    // Last clock period cached for incremental STA
+    double last_clock_period_ = 0;
+
     // Core STA steps
     void build_timing_graph();
     void compute_gate_depths();     // compute logic depth for AOCV
@@ -308,6 +388,17 @@ private:
     void pba_reanalyze(std::vector<TimingPath>& paths, double clock_period);
     double compute_path_pocv_sigma(const TimingPath& path) const;
     double compute_crosstalk_delta(NetId net) const;
+
+    // PBA helpers
+    PbaResult::PathDetail trace_path(int endpoint, const std::vector<double>& arrival);
+    double compute_path_delay_exact(const std::vector<int>& gates);
+
+    // SI helpers
+    double compute_crosstalk_delay(int victim_net, const std::vector<int>& aggressors);
+    std::vector<int> find_aggressors(int net_idx);
+
+    // Incremental helpers
+    std::vector<int> find_affected_cone(const std::vector<int>& changed);
 };
 
 // ── Multi-Clock Domain STA ───────────────────────────────────────────

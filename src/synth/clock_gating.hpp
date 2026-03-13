@@ -7,6 +7,8 @@
 #include "core/netlist.hpp"
 #include <string>
 #include <vector>
+#include <unordered_map>
+#include <cmath>
 
 namespace sf {
 
@@ -40,10 +42,78 @@ public:
 
     ClockGatingResult insert();
 
+    // ── Multi-level clock gating ────────────────────────────────────────────
+    struct ClockTree {
+        NetId root_clock;
+        struct GatingLevel {
+            int level;              // 0 = top, 1 = sub-group, etc.
+            NetId enable;
+            NetId gated_clock;
+            std::vector<GateId> ffs;
+            std::vector<int> children; // indices of sub-levels
+        };
+        std::vector<GatingLevel> levels;
+    };
+
+    // ── Activity-based analysis ─────────────────────────────────────────────
+    struct ActivityProfile {
+        std::unordered_map<NetId, double> signal_activity; // switching activity per net
+        double default_activity = 0.1;
+    };
+
+    // ── Configuration ───────────────────────────────────────────────────────
+    struct ClockGatingConfig {
+        int min_group = 1;
+        double activity_threshold = 0.3; // don't gate if activity > 30%
+        bool enable_multi_level = true;
+        bool enable_fine_grain = true;   // per-register gating
+        int max_levels = 3;
+        double target_power_reduction = 0.0; // 0 = maximize
+    };
+
+    void set_config(const ClockGatingConfig& cfg) { cfg_ = cfg; }
+    void set_activity(const ActivityProfile& ap) { activity_profile_ = ap; }
+
+    // Enhanced insertion with multi-level support
+    ClockGatingResult insert_hierarchical();
+
+    // ── Fine-grain: per-register enable analysis ────────────────────────────
+    struct RegisterEnableInfo {
+        GateId ff_id;
+        NetId data_net;
+        NetId enable_condition; // -1 if always active
+        double estimated_activity;
+        bool worth_gating;      // activity below threshold
+    };
+    std::vector<RegisterEnableInfo> analyze_register_enables();
+
+    // ── Power estimation for gating decisions ───────────────────────────────
+    struct PowerEstimate {
+        double ungated_power;    // mW
+        double gated_power;      // mW
+        double icg_overhead;     // mW (ICG cell leakage + switching)
+        double net_savings;      // mW
+        bool profitable;         // net_savings > 0
+    };
+    PowerEstimate estimate_gating_power(const std::vector<GateId>& ffs, double activity);
+
+    // ── ICG cell selection from library ─────────────────────────────────────
+    struct IcgCellType {
+        std::string name;
+        double area;
+        double leakage_power;
+        double clk_to_q_delay;
+        int max_fanout;
+    };
+    static std::vector<IcgCellType> get_icg_library();
+    IcgCellType select_icg_cell(int fanout);
+
 private:
     Netlist& nl_;
     int min_group_ = 1;
     double activity_ = 0.1; // 10% default switching
+    ClockGatingConfig cfg_;
+    ActivityProfile activity_profile_;
 
     // Find groups of FFs sharing the same enable condition
     struct FfGroup {
@@ -52,6 +122,14 @@ private:
         std::vector<GateId> ffs;
     };
     std::vector<FfGroup> find_groups();
+
+    // Multi-level tree building
+    ClockTree build_clock_tree(NetId root_clk, const std::vector<GateId>& ffs);
+    void partition_ffs(const std::vector<GateId>& ffs,
+                       std::vector<std::vector<GateId>>& groups);
+
+    // Improved enable condition extraction
+    NetId extract_enable_deep(GateId ff_id);
 };
 
 // ── Phase C: Clock Gating Verification ──────────────────────────────────────

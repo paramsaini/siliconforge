@@ -496,4 +496,184 @@ double ThermalAnalyzer::leakage_scaling(double temp_c, double ref_temp) const {
     return std::exp((temp_c - ref_temp) / t_scale);
 }
 
+// ── Enhanced: Thermal-Driven Placement ──────────────────────────────
+
+ThermalPlacementResult ThermalAnalyzer::thermal_driven_placement() {
+    ThermalPlacementResult result{};
+
+    auto baseline = solve_steady_state();
+    result.peak_temp_before = baseline.max_temperature;
+
+    if (!pd_ || pd_->cells.empty()) {
+        result.peak_temp_after = result.peak_temp_before;
+        return result;
+    }
+
+    int nx = cfg_.grid_nx, ny = cfg_.grid_ny;
+    double dx_um = cfg_.die_width_um / nx;
+    double dy_um = cfg_.die_height_um / ny;
+
+    // Find hotspot and coolspot grid cells
+    double avg_temp = baseline.avg_temperature;
+    std::vector<int> hot_cells, cool_cells;
+    for (int i = 0; i < nx * ny; ++i) {
+        if (grid_[i].temperature > avg_temp + 0.5 * baseline.thermal_gradient)
+            hot_cells.push_back(i);
+        else if (grid_[i].temperature < avg_temp - 0.25 * baseline.thermal_gradient)
+            cool_cells.push_back(i);
+    }
+
+    // Move power from hot to cool regions
+    int swaps = std::min(hot_cells.size(), cool_cells.size());
+    for (int s = 0; s < swaps; ++s) {
+        double hot_power = grid_[hot_cells[s]].power_density;
+        double cool_power = grid_[cool_cells[s]].power_density;
+        double transfer = (hot_power - cool_power) * 0.3;
+        grid_[hot_cells[s]].power_density -= transfer;
+        grid_[cool_cells[s]].power_density += transfer;
+        result.cells_moved++;
+    }
+
+    auto after = solve_steady_state();
+    result.peak_temp_after = after.max_temperature;
+    result.improvement_pct = result.peak_temp_before > 0 ?
+        (result.peak_temp_before - result.peak_temp_after) / result.peak_temp_before * 100.0 : 0;
+    return result;
+}
+
+// ── Enhanced: Set Package Thermal Model ──────────────────────────────
+
+void ThermalAnalyzer::set_package_thermal(const EnhancedPackageThermalModel& pkg) {
+    enhanced_pkg_ = pkg;
+    cfg_.package.t_ambient = pkg.ambient_temp_c;
+    cfg_.package.r_jc = pkg.theta_jc;
+    cfg_.package.r_ca = pkg.theta_ca;
+}
+
+// ── Enhanced: Transient Analysis ─────────────────────────────────────
+
+TransientThermalResult ThermalAnalyzer::analyze_transient(double total_time_s, int steps) {
+    TransientThermalResult result;
+    int nx = cfg_.grid_nx, ny = cfg_.grid_ny;
+    int n = nx * ny;
+
+    double r_th = cfg_.package.total_resistance();
+    double die_area_m2 = (cfg_.die_width_um * 1e-6) * (cfg_.die_height_um * 1e-6);
+    double total_power = 0;
+    for (auto& cell : grid_)
+        total_power += cell.power_density * die_area_m2 / n;
+
+    // Thermal capacitance: C_th = ρ × cp × volume
+    double volume = die_area_m2 * cfg_.die_thickness_um * 1e-6;
+    double c_th = cfg_.material.density * cfg_.material.specific_heat * volume;
+
+    // Time constant: τ = R_th × C_th
+    result.thermal_time_constant_ms = r_th * c_th * 1000.0;
+
+    double dt = total_time_s / steps;
+    double temp = cfg_.package.t_ambient;
+    double t_amb = cfg_.package.t_ambient;
+
+    // Euler integration: C×dT/dt = P - (T-Tamb)/R_th
+    for (int s = 0; s <= steps; ++s) {
+        double t = s * dt;
+        result.time_points.push_back(t);
+        result.peak_temps.push_back(temp);
+
+        if (s < steps) {
+            double heat_in = total_power;
+            double heat_out = (r_th > 0) ? (temp - t_amb) / r_th : 0;
+            double dT = (c_th > 0) ? dt * (heat_in - heat_out) / c_th : 0;
+            temp += dT;
+        }
+    }
+
+    result.steady_state_temp = t_amb + total_power * r_th;
+    return result;
+}
+
+// ── Enhanced: Thermal Via Insertion ───────────────────────────────────
+
+ThermalViaResult ThermalAnalyzer::insert_thermal_vias(double hotspot_threshold_c) {
+    ThermalViaResult result{};
+    auto hotspots = find_hotspots(hotspot_threshold_c);
+
+    double dx_um = cfg_.die_width_um / cfg_.grid_nx;
+    double dy_um = cfg_.die_height_um / cfg_.grid_ny;
+    double via_conductivity_boost = 0.15;
+
+    for (auto& hs : hotspots) {
+        int idx = hs.grid_x * cfg_.grid_ny + hs.grid_y;
+        // Insert thermal via: boost local conductivity
+        grid_[idx].conductivity += copper_material().conductivity * via_conductivity_boost;
+        result.vias_inserted++;
+        result.via_locations.push_back({hs.x_um, hs.y_um});
+    }
+
+    if (!hotspots.empty()) {
+        auto after = solve_steady_state();
+        double before_max = hotspots[0].temperature;
+        result.temp_reduction_c = before_max - after.max_temperature;
+    }
+    return result;
+}
+
+// ── Enhanced: Power-Thermal Iteration ────────────────────────────────
+
+PowerThermalResult ThermalAnalyzer::iterate_power_thermal(int max_iter) {
+    PowerThermalResult result{};
+    double tol = 0.1;  // °C convergence
+
+    double die_area_m2 = (cfg_.die_width_um * 1e-6) * (cfg_.die_height_um * 1e-6);
+    int n = cfg_.grid_nx * cfg_.grid_ny;
+    double cell_area = die_area_m2 / n;
+
+    double prev_temp = 0;
+    for (int iter = 0; iter < max_iter; ++iter) {
+        // 1. Compute thermal
+        auto thermal = solve_steady_state();
+        result.converged_temp = thermal.max_temperature;
+
+        // 2. Compute total power
+        double total_power = 0;
+        for (auto& cell : grid_)
+            total_power += cell.power_density * cell_area;
+        result.converged_power = total_power;
+
+        // 3. Check convergence
+        result.iterations = iter + 1;
+        if (iter > 0 && std::abs(result.converged_temp - prev_temp) < tol) {
+            result.converged = true;
+            break;
+        }
+        prev_temp = result.converged_temp;
+
+        // 4. Adjust leakage power based on temperature (temp-dependent)
+        for (auto& cell : grid_) {
+            double scale = leakage_scaling(cell.temperature, 25.0);
+            // Leakage ~ 30% of total power, scale that portion
+            double leakage_fraction = 0.3;
+            cell.power_density *= (1.0 - leakage_fraction + leakage_fraction * scale);
+        }
+    }
+    return result;
+}
+
+// ── Enhanced: Full Enhanced Thermal Run ───────────────────────────────
+
+ThermalResult ThermalAnalyzer::run_enhanced() {
+    auto result = solve_steady_state();
+
+    auto transient = analyze_transient(1.0, 50);
+    auto vias = insert_thermal_vias(result.avg_temperature + result.thermal_gradient * 0.8);
+    auto pt = iterate_power_thermal(5);
+
+    // Re-solve after all enhancements
+    auto final_result = solve_steady_state();
+    final_result.num_hotspots = (int)find_hotspots(
+        final_result.avg_temperature + 0.5 * final_result.thermal_gradient).size();
+
+    return final_result;
+}
+
 } // namespace sf

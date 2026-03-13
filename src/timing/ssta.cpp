@@ -522,4 +522,474 @@ SensitivityResult SstaEngine::sensitivity_analysis() {
     return sr;
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// Enhanced SSTA — canonical-delay propagation, PCA, yield, stat slacks
+// ══════════════════════════════════════════════════════════════════════
+
+// ── Standard normal CDF Φ(x) — Abramowitz & Stegun approximation ────
+
+double SstaEngine::phi_cdf(double x) {
+    // Handle extreme values
+    if (x < -8.0) return 0.0;
+    if (x > 8.0) return 1.0;
+    // Use the error function: Φ(x) = 0.5 × (1 + erf(x / √2))
+    return 0.5 * (1.0 + std::erf(x / std::sqrt(2.0)));
+}
+
+// ── Standard normal PDF φ(x) ─────────────────────────────────────────
+
+double SstaEngine::phi_pdf(double x) {
+    static const double inv_sqrt_2pi = 1.0 / std::sqrt(2.0 * M_PI);
+    return inv_sqrt_2pi * std::exp(-0.5 * x * x);
+}
+
+// ── Clark's approximation: MAX of two canonical delays ───────────────
+// max(a,b) ≈ a×Φ(θ) + b×Φ(−θ) + σ_ab×φ(θ)
+// where θ = (μa − μb) / σ_ab,  σ_ab = √(σa² + σb² − 2ρσaσb)
+
+CanonicalDelay SstaEngine::canonical_max(const CanonicalDelay& a, const CanonicalDelay& b) {
+    // Compute total variance for each
+    double var_a = a.random_sigma * a.random_sigma;
+    for (double s : a.sensitivities) var_a += s * s;
+
+    double var_b = b.random_sigma * b.random_sigma;
+    for (double s : b.sensitivities) var_b += s * s;
+
+    double sigma_a = std::sqrt(std::max(var_a, 1e-30));
+    double sigma_b = std::sqrt(std::max(var_b, 1e-30));
+
+    // Covariance from shared systematic sources
+    size_t n = std::min(a.sensitivities.size(), b.sensitivities.size());
+    double cov = 0.0;
+    for (size_t i = 0; i < n; ++i)
+        cov += a.sensitivities[i] * b.sensitivities[i];
+
+    double var_diff = var_a + var_b - 2.0 * cov;
+    double sigma_ab = std::sqrt(std::max(var_diff, 1e-30));
+
+    double mu_a = a.nominal;
+    double mu_b = b.nominal;
+    double theta = (sigma_ab > 1e-15) ? (mu_a - mu_b) / sigma_ab : 0.0;
+
+    double phi_t = phi_cdf(theta);
+    double pdf_t = phi_pdf(theta);
+
+    CanonicalDelay result;
+    result.nominal = mu_a * phi_t + mu_b * (1.0 - phi_t) + sigma_ab * pdf_t;
+
+    // Propagate sensitivities: s_max_i = s_a_i × Φ(θ) + s_b_i × Φ(−θ)
+    size_t max_sz = std::max(a.sensitivities.size(), b.sensitivities.size());
+    result.sensitivities.resize(max_sz, 0.0);
+    for (size_t i = 0; i < max_sz; ++i) {
+        double sa = (i < a.sensitivities.size()) ? a.sensitivities[i] : 0.0;
+        double sb = (i < b.sensitivities.size()) ? b.sensitivities[i] : 0.0;
+        result.sensitivities[i] = sa * phi_t + sb * (1.0 - phi_t);
+    }
+
+    // Random sigma propagation
+    double rand_var = a.random_sigma * a.random_sigma * phi_t +
+                      b.random_sigma * b.random_sigma * (1.0 - phi_t) +
+                      (sigma_a * sigma_b - cov) * pdf_t / (sigma_ab > 1e-15 ? sigma_ab : 1.0) *
+                      (a.random_sigma * b.random_sigma > 0 ? 1.0 : 0.0);
+    rand_var = std::max(rand_var, 0.0);
+    // Correction term to account for variance loss in max approximation
+    double mu_max = result.nominal;
+    double var_max = var_a * phi_t + var_b * (1.0 - phi_t) +
+                     (mu_a * mu_a + var_a) * phi_t + (mu_b * mu_b + var_b) * (1.0 - phi_t) +
+                     (mu_a + mu_b) * sigma_ab * pdf_t - mu_max * mu_max;
+    var_max = std::max(var_max, 0.0);
+
+    // Systematic variance of result
+    double sys_var = 0.0;
+    for (double s : result.sensitivities) sys_var += s * s;
+    result.random_sigma = std::sqrt(std::max(var_max - sys_var, 0.0));
+
+    return result;
+}
+
+// ── Set user-supplied spatial correlation ─────────────────────────────
+
+void SstaEngine::set_spatial_correlation(const SpatialCorrelation& sc) {
+    spatial_corr_ = sc;
+    has_spatial_corr_ = true;
+
+    // Also populate gate_positions_ from user data
+    for (size_t i = 0; i < sc.gate_positions.size(); ++i) {
+        gate_positions_[static_cast<GateId>(i)] = {
+            sc.gate_positions[i].first, sc.gate_positions[i].second};
+    }
+    config_.spatial_correlation_length_um = sc.correlation_length;
+}
+
+// ── Build correlation matrix ─────────────────────────────────────────
+
+void SstaEngine::build_correlation_matrix(const std::vector<GateId>& gates,
+                                           std::vector<std::vector<double>>& corr) const {
+    size_t n = gates.size();
+    corr.assign(n, std::vector<double>(n, 0.0));
+    for (size_t i = 0; i < n; ++i) {
+        corr[i][i] = 1.0;
+        for (size_t j = i + 1; j < n; ++j) {
+            double c = spatial_correlation(gates[i], gates[j]);
+            corr[i][j] = c;
+            corr[j][i] = c;
+        }
+    }
+}
+
+// ── PCA-based variation reduction ────────────────────────────────────
+// Eigendecompose the spatial correlation matrix using Jacobi iteration,
+// keep the top-k principal components capturing >95% variance.
+
+PcaResult SstaEngine::reduce_with_pca(int max_components) {
+    auto topo = nl_.topo_order();
+    std::vector<GateId> comb_gates;
+    for (GateId gid : topo) {
+        auto& g = nl_.gate(gid);
+        if (g.type != GateType::INPUT && g.type != GateType::OUTPUT)
+            comb_gates.push_back(gid);
+    }
+
+    if (config_.enable_spatial_correlation)
+        assign_gate_positions();
+
+    size_t n = comb_gates.size();
+    PcaResult result;
+    result.original_sources = static_cast<int>(n);
+
+    if (n == 0) {
+        result.principal_components = 0;
+        result.variance_captured = 0.0;
+        has_pca_ = true;
+        pca_result_ = result;
+        return result;
+    }
+
+    // Cap matrix size for performance (Jacobi is O(n³))
+    size_t cap = std::min(n, size_t(64));
+    std::vector<GateId> subset(comb_gates.begin(), comb_gates.begin() + cap);
+
+    std::vector<std::vector<double>> corr;
+    build_correlation_matrix(subset, corr);
+
+    size_t m = cap;
+    // Jacobi eigenvalue algorithm on the symmetric correlation matrix
+    std::vector<std::vector<double>> V(m, std::vector<double>(m, 0.0));
+    for (size_t i = 0; i < m; ++i) V[i][i] = 1.0;
+
+    auto A = corr; // working copy
+    for (int sweep = 0; sweep < 100; ++sweep) {
+        double off_diag = 0.0;
+        for (size_t i = 0; i < m; ++i)
+            for (size_t j = i + 1; j < m; ++j)
+                off_diag += A[i][j] * A[i][j];
+        if (off_diag < 1e-12) break;
+
+        for (size_t p = 0; p < m; ++p) {
+            for (size_t q = p + 1; q < m; ++q) {
+                if (std::abs(A[p][q]) < 1e-15) continue;
+                double tau = (A[q][q] - A[p][p]) / (2.0 * A[p][q]);
+                double t = (tau >= 0 ? 1.0 : -1.0) / (std::abs(tau) + std::sqrt(1.0 + tau * tau));
+                double c = 1.0 / std::sqrt(1.0 + t * t);
+                double s = t * c;
+
+                // Rotate A
+                double app = A[p][p], aqq = A[q][q], apq = A[p][q];
+                A[p][p] = c * c * app - 2.0 * s * c * apq + s * s * aqq;
+                A[q][q] = s * s * app + 2.0 * s * c * apq + c * c * aqq;
+                A[p][q] = 0.0;
+                A[q][p] = 0.0;
+                for (size_t r = 0; r < m; ++r) {
+                    if (r == p || r == q) continue;
+                    double arp = A[r][p], arq = A[r][q];
+                    A[r][p] = c * arp - s * arq;
+                    A[p][r] = A[r][p];
+                    A[r][q] = s * arp + c * arq;
+                    A[q][r] = A[r][q];
+                }
+                for (size_t r = 0; r < m; ++r) {
+                    double vrp = V[r][p], vrq = V[r][q];
+                    V[r][p] = c * vrp - s * vrq;
+                    V[r][q] = s * vrp + c * vrq;
+                }
+            }
+        }
+    }
+
+    // Collect eigenvalues and sort descending
+    std::vector<std::pair<double, int>> eigen_pairs;
+    double total_variance = 0.0;
+    for (size_t i = 0; i < m; ++i) {
+        double ev = std::max(A[i][i], 0.0);
+        eigen_pairs.push_back({ev, static_cast<int>(i)});
+        total_variance += ev;
+    }
+    std::sort(eigen_pairs.begin(), eigen_pairs.end(),
+              [](auto& a, auto& b) { return a.first > b.first; });
+
+    // Keep top-k capturing >95% variance
+    int k = 0;
+    double captured = 0.0;
+    double threshold = 0.95 * total_variance;
+    for (auto& [ev, idx] : eigen_pairs) {
+        if (k >= max_components) break;
+        captured += ev;
+        k++;
+        if (captured >= threshold) break;
+    }
+    k = std::max(k, 1);
+
+    result.principal_components = k;
+    result.variance_captured = (total_variance > 0) ? captured / total_variance : 0.0;
+
+    // Build transform matrix: k × m (each row is a principal component)
+    result.transform.resize(k, std::vector<double>(m, 0.0));
+    for (int i = 0; i < k; ++i) {
+        int col = eigen_pairs[i].second;
+        double scale = std::sqrt(std::max(eigen_pairs[i].first, 0.0));
+        for (size_t r = 0; r < m; ++r)
+            result.transform[i][r] = V[r][col] * scale;
+    }
+
+    has_pca_ = true;
+    pca_result_ = result;
+    return result;
+}
+
+// ── Compute statistical slacks ───────────────────────────────────────
+// Propagate canonical delays through the circuit, compute slack
+// distribution at each endpoint.
+
+std::vector<StatSlack> SstaEngine::compute_statistical_slacks() {
+    auto topo = nl_.topo_order();
+    if (topo.empty()) return {};
+
+    // Collect combinational gates
+    std::vector<GateId> comb_gates;
+    for (GateId gid : topo) {
+        auto& g = nl_.gate(gid);
+        if (g.type != GateType::INPUT && g.type != GateType::OUTPUT)
+            comb_gates.push_back(gid);
+    }
+
+    if (config_.enable_spatial_correlation)
+        assign_gate_positions();
+
+    // Number of systematic variation sources = number of comb gates (simplified)
+    size_t num_sources = comb_gates.size();
+
+    // Build canonical delay for each gate
+    std::unordered_map<GateId, int> gate_source_idx;
+    for (size_t i = 0; i < comb_gates.size(); ++i)
+        gate_source_idx[comb_gates[i]] = static_cast<int>(i);
+
+    // Propagate canonical arrival times
+    std::unordered_map<NetId, CanonicalDelay> arrival;
+
+    // Initialize: primary inputs and DFF outputs arrive at time 0
+    CanonicalDelay zero_delay;
+    zero_delay.nominal = 0.0;
+    zero_delay.sensitivities.resize(num_sources, 0.0);
+    zero_delay.random_sigma = 0.0;
+
+    for (auto pi : nl_.primary_inputs())
+        arrival[pi] = zero_delay;
+    for (auto fid : nl_.flip_flops()) {
+        auto& ff = nl_.gate(fid);
+        if (ff.output >= 0) arrival[ff.output] = zero_delay;
+    }
+
+    // Forward propagation
+    for (GateId gid : topo) {
+        const auto& g = nl_.gate(gid);
+        if (g.type == GateType::INPUT || g.type == GateType::DFF) continue;
+        if (g.output < 0) continue;
+
+        // Build canonical delay for this gate
+        double nom = nominal_gate_delay(gid);
+        CanonicalDelay gate_cd;
+        gate_cd.nominal = nom;
+        gate_cd.sensitivities.resize(num_sources, 0.0);
+        auto it_src = gate_source_idx.find(gid);
+        if (it_src != gate_source_idx.end()) {
+            // Sensitivity to its own variation source
+            double local_sigma = config_.local_variation_pct / 100.0;
+            gate_cd.sensitivities[it_src->second] = nom * local_sigma;
+        }
+        gate_cd.random_sigma = nom * (config_.global_variation_pct / 100.0) * 0.3;
+
+        // Find max arrival among inputs using Clark's approximation
+        CanonicalDelay max_arr = zero_delay;
+        bool first = true;
+        for (NetId in_net : g.inputs) {
+            auto ait = arrival.find(in_net);
+            if (ait == arrival.end()) continue;
+            if (first) {
+                max_arr = ait->second;
+                first = false;
+            } else {
+                max_arr = canonical_max(max_arr, ait->second);
+            }
+        }
+
+        // arrival at output = max_input_arrival + gate_delay
+        CanonicalDelay out_arr;
+        out_arr.nominal = max_arr.nominal + gate_cd.nominal;
+        size_t sz = std::max(max_arr.sensitivities.size(), gate_cd.sensitivities.size());
+        out_arr.sensitivities.resize(sz, 0.0);
+        for (size_t i = 0; i < sz; ++i) {
+            double sa = (i < max_arr.sensitivities.size()) ? max_arr.sensitivities[i] : 0.0;
+            double sg = (i < gate_cd.sensitivities.size()) ? gate_cd.sensitivities[i] : 0.0;
+            out_arr.sensitivities[i] = sa + sg;
+        }
+        out_arr.random_sigma = std::sqrt(max_arr.random_sigma * max_arr.random_sigma +
+                                          gate_cd.random_sigma * gate_cd.random_sigma);
+
+        arrival[g.output] = out_arr;
+    }
+
+    // Collect endpoints
+    std::vector<NetId> endpoints;
+    for (auto po : nl_.primary_outputs())
+        endpoints.push_back(po);
+    for (auto fid : nl_.flip_flops()) {
+        auto& ff = nl_.gate(fid);
+        for (NetId in_net : ff.inputs)
+            endpoints.push_back(in_net);
+    }
+
+    // Compute statistical slack at each endpoint
+    std::vector<StatSlack> slacks;
+    for (NetId ep : endpoints) {
+        auto ait = arrival.find(ep);
+        if (ait == arrival.end()) continue;
+
+        const auto& arr = ait->second;
+        double mean_arr = arr.nominal;
+        double var_arr = arr.random_sigma * arr.random_sigma;
+        for (double s : arr.sensitivities) var_arr += s * s;
+        double sigma_arr = std::sqrt(std::max(var_arr, 0.0));
+
+        StatSlack ss;
+        ss.endpoint = ep;
+        ss.mean_slack = clock_period_ - mean_arr;
+        ss.sigma_slack = sigma_arr;  // slack sigma = arrival sigma (clock is deterministic)
+        // P(slack < 0) = P(arrival > clock_period) = 1 - Φ((T - μ)/σ)
+        if (sigma_arr > 1e-15) {
+            double z = (clock_period_ - mean_arr) / sigma_arr;
+            ss.prob_violation = 1.0 - phi_cdf(z);
+        } else {
+            ss.prob_violation = (mean_arr > clock_period_) ? 1.0 : 0.0;
+        }
+        slacks.push_back(ss);
+    }
+
+    return slacks;
+}
+
+// ── Parametric yield estimation ──────────────────────────────────────
+// From statistical slacks, yield = product of P(slack > 0) for all endpoints
+
+YieldResult SstaEngine::estimate_yield(double clock_period) {
+    double saved = clock_period_;
+    clock_period_ = clock_period;
+
+    auto slacks = compute_statistical_slacks();
+
+    YieldResult yr;
+
+    // Yield = product of P(slack >= 0) for all endpoints
+    double yield_prob = 1.0;
+    double worst_mean_arr = 0.0;
+    double worst_var = 0.0;
+
+    for (auto& ss : slacks) {
+        double p_pass = 1.0 - ss.prob_violation;
+        yield_prob *= p_pass;
+        double mean_arr = clock_period_ - ss.mean_slack;
+        if (mean_arr > worst_mean_arr) {
+            worst_mean_arr = mean_arr;
+            worst_var = ss.sigma_slack * ss.sigma_slack;
+        }
+    }
+
+    yr.yield_pct = yield_prob * 100.0;
+    yr.mean_delay = worst_mean_arr;
+    yr.sigma_delay = std::sqrt(worst_var);
+    yr.delay_3sigma = yr.mean_delay + 3.0 * yr.sigma_delay;
+
+    // Generate histogram (20 bins from mean−4σ to mean+4σ)
+    int nbins = 20;
+    yr.delay_histogram.resize(nbins, 0.0);
+    double lo = yr.mean_delay - 4.0 * yr.sigma_delay;
+    double hi = yr.mean_delay + 4.0 * yr.sigma_delay;
+    double bin_w = (hi - lo) / nbins;
+    if (yr.sigma_delay > 1e-15 && bin_w > 0) {
+        for (int i = 0; i < nbins; ++i) {
+            double x = lo + (i + 0.5) * bin_w;
+            yr.delay_histogram[i] = phi_pdf((x - yr.mean_delay) / yr.sigma_delay) * bin_w / yr.sigma_delay;
+        }
+    }
+
+    clock_period_ = saved;
+    return yr;
+}
+
+// ── Enhanced SSTA run ────────────────────────────────────────────────
+// Combines canonical-delay propagation with Monte Carlo validation
+
+SstaResult SstaEngine::run_enhanced() {
+    auto t0 = std::chrono::high_resolution_clock::now();
+
+    // First, run standard Monte Carlo
+    auto result = run_monte_carlo();
+
+    // Compute statistical slacks via canonical propagation
+    auto slacks = compute_statistical_slacks();
+
+    // Enhance yield estimate using analytical method
+    double analytical_yield = 1.0;
+    for (auto& ss : slacks) {
+        double p_pass = 1.0 - ss.prob_violation;
+        analytical_yield *= p_pass;
+    }
+
+    // Use analytical yield if MC yield is less precise (small sample count)
+    if (config_.num_samples < 500) {
+        result.yield_estimate = analytical_yield;
+    } else {
+        // Blend: 70% MC, 30% analytical for robustness
+        result.yield_estimate = 0.7 * result.yield_estimate + 0.3 * analytical_yield;
+    }
+
+    // Try PCA reduction if spatial correlation enabled
+    if (config_.enable_spatial_correlation && !has_pca_) {
+        reduce_with_pca();
+    }
+
+    // Update summary
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double enhanced_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    result.time_ms = enhanced_ms;
+
+    std::ostringstream oss;
+    oss << "Enhanced SSTA: " << config_.num_samples << " MC + canonical, "
+        << "WNS mean=" << result.statistical_wns.mean_ps << "ps "
+        << "sigma=" << result.statistical_wns.sigma_ps << "ps, "
+        << "yield=" << (result.yield_estimate * 100.0) << "%, "
+        << slacks.size() << " endpoints, ";
+    if (has_pca_) {
+        oss << "PCA " << pca_result_.original_sources << "→"
+            << pca_result_.principal_components << " (" 
+            << (pca_result_.variance_captured * 100.0) << "% var), ";
+    }
+    oss << "time=" << enhanced_ms << "ms";
+    result.summary = oss.str();
+    result.message = "Enhanced SSTA completed successfully";
+
+    has_result_ = true;
+    last_result_ = result;
+    return result;
+}
+
 } // namespace sf

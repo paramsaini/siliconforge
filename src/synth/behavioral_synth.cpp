@@ -4,6 +4,7 @@
 #include <set>
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 namespace sf {
 
@@ -30,6 +31,8 @@ bool BehavioralSynthesizer::synthesize(const BehavioralAST& ast, Netlist& nl) {
     memory_arrays_ = ast.memory_arrays;
     signed_signals_ = ast.signed_signals;
     uid_counter_ = 0;
+    shared_resources_.clear();
+    stats_ = SynthStats{};
     synth_node(ast.root, nl);
     return true;
 }
@@ -253,6 +256,283 @@ void BehavioralSynthesizer::synth_always_comb(std::shared_ptr<AstNode> node, Net
 }
 
 // ============================================================
+// Helper: deep-clone AST subtree, replacing loop variable with constant
+// ============================================================
+static std::shared_ptr<AstNode> substitute_var(std::shared_ptr<AstNode> node,
+    const std::string& var, int value) {
+    if (!node) return nullptr;
+    auto clone = std::make_shared<AstNode>();
+    clone->type = node->type;
+    clone->value = node->value;
+    clone->int_val = node->int_val;
+
+    // Replace identifier matching loop variable with NUMBER_LITERAL
+    if ((node->type == AstNodeType::WIRE_DECL ||
+         (node->children.empty() && node->type != AstNodeType::NUMBER_LITERAL)) &&
+        node->value == var) {
+        clone->type = AstNodeType::NUMBER_LITERAL;
+        clone->value = std::to_string(value);
+        clone->int_val = value;
+        return clone;
+    }
+
+    for (auto& child : node->children) {
+        clone->children.push_back(substitute_var(child, var, value));
+    }
+    return clone;
+}
+
+// ============================================================
+// extract_loop_bounds — parse FOR_LOOP children for static bounds
+// ============================================================
+BehavioralSynthesizer::LoopBounds BehavioralSynthesizer::extract_loop_bounds(
+    std::shared_ptr<AstNode> for_node) const {
+    LoopBounds bounds;
+    bounds.var_name = "";
+    bounds.start = -1;
+    bounds.end = -1;
+    bounds.step = 1;
+
+    if (!for_node || for_node->children.size() < 4) return bounds;
+
+    // child[0] = init assignment (e.g., i = 0)
+    auto init = for_node->children[0];
+    if (init && (init->type == AstNodeType::BLOCK_ASSIGN ||
+                 init->type == AstNodeType::NONBLOCK_ASSIGN) &&
+        !init->children.empty()) {
+        bounds.var_name = init->value;
+        bounds.start = get_const_value(init->children[0]);
+    }
+
+    // child[1] = condition (e.g., i < 8)
+    auto cond = for_node->children[1];
+    if (cond && cond->type == AstNodeType::BIN_OP && cond->children.size() >= 2) {
+        int limit = get_const_value(cond->children[1]);
+        if (limit >= 0) {
+            if (cond->value == "<") bounds.end = limit;
+            else if (cond->value == "<=") bounds.end = limit + 1;
+            else if (cond->value == ">") bounds.end = limit;
+            else if (cond->value == ">=") bounds.end = limit;
+        }
+    }
+
+    // child[2] = increment (e.g., i = i + 1)
+    auto incr = for_node->children[2];
+    if (incr && (incr->type == AstNodeType::BLOCK_ASSIGN ||
+                 incr->type == AstNodeType::NONBLOCK_ASSIGN) &&
+        !incr->children.empty()) {
+        auto expr = incr->children[0];
+        if (expr && expr->type == AstNodeType::BIN_OP && expr->children.size() >= 2) {
+            if (expr->value == "+") {
+                int step_val = get_const_value(expr->children[1]);
+                if (step_val > 0) bounds.step = step_val;
+            } else if (expr->value == "-") {
+                int step_val = get_const_value(expr->children[1]);
+                if (step_val > 0) bounds.step = -step_val;
+            }
+        }
+    }
+
+    return bounds;
+}
+
+// ============================================================
+// synth_for_loop — unroll FOR_LOOP with static bounds
+// ============================================================
+void BehavioralSynthesizer::synth_for_loop(std::shared_ptr<AstNode> for_node, Netlist& nl,
+    const BlockState& state, std::map<std::string, std::vector<NetId>>& next_state) {
+    if (!for_node || for_node->children.size() < 4) return;
+
+    auto bounds = extract_loop_bounds(for_node);
+    auto body = for_node->children[3];
+
+    if (bounds.start >= 0 && bounds.end >= 0 && bounds.step != 0) {
+        // Static bounds: fully unroll
+        const int max_unroll = 256;
+        int iterations = 0;
+
+        if (bounds.step > 0) {
+            for (int i = bounds.start; i < bounds.end && iterations < max_unroll;
+                 i += bounds.step, iterations++) {
+                auto substituted = substitute_var(body, bounds.var_name, i);
+                synth_statement(substituted, nl, state, next_state);
+            }
+        } else {
+            for (int i = bounds.start; i > bounds.end && iterations < max_unroll;
+                 i += bounds.step, iterations++) {
+                auto substituted = substitute_var(body, bounds.var_name, i);
+                synth_statement(substituted, nl, state, next_state);
+            }
+        }
+        stats_.loops_unrolled++;
+    } else {
+        // Dynamic bounds: create MUXed iteration chain (up to configurable max)
+        const int max_dynamic = 256;
+        if (!bounds.var_name.empty() && body) {
+            int effective_start = (bounds.start >= 0) ? bounds.start : 0;
+            int effective_step = (bounds.step != 0) ? std::abs(bounds.step) : 1;
+            for (int i = 0; i < max_dynamic; i++) {
+                int iter_val = effective_start + i * effective_step;
+                auto substituted = substitute_var(body, bounds.var_name, iter_val);
+
+                // Create a condition: loop_var < bounds (if dynamic, compare against runtime)
+                auto cond_state = next_state;
+                synth_statement(substituted, nl, state, cond_state);
+
+                // MUX: if iteration index < dynamic bound, use updated state
+                auto idx_bits = const_to_bits(std::to_string(iter_val), 32, nl);
+                auto bound_node = for_node->children[1];
+                if (bound_node && bound_node->type == AstNodeType::BIN_OP &&
+                    bound_node->children.size() >= 2) {
+                    int bound_w = infer_expr_width(bound_node->children[1]);
+                    if (bound_w < 1) bound_w = 32;
+                    auto bound_bits = synth_expr_bus(bound_node->children[1], nl, next_state,
+                                                     bound_w);
+                    idx_bits.resize(bound_w);
+                    for (int b = (int)idx_bits.size(); b < bound_w; b++)
+                        idx_bits.push_back(make_const(0, nl));
+                    NetId in_range = build_bus_lt(idx_bits, bound_bits, nl);
+
+                    for (auto& p : cond_state) {
+                        if (next_state.find(p.first) == next_state.end() ||
+                            next_state[p.first] != p.second) {
+                            auto fv = next_state.count(p.first) ?
+                                      next_state[p.first] :
+                                      get_bus_nets(nl, p.first, next_state);
+                            next_state[p.first] = build_bus_mux(in_range, p.second, fv, nl);
+                        }
+                    }
+                }
+            }
+            stats_.loops_unrolled++;
+        }
+    }
+}
+
+// ============================================================
+// try_share_resource — reuse operators under mutually exclusive conditions
+// GateType::AND represents MUL, GateType::XOR represents ADD
+// ============================================================
+std::vector<NetId> BehavioralSynthesizer::try_share_resource(GateType op, int width,
+    const std::vector<NetId>& a, const std::vector<NetId>& b,
+    NetId condition, Netlist& nl,
+    std::map<std::string, std::vector<NetId>>& next_state) {
+
+    // Only share MUL (AND) and ADD (XOR) composite operations
+    if (op != GateType::AND && op != GateType::XOR) {
+        if (op == GateType::AND)
+            return pad_to_width(build_bus_multiplier(a, b, nl), width, nl);
+        return pad_to_width(build_bus_adder(a, b, nl), width, nl);
+    }
+
+    // Check for existing resource of same type and width with mutually exclusive condition
+    for (auto& res : shared_resources_) {
+        if (res.op_type == op && res.width == width &&
+            condition >= 0 && res.condition >= 0 && condition != res.condition) {
+            // Found shareable resource — MUX inputs to reuse operator
+            auto muxed_a = build_bus_mux(condition, a, res.inputs_a, nl);
+            auto muxed_b = build_bus_mux(condition, b, res.inputs_b, nl);
+
+            std::vector<NetId> result;
+            if (op == GateType::AND)
+                result = pad_to_width(build_bus_multiplier(muxed_a, muxed_b, nl), width, nl);
+            else
+                result = pad_to_width(build_bus_adder(muxed_a, muxed_b, nl), width, nl);
+
+            res.usage_count++;
+            res.inputs_a = muxed_a;
+            res.inputs_b = muxed_b;
+            res.output = result;
+            stats_.resources_shared++;
+            return result;
+        }
+    }
+
+    // No existing resource found — create new and register
+    std::vector<NetId> result;
+    if (op == GateType::AND)
+        result = pad_to_width(build_bus_multiplier(a, b, nl), width, nl);
+    else
+        result = pad_to_width(build_bus_adder(a, b, nl), width, nl);
+
+    SharedResource res;
+    res.op_type = op;
+    res.width = width;
+    res.inputs_a = a;
+    res.inputs_b = b;
+    res.output = result;
+    res.condition = condition;
+    res.usage_count = 1;
+    shared_resources_.push_back(res);
+
+    return result;
+}
+
+// ============================================================
+// chain_operations — build balanced tree for associative operator chains
+// e.g., a + b + c + d → (a+b) + (c+d) instead of ((a+b)+c)+d
+// ============================================================
+std::vector<NetId> BehavioralSynthesizer::chain_operations(std::shared_ptr<AstNode> expr,
+    Netlist& nl, const std::map<std::string, std::vector<NetId>>& next_state, int target_w) {
+    if (!expr || expr->type != AstNodeType::BIN_OP || expr->children.size() < 2) {
+        return synth_expr_bus(expr, nl, next_state, target_w);
+    }
+
+    const auto& op = expr->value;
+    // Only chain associative operators
+    if (op != "+" && op != "*" && op != "&" && op != "|" && op != "^") {
+        return synth_expr_bus(expr, nl, next_state, target_w);
+    }
+
+    // Flatten chain of same operator into leaf operands
+    std::vector<std::shared_ptr<AstNode>> operands;
+    std::function<void(std::shared_ptr<AstNode>)> flatten = [&](std::shared_ptr<AstNode> n) {
+        if (n && n->type == AstNodeType::BIN_OP && n->value == op && n->children.size() >= 2) {
+            flatten(n->children[0]);
+            flatten(n->children[1]);
+        } else {
+            operands.push_back(n);
+        }
+    };
+    flatten(expr);
+
+    if (operands.size() <= 2) {
+        // Not a chain worth balancing
+        return synth_expr_bus(expr, nl, next_state, target_w);
+    }
+
+    // Synthesize all leaf operands
+    std::vector<std::vector<NetId>> values;
+    for (auto& operand : operands) {
+        values.push_back(synth_expr_bus(operand, nl, next_state, target_w));
+    }
+
+    // Build balanced binary tree
+    while (values.size() > 1) {
+        std::vector<std::vector<NetId>> next_level;
+        for (size_t i = 0; i + 1 < values.size(); i += 2) {
+            std::vector<NetId> combined;
+            if (op == "+")
+                combined = pad_to_width(build_bus_adder(values[i], values[i+1], nl), target_w, nl);
+            else if (op == "*")
+                combined = pad_to_width(build_bus_multiplier(values[i], values[i+1], nl), target_w, nl);
+            else if (op == "&")
+                combined = bitwise_op(values[i], values[i+1], GateType::AND, nl);
+            else if (op == "|")
+                combined = bitwise_op(values[i], values[i+1], GateType::OR, nl);
+            else
+                combined = bitwise_op(values[i], values[i+1], GateType::XOR, nl);
+            next_level.push_back(combined);
+        }
+        if (values.size() % 2 == 1) next_level.push_back(values.back());
+        values = next_level;
+    }
+
+    stats_.operators_chained++;
+    return pad_to_width(values[0], target_w, nl);
+}
+
+// ============================================================
 // synth_statement — bus-aware statement synthesis
 // ============================================================
 void BehavioralSynthesizer::synth_statement(std::shared_ptr<AstNode> stmt, Netlist& nl,
@@ -410,6 +690,8 @@ void BehavioralSynthesizer::synth_statement(std::shared_ptr<AstNode> stmt, Netli
             }
         }
         next_state = result_state;
+    } else if (stmt->type == AstNodeType::FOR_LOOP) {
+        synth_for_loop(stmt, nl, state, next_state);
     }
 }
 
@@ -719,10 +1001,19 @@ std::vector<NetId> BehavioralSynthesizer::synth_expr_bus(std::shared_ptr<AstNode
         int rw = infer_expr_width(expr->children[1]);
         int maxw = std::max({lw, rw, target_w});
 
+        // Operator chaining: detect chains of same associative operator
+        if ((op == "+" || op == "*" || op == "&" || op == "|" || op == "^") &&
+            expr->children[0]->type == AstNodeType::BIN_OP &&
+            expr->children[0]->value == op) {
+            return chain_operations(expr, nl, next_state, target_w);
+        }
+
         if (op == "+") {
             auto la = synth_expr_bus(expr->children[0], nl, next_state, maxw);
             auto ra = synth_expr_bus(expr->children[1], nl, next_state, maxw);
-            return pad_to_width(build_bus_adder(la, ra, nl), target_w, nl);
+            // Resource sharing for ADD (GateType::XOR represents composite ADD)
+            auto ns_copy = const_cast<std::map<std::string, std::vector<NetId>>&>(next_state);
+            return try_share_resource(GateType::XOR, target_w, la, ra, -1, nl, ns_copy);
         }
         if (op == "-") {
             auto la = synth_expr_bus(expr->children[0], nl, next_state, maxw);
@@ -732,7 +1023,9 @@ std::vector<NetId> BehavioralSynthesizer::synth_expr_bus(std::shared_ptr<AstNode
         if (op == "*") {
             auto la = synth_expr_bus(expr->children[0], nl, next_state, lw);
             auto ra = synth_expr_bus(expr->children[1], nl, next_state, rw);
-            return pad_to_width(build_bus_multiplier(la, ra, nl), target_w, nl);
+            // Resource sharing for MUL (GateType::AND represents composite MUL)
+            auto ns_copy = const_cast<std::map<std::string, std::vector<NetId>>&>(next_state);
+            return try_share_resource(GateType::AND, target_w, la, ra, -1, nl, ns_copy);
         }
         if (op == "<<") {
             auto data = synth_expr_bus(expr->children[0], nl, next_state, target_w);

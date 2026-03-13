@@ -273,4 +273,64 @@ public:
     DftResult run_full_dft(Netlist& nl, const DftConfig& cfg);
 };
 
+// ── Enhanced JTAG/BIST ──────────────────────────────────────────────────────
+
+class EnhancedJtagBist {
+public:
+    explicit EnhancedJtagBist(Netlist& nl) : nl_(nl) {}
+
+    // IJTAG (IEEE 1687) support
+    struct IjtagConfig {
+        std::string sib_name;           // Segment Insertion Bit
+        std::vector<std::string> instruments;
+        int network_depth;
+    };
+    struct IjtagResult {
+        int sibs_inserted;
+        int instruments_connected;
+        int total_scan_length;
+        std::string icl_description;    // ICL format output
+    };
+    IjtagResult insert_ijtag(const IjtagConfig& cfg);
+    
+    // MBIST with march algorithms
+    struct MbistConfig {
+        enum Algorithm { MARCH_C_MINUS, MARCH_LR, MATS_PLUS, WALKING_ONES } algo;
+        int memory_depth;
+        int memory_width;
+        bool generate_repair;
+    };
+    struct MbistResult {
+        std::string controller_name;
+        int test_cycles;
+        double coverage_pct;
+        int repair_fuses;
+        std::string algorithm_name;
+    };
+    MbistResult generate_mbist(const MbistConfig& cfg);
+    
+    // BIST controller synthesis
+    struct BistControllerResult {
+        int states;
+        int registers;
+        double area_overhead_pct;
+        std::string fsm_encoding;
+    };
+    BistControllerResult synthesize_bist_controller();
+    
+    // Boundary scan chain
+    struct BoundaryScanResult {
+        int boundary_cells;
+        int total_chain_length;
+        std::vector<std::string> cell_order;
+    };
+    BoundaryScanResult create_boundary_scan();
+    
+    // Enhanced JTAG/BIST flow
+    DftResult run_enhanced();
+
+private:
+    Netlist& nl_;
+};
+
 } // namespace sf

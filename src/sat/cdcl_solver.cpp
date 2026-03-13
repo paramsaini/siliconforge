@@ -347,4 +347,203 @@ bool CdclSolver::model_value(int var) const {
     return assigns_[var] == LBool::TRUE;
 }
 
+// --- New CDCL enhancement methods ---
+
+void CdclSolver::enable_vsids(bool enable) {
+    vsids_enabled_ = enable;
+}
+
+void CdclSolver::set_clause_db_config(const ClauseDbConfig& cfg) {
+    clause_db_cfg_ = cfg;
+}
+
+void CdclSolver::reduce_clause_db() {
+    // Compute LBD for each learned clause, remove those above threshold.
+    // LBD = number of distinct decision levels among the clause's literals.
+    auto compute_lbd = [&](const Clause& cl) -> int {
+        std::vector<int> levels;
+        for (int lit : cl.lits) {
+            int v = ivar(lit);
+            int lv = level_[v];
+            if (lv >= 0) {
+                bool found = false;
+                for (int l : levels) {
+                    if (l == lv) { found = true; break; }
+                }
+                if (!found) levels.push_back(lv);
+            }
+        }
+        return (int)levels.size();
+    };
+
+    // Build set of reason clauses (must not be deleted)
+    std::vector<bool> is_reason(clauses_.size(), false);
+    for (int v = 1; v <= num_vars_; ++v) {
+        if (reason_[v] >= 0 && reason_[v] < (int)clauses_.size()) {
+            is_reason[reason_[v]] = true;
+        }
+    }
+
+    // Identify clauses to delete
+    std::vector<bool> to_delete(clauses_.size(), false);
+    for (int ci = 0; ci < (int)clauses_.size(); ++ci) {
+        auto& cl = clauses_[ci];
+        if (!cl.learned) continue;
+        if (is_reason[ci]) continue;
+        if (cl.lits.empty()) continue;
+        int lbd = compute_lbd(cl);
+        if (lbd > clause_db_cfg_.lbd_threshold) {
+            to_delete[ci] = true;
+            deleted_count_++;
+        }
+    }
+
+    // Clean up watch lists: remove references to deleted clauses
+    for (auto& ws : watches_) {
+        int j = 0;
+        for (int i = 0; i < (int)ws.size(); ++i) {
+            if (!to_delete[ws[i]]) {
+                ws[j++] = ws[i];
+            }
+        }
+        ws.resize(j);
+    }
+
+    // Clear deleted clauses (empty their lits to mark them dead)
+    for (int ci = 0; ci < (int)clauses_.size(); ++ci) {
+        if (to_delete[ci]) {
+            clauses_[ci].lits.clear();
+        }
+    }
+}
+
+void CdclSolver::set_restart_policy(RestartPolicy policy) {
+    restart_policy_ = policy;
+}
+
+void CdclSolver::enable_phase_saving(bool enable) {
+    phase_saving_ = enable;
+    if (enable) {
+        saved_phase_.resize(num_vars_ + 1, false);
+    }
+}
+
+CdclSolver::PreprocessResult CdclSolver::preprocess() {
+    PreprocessResult result{0, 0, 0, 0};
+
+    // --- Unit propagation: find unit clauses and propagate ---
+    for (int ci = 0; ci < (int)clauses_.size(); ++ci) {
+        auto& cl = clauses_[ci].lits;
+        if (cl.size() == 1 && val(cl[0]) == LBool::UNDEF) {
+            assign_lit(cl[0], ci);
+            result.unit_propagated++;
+        }
+    }
+    if (result.unit_propagated > 0) {
+        int confl = propagate();
+        if (confl >= 0) {
+            ok_ = false;
+            return result;
+        }
+    }
+
+    // --- Pure literal detection ---
+    // For each variable, track whether it appears positive, negative, or both
+    // in currently non-satisfied clauses.
+    std::vector<uint8_t> polarity(num_vars_ + 1, 0); // bit 0 = pos, bit 1 = neg
+    for (auto& clause : clauses_) {
+        if (clause.lits.empty()) continue;
+        // Check if clause is already satisfied
+        bool satisfied = false;
+        for (int lit : clause.lits) {
+            if (val(lit) == LBool::TRUE) { satisfied = true; break; }
+        }
+        if (satisfied) continue;
+        for (int lit : clause.lits) {
+            int v = ivar(lit);
+            if (assigns_[v] != LBool::UNDEF) continue;
+            if (lit & 1) polarity[v] |= 2; // negative
+            else         polarity[v] |= 1; // positive
+        }
+    }
+    for (int v = 1; v <= num_vars_; ++v) {
+        if (assigns_[v] != LBool::UNDEF) continue;
+        if (polarity[v] == 1) {
+            // appears only positive
+            assign_lit(2 * v, -1);
+            result.pure_literals++;
+        } else if (polarity[v] == 2) {
+            // appears only negative
+            assign_lit(2 * v + 1, -1);
+            result.pure_literals++;
+        }
+    }
+    if (result.pure_literals > 0) {
+        int confl = propagate();
+        if (confl >= 0) {
+            ok_ = false;
+            return result;
+        }
+    }
+
+    // --- Subsumption: remove clauses that are supersets of other clauses ---
+    // Simple O(n^2) approach: for each pair, check if smaller subsumes larger.
+    int n = (int)clauses_.size();
+    std::vector<bool> removed(n, false);
+    for (int i = 0; i < n; ++i) {
+        if (removed[i] || clauses_[i].lits.empty()) continue;
+        for (int j = i + 1; j < n; ++j) {
+            if (removed[j] || clauses_[j].lits.empty()) continue;
+            auto& small = (clauses_[i].lits.size() <= clauses_[j].lits.size())
+                              ? clauses_[i].lits : clauses_[j].lits;
+            auto& large = (clauses_[i].lits.size() <= clauses_[j].lits.size())
+                              ? clauses_[j].lits : clauses_[i].lits;
+            int larger_idx = (clauses_[i].lits.size() <= clauses_[j].lits.size()) ? j : i;
+            if (small.size() == large.size() && i != larger_idx) continue; // skip equal-size unless i is smaller
+
+            // Check if all lits in small appear in large
+            bool subsumes = true;
+            for (int lit : small) {
+                bool found = false;
+                for (int lit2 : large) {
+                    if (lit == lit2) { found = true; break; }
+                }
+                if (!found) { subsumes = false; break; }
+            }
+            if (subsumes && small.size() < large.size()) {
+                removed[larger_idx] = true;
+                result.subsumptions++;
+            }
+        }
+    }
+
+    // Clean up watch lists for removed clauses and clear them
+    if (result.subsumptions > 0) {
+        for (auto& ws : watches_) {
+            int j = 0;
+            for (int i = 0; i < (int)ws.size(); ++i) {
+                if (!removed[ws[i]]) ws[j++] = ws[i];
+            }
+            ws.resize(j);
+        }
+        for (int ci = 0; ci < n; ++ci) {
+            if (removed[ci]) clauses_[ci].lits.clear();
+        }
+    }
+
+    return result;
+}
+
+CdclSolver::SolverStats CdclSolver::get_stats() const {
+    return SolverStats{
+        stats_.decisions,
+        stats_.propagations,
+        stats_.conflicts,
+        learned_count_,
+        deleted_count_,
+        stats_.restarts,
+        0.0
+    };
+}
+
 } // namespace sf

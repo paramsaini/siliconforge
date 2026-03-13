@@ -674,6 +674,7 @@ void MemoryCompiler::generate_detailed_report(const MemoryConfig& cfg, MemoryRes
 // Top-level compile flow
 // ---------------------------------------------------------------------------
 MemoryResult MemoryCompiler::compile(const MemoryConfig& cfg) {
+    last_cfg_ = cfg;
     MemoryResult r;
     r.name = cfg.name;
     r.words = cfg.words;
@@ -713,6 +714,148 @@ MemoryResult MemoryCompiler::compile(const MemoryConfig& cfg) {
                 " — " + std::to_string((int)r.width_um) + "×" +
                 std::to_string((int)r.height_um) + "um, tAA=" +
                 std::to_string(r.timing.tAA_ns) + "ns";
+    return r;
+}
+
+// ---------------------------------------------------------------------------
+// Multi-port SRAM generation
+// ---------------------------------------------------------------------------
+MultiPortResult MemoryCompiler::generate_multi_port(const MultiPortConfig& cfg) {
+    MultiPortResult res{};
+    int total_ports = cfg.read_ports + cfg.write_ports + cfg.rw_ports;
+    double port_factor = 1.0 + (total_ports - 1) * 0.6;
+    double cell_area = 0.5 * 1.0; // bit_cell_width * bit_cell_height in um²
+    res.area = cfg.depth * cfg.word_width * cell_area * port_factor;
+
+    double base_delay = 0.2 + std::log2(std::max(1, cfg.depth)) * 0.05;
+    double width_factor = 1.0 + cfg.word_width / 256.0;
+    res.read_delay_ns = base_delay * width_factor * (1.0 + (cfg.read_ports - 1) * 0.15);
+    res.write_delay_ns = base_delay * width_factor * 1.1 * (1.0 + (cfg.write_ports - 1) * 0.15);
+
+    int total_bits = cfg.depth * cfg.word_width;
+    res.leakage_uw = total_bits * 0.001 * port_factor;
+
+    int transistors_per_bit = 6;
+    res.total_transistors = total_bits * transistors_per_bit * static_cast<int>(std::ceil(port_factor));
+    return res;
+}
+
+// ---------------------------------------------------------------------------
+// Liberty-format timing model generation
+// ---------------------------------------------------------------------------
+TimingModelResult MemoryCompiler::generate_timing_model(const MultiPortConfig& cfg) {
+    TimingModelResult res{};
+    int total_ports = cfg.read_ports + cfg.write_ports + cfg.rw_ports;
+    res.cell_name = "SRAM_" + std::to_string(cfg.depth) + "x" +
+                    std::to_string(cfg.word_width) + "_" +
+                    std::to_string(total_ports) + "P";
+
+    double depth_factor = std::log2(std::max(1, cfg.depth)) * 0.02;
+    double width_factor = cfg.word_width / 512.0;
+    res.setup_time = 0.05 + depth_factor;
+    res.hold_time = 0.03 + depth_factor * 0.5;
+    res.clk_to_q = 0.08 + depth_factor + width_factor * 0.01;
+    res.read_access_time = 0.2 + depth_factor * 2.5 + width_factor * 0.05;
+    res.write_access_time = res.read_access_time * 1.1;
+
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(4);
+    oss << "library (" << res.cell_name << "_lib) {\n";
+    oss << "  cell (" << res.cell_name << ") {\n";
+    oss << "    area : " << cfg.depth * cfg.word_width * 0.5 << " ;\n";
+    oss << "    pin (CLK) {\n";
+    oss << "      direction : input ;\n";
+    oss << "      clock : true ;\n";
+    oss << "    }\n";
+    for (int i = 0; i < cfg.read_ports + cfg.rw_ports; ++i) {
+        std::string port_name = "Q" + std::to_string(i);
+        oss << "    pin (" << port_name << ") {\n";
+        oss << "      direction : output ;\n";
+        oss << "      timing () {\n";
+        oss << "        related_pin : CLK ;\n";
+        oss << "        timing_type : rising_edge ;\n";
+        oss << "        cell_rise (scalar) { values(\"" << res.clk_to_q << "\"); }\n";
+        oss << "        cell_fall (scalar) { values(\"" << res.clk_to_q << "\"); }\n";
+        oss << "      }\n";
+        oss << "    }\n";
+    }
+    for (int i = 0; i < cfg.write_ports + cfg.rw_ports; ++i) {
+        std::string port_name = "D" + std::to_string(i);
+        oss << "    pin (" << port_name << ") {\n";
+        oss << "      direction : input ;\n";
+        oss << "      timing () {\n";
+        oss << "        related_pin : CLK ;\n";
+        oss << "        timing_type : setup_rising ;\n";
+        oss << "        rise_constraint (scalar) { values(\"" << res.setup_time << "\"); }\n";
+        oss << "        fall_constraint (scalar) { values(\"" << res.setup_time << "\"); }\n";
+        oss << "      }\n";
+        oss << "      timing () {\n";
+        oss << "        related_pin : CLK ;\n";
+        oss << "        timing_type : hold_rising ;\n";
+        oss << "        rise_constraint (scalar) { values(\"" << res.hold_time << "\"); }\n";
+        oss << "        fall_constraint (scalar) { values(\"" << res.hold_time << "\"); }\n";
+        oss << "      }\n";
+        oss << "    }\n";
+    }
+    oss << "  }\n";
+    oss << "}\n";
+    res.lib_format = oss.str();
+    return res;
+}
+
+// ---------------------------------------------------------------------------
+// Column/row redundancy for yield improvement
+// ---------------------------------------------------------------------------
+RedundancyResult MemoryCompiler::add_redundancy(int spare_cols, int spare_rows) {
+    RedundancyResult res{};
+    res.spare_cols = spare_cols;
+    res.spare_rows = spare_rows;
+    double yield_pct = spare_cols * 3.5 + spare_rows * 4.0;
+    res.yield_improvement_pct = std::min(yield_pct, 25.0);
+    double col_overhead = (last_cfg_.bits > 0)
+        ? (static_cast<double>(spare_cols) / last_cfg_.bits) * 100.0
+        : spare_cols * 0.5;
+    double row_overhead = (last_cfg_.words > 0)
+        ? (static_cast<double>(spare_rows) / last_cfg_.words) * 100.0
+        : spare_rows * 0.5;
+    res.area_overhead_pct = col_overhead + row_overhead;
+    return res;
+}
+
+// ---------------------------------------------------------------------------
+// BIST wrapper generation (March algorithms)
+// ---------------------------------------------------------------------------
+BistWrapperResult MemoryCompiler::generate_bist_wrapper(bool with_repair) {
+    BistWrapperResult res{};
+    res.wrapper_name = "MBIST_" + last_cfg_.name + "_wrapper";
+    // March C-, March LR, MATS+, Walking 1/0
+    res.march_algorithms = 4;
+    // March C- complexity: 14N where N = number of words (depth)
+    int depth = std::max(1, last_cfg_.words);
+    res.test_time_cycles = 14.0 * depth;
+    res.self_repair = with_repair;
+    return res;
+}
+
+// ---------------------------------------------------------------------------
+// Enhanced compilation: compile + multi-port + redundancy + BIST
+// ---------------------------------------------------------------------------
+MemoryResult MemoryCompiler::run_enhanced(const MemoryConfig& cfg) {
+    MemoryResult r = compile(cfg);
+
+    MultiPortConfig mpc{};
+    mpc.read_ports = cfg.read_ports;
+    mpc.write_ports = cfg.write_ports;
+    mpc.rw_ports = 0;
+    mpc.word_width = cfg.bits;
+    mpc.depth = cfg.words;
+    mpc.has_byte_enable = false;
+    generate_multi_port(mpc);
+
+    add_redundancy(std::max(1, cfg.redundant_cols), std::max(1, cfg.redundant_rows));
+
+    generate_bist_wrapper(cfg.enable_mbist);
+
     return r;
 }
 

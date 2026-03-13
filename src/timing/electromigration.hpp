@@ -90,9 +90,51 @@ struct EmWireSizing {
     double area_overhead_pct     = 0;
 };
 
+// ── Current Density Extraction ──────────────────────────────────────
+struct CurrentDensity {
+    int wire_idx = -1;
+    int layer = 0;
+    double avg_current_ma = 0;
+    double peak_current_ma = 0;
+    double current_density_ma_per_um2 = 0;
+    double limit_ma_per_um2 = 0;
+    bool exceeds_limit = false;
+};
+
+// ── Blech Effect ────────────────────────────────────────────────────
+struct BlechResult {
+    int wire_idx = -1;
+    double wire_length_um = 0;
+    double blech_length_um = 0;
+    bool is_immune = false;
+    double current_density_ma_per_um2 = 0;
+};
+
+// ── EM Fix Suggestion ───────────────────────────────────────────────
+struct EmFix {
+    int wire_idx = -1;
+    enum FixType { WIDEN_WIRE, ADD_VIA, SPLIT_NET, ADD_DECAP };
+    FixType type = WIDEN_WIRE;
+    double current_width = 0;
+    double suggested_width = 0;
+    double improvement_pct = 0;
+};
+
+// ── Via Redundancy for EM ───────────────────────────────────────────
+struct ViaEmResult {
+    int total_vias = 0;
+    int single_vias_at_risk = 0;
+    int redundant_vias_added = 0;
+    double reliability_improvement_pct = 0;
+};
+
 // ── Main analyzer ────────────────────────────────────────────────────
 class EmAnalyzer {
 public:
+    EmAnalyzer() = default;
+    EmAnalyzer(const Netlist& nl, const PhysicalDesign& pd, const EmConfig& cfg)
+        : nl_(&nl), pd_(&pd), stored_cfg_(cfg) {}
+
     EmResult analyze(const Netlist& nl,
                      const PhysicalDesign& pd,
                      const EmConfig& cfg) const;
@@ -113,6 +155,13 @@ public:
     // Built-in foundry rule sets
     static std::vector<EmLayerRule> default_rules_sky130();
     static std::vector<EmLayerRule> default_rules_7nm();
+
+    // Enhanced EM analysis (requires constructor with params)
+    std::vector<CurrentDensity> extract_current_density() const;
+    std::vector<BlechResult> check_blech_effect() const;
+    std::vector<EmFix> suggest_em_fixes() const;
+    ViaEmResult add_redundant_vias() const;
+    EmResult run_enhanced() const;
 
 private:
     // Current estimation helpers
@@ -139,6 +188,10 @@ private:
                       EmResult& result) const;
 
     void generate_report(EmResult& result, const EmConfig& cfg) const;
+
+    const Netlist* nl_ = nullptr;
+    const PhysicalDesign* pd_ = nullptr;
+    EmConfig stored_cfg_;
 };
 
 } // namespace sf

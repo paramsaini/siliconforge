@@ -117,6 +117,65 @@ public:
         return (it != gate_vt_.end()) ? it->second : VtType::SVT;
     }
 
+    // Incremental STA integration
+    struct IncrementalTiming {
+        std::vector<double> arrival;   // per-endpoint arrival time
+        std::vector<double> slack;     // per-endpoint slack
+        double wns;                    // worst negative slack
+        double tns;                    // total negative slack
+        int violating_endpoints;
+    };
+    IncrementalTiming compute_incremental_sta(const std::vector<int>& changed_cells);
+
+    // DRC-aware buffer insertion
+    struct BufferInsertPoint {
+        int net_idx;
+        double x, y;
+        int layer;
+        bool drc_clean;     // no DRC violations at this location
+        double timing_benefit;
+    };
+    std::vector<BufferInsertPoint> find_buffer_locations(int net_idx);
+    bool insert_buffer_drc_safe(const BufferInsertPoint& point);
+
+    // Wire spreading (reduce crosstalk)
+    struct WireSpreadResult {
+        int wires_moved;
+        double avg_spacing_increase;
+        double timing_impact;
+    };
+    WireSpreadResult spread_wires(double min_extra_spacing = 0.01);
+
+    // Via doubling for reliability
+    struct ViaDoubleResult {
+        int vias_doubled;
+        double resistance_reduction_pct;
+        double reliability_improvement;
+    };
+    ViaDoubleResult double_vias();
+
+    // Useful skew optimization (post-route)
+    struct UsefulSkewResult {
+        int paths_improved;
+        double wns_before;
+        double wns_after;
+        double skew_budget_used;
+    };
+    UsefulSkewResult optimize_useful_skew(double max_skew_budget = 0.2);
+
+    // Min-perturbation timing ECO
+    struct TimingEcoResult {
+        int cells_modified;
+        int buffers_added;
+        int cells_resized;
+        double wns_improvement;
+        double max_displacement;
+    };
+    TimingEcoResult fix_timing_eco(double target_wns = 0.0);
+
+    // Enhanced post-route optimization flow
+    PostRouteResult optimize_full();
+
 private:
     Netlist& nl_;
     PhysicalDesign& pd_;
@@ -170,6 +229,17 @@ private:
     
     // Helper: get delay factor for a gate based on its Vt
     double vt_delay_factor(GateId gid) const;
+
+    // Incremental timing helpers
+    void propagate_arrival(int cell_idx, std::vector<double>& arrival);
+    void propagate_required(int cell_idx, std::vector<double>& required);
+
+    // DRC checking for buffer placement
+    bool check_placement_drc(double x, double y, double width, double height);
+
+    // Wire spreading helpers
+    struct WireSegRef { int net_idx; int seg_idx; int layer; double y; };
+    std::vector<WireSegRef> get_segments_in_channel(double x_lo, double x_hi, int layer);
 };
 
 } // namespace sf

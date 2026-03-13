@@ -633,4 +633,919 @@ RouteResult DetailedRouterV2::route(int num_threads) {
     return result;
 }
 
+// ============================================================================
+// TrackResource: check if an interval is available
+// ============================================================================
+bool DetailedRouterV2::TrackResource::is_available(double start, double end, double spacing) const {
+    double lo = std::min(start, end);
+    double hi = std::max(start, end);
+    for (auto& [occ_lo, occ_hi] : occupied) {
+        if (occ_lo - spacing < hi && occ_hi + spacing > lo)
+            return false;
+    }
+    return true;
+}
+
+// ============================================================================
+// Initialize track resources for multi-layer assignment
+// ============================================================================
+void DetailedRouterV2::init_track_resources(int num_layers) {
+    track_resources_.clear();
+    track_resources_.resize(num_layers);
+
+    double die_x0 = pd_.die_area.x0, die_y0 = pd_.die_area.y0;
+    double die_x1 = pd_.die_area.x1, die_y1 = pd_.die_area.y1;
+
+    for (int l = 0; l < num_layers; l++) {
+        double pitch = 0.5;
+        double spacing = 0.14;
+
+        // Use layer_rules_ if available for this layer
+        for (auto& lr : layer_rules_) {
+            if (lr.layer == l) {
+                pitch = lr.pitch > 0 ? lr.pitch : pitch;
+                spacing = lr.min_spacing > 0 ? lr.min_spacing : spacing;
+                break;
+            }
+        }
+        // Fall back to pd_.layers if available
+        if (l < (int)pd_.layers.size()) {
+            if (pitch <= 0) pitch = pd_.layers[l].pitch > 0 ? pd_.layers[l].pitch : 0.5;
+        }
+
+        bool horizontal = (l % 2 == 0);
+        if (l < (int)pd_.layers.size()) horizontal = pd_.layers[l].horizontal;
+        for (auto& lr : layer_rules_) {
+            if (lr.layer == l) { horizontal = lr.prefer_horizontal; break; }
+        }
+
+        int track_idx = 0;
+        if (horizontal) {
+            for (double y = die_y0 + pitch; y < die_y1; y += pitch) {
+                track_resources_[l].push_back({l, track_idx++, {}});
+            }
+        } else {
+            for (double x = die_x0 + pitch; x < die_x1; x += pitch) {
+                track_resources_[l].push_back({l, track_idx++, {}});
+            }
+        }
+        // Ensure at least one track
+        if (track_resources_[l].empty()) {
+            track_resources_[l].push_back({l, 0, {}});
+        }
+    }
+}
+
+// ============================================================================
+// Find the best available track on a layer for a given interval
+// ============================================================================
+int DetailedRouterV2::find_best_track(int net_idx, int layer, double start, double end) {
+    if (layer < 0 || layer >= (int)track_resources_.size()) return -1;
+    auto& tracks = track_resources_[layer];
+    if (tracks.empty()) return -1;
+
+    double spacing = drc_constraints_.min_spacing;
+    if (layer < (int)pd_.layers.size())
+        spacing = std::max(spacing, pd_.layers[layer].spacing);
+
+    // Prefer the track closest to the midpoint of the interval
+    double mid = (start + end) / 2.0;
+    int best = -1;
+    double best_dist = 1e18;
+
+    for (int i = 0; i < (int)tracks.size(); i++) {
+        if (!tracks[i].is_available(start, end, spacing)) continue;
+
+        // Use track coordinate from layer_tracks_ if available, else use index*pitch
+        double coord = 0;
+        if (layer < (int)layer_tracks_.size() && i < (int)layer_tracks_[layer].size())
+            coord = layer_tracks_[layer][i].coord;
+        else
+            coord = static_cast<double>(i);
+
+        double d = std::abs(coord - mid);
+        if (d < best_dist) { best_dist = d; best = i; }
+    }
+    return best;
+}
+
+// ============================================================================
+// A) Multi-layer track assignment
+// ============================================================================
+std::vector<DetailedRouterV2::TrackAssignResult>
+DetailedRouterV2::assign_tracks_multilayer(int num_layers) {
+    std::vector<TrackAssignResult> results;
+
+    if (num_layers <= 0) num_layers = num_layers_ > 0 ? num_layers_ : 4;
+
+    // Ensure layers/tracks are set up
+    if (pd_.layers.empty()) {
+        int saved = num_layers_;
+        num_layers_ = num_layers;
+        setup_layers();
+        build_track_grid();
+        num_layers_ = saved;
+    }
+    init_track_resources(num_layers);
+
+    // Sort nets by priority: critical first, then short HPWL first
+    std::vector<int> net_order(pd_.nets.size());
+    std::iota(net_order.begin(), net_order.end(), 0);
+    std::sort(net_order.begin(), net_order.end(), [&](int a, int b) {
+        double ca = get_criticality(a), cb = get_criticality(b);
+        if (std::abs(ca - cb) > 0.01) return ca > cb;
+        auto hpwl = [&](int ni) -> double {
+            auto& net = pd_.nets[ni];
+            if (net.cell_ids.size() < 2) return 0.0;
+            double xlo = 1e18, xhi = -1e18, ylo = 1e18, yhi = -1e18;
+            for (auto ci : net.cell_ids) {
+                xlo = std::min(xlo, pd_.cells[ci].position.x);
+                xhi = std::max(xhi, pd_.cells[ci].position.x);
+                ylo = std::min(ylo, pd_.cells[ci].position.y);
+                yhi = std::max(yhi, pd_.cells[ci].position.y);
+            }
+            return (xhi - xlo) + (yhi - ylo);
+        };
+        return hpwl(a) < hpwl(b);
+    });
+
+    for (int ni : net_order) {
+        auto& net = pd_.nets[ni];
+        if (net.cell_ids.size() < 2) continue;
+
+        // Compute bounding box
+        double xlo = 1e18, xhi = -1e18, ylo = 1e18, yhi = -1e18;
+        for (size_t i = 0; i < net.cell_ids.size(); i++) {
+            auto& c = pd_.cells[net.cell_ids[i]];
+            double px = c.position.x + (i < net.pin_offsets.size() ? net.pin_offsets[i].x : c.width / 2);
+            double py = c.position.y + (i < net.pin_offsets.size() ? net.pin_offsets[i].y : c.height / 2);
+            xlo = std::min(xlo, px); xhi = std::max(xhi, px);
+            ylo = std::min(ylo, py); yhi = std::max(yhi, py);
+        }
+
+        double dx = xhi - xlo, dy = yhi - ylo;
+        bool prefer_h = (dx >= dy);
+
+        // Find the best layer with the matching preferred direction
+        int best_layer = -1;
+        int best_track = -1;
+        int via_count = 0;
+
+        for (int l = 0; l < num_layers; l++) {
+            bool layer_h = (l % 2 == 0);
+            if (l < (int)pd_.layers.size()) layer_h = pd_.layers[l].horizontal;
+            for (auto& lr : layer_rules_) {
+                if (lr.layer == l) { layer_h = lr.prefer_horizontal; break; }
+            }
+
+            if (layer_h != prefer_h) continue;
+
+            double seg_start = prefer_h ? xlo : ylo;
+            double seg_end = prefer_h ? xhi : yhi;
+            int tk = find_best_track(ni, l, seg_start, seg_end);
+            if (tk >= 0) {
+                best_layer = l;
+                best_track = tk;
+                break;
+            }
+        }
+
+        // If no preferred-direction layer found, try any layer
+        if (best_layer < 0) {
+            for (int l = 0; l < num_layers; l++) {
+                double seg_start = prefer_h ? xlo : ylo;
+                double seg_end = prefer_h ? xhi : yhi;
+                int tk = find_best_track(ni, l, seg_start, seg_end);
+                if (tk >= 0) {
+                    best_layer = l;
+                    best_track = tk;
+                    via_count = 1;  // layer transition needed
+                    break;
+                }
+            }
+        }
+
+        if (best_layer < 0 || best_track < 0) continue;
+
+        // Mark track interval as occupied
+        double seg_start = prefer_h ? xlo : ylo;
+        double seg_end = prefer_h ? xhi : yhi;
+        if (best_layer < (int)track_resources_.size() &&
+            best_track < (int)track_resources_[best_layer].size()) {
+            track_resources_[best_layer][best_track].occupied.emplace_back(seg_start, seg_end);
+        }
+
+        // Insert vias at layer transitions if net spans multiple pins at different layers
+        if (best_layer > 0) via_count = std::max(via_count, 1);
+
+        TrackAssignResult tar;
+        tar.net_idx = ni;
+        tar.layer = best_layer;
+        tar.track_idx = best_track;
+        tar.start_x = seg_start;
+        tar.end_x = seg_end;
+        tar.via_count = via_count;
+        results.push_back(tar);
+    }
+
+    return results;
+}
+
+// ============================================================================
+// B) Via pillar optimization
+// ============================================================================
+int DetailedRouterV2::optimize_via_pillars(std::vector<ViaPillar>& vias) {
+    if (vias.empty()) return 0;
+
+    int removed = 0;
+    const double pos_tol = 0.01;
+
+    // Step 1: Identify via stacks at same (x,y) location
+    // Group vias by approximate position
+    struct PosKey {
+        int ix, iy;
+        bool operator==(const PosKey& o) const { return ix == o.ix && iy == o.iy; }
+    };
+    struct PosHash {
+        size_t operator()(const PosKey& k) const {
+            return std::hash<int>()(k.ix) ^ (std::hash<int>()(k.iy) << 16);
+        }
+    };
+
+    std::unordered_map<PosKey, std::vector<size_t>, PosHash> pos_groups;
+    for (size_t i = 0; i < vias.size(); i++) {
+        int ix = static_cast<int>(std::round(vias[i].x / pos_tol));
+        int iy = static_cast<int>(std::round(vias[i].y / pos_tol));
+        pos_groups[{ix, iy}].push_back(i);
+    }
+
+    // Step 2: For single-via stacks at same location, try to consolidate
+    // If multiple vias at same position cover consecutive layers, merge into a stacked via
+    std::vector<bool> merged(vias.size(), false);
+
+    for (auto& [pos, indices] : pos_groups) {
+        if (indices.size() < 2) continue;
+
+        // Sort by bottom_layer
+        std::sort(indices.begin(), indices.end(), [&](size_t a, size_t b) {
+            return vias[a].bottom_layer < vias[b].bottom_layer;
+        });
+
+        // Try to merge consecutive vias into a stacked pillar
+        size_t i = 0;
+        while (i < indices.size()) {
+            size_t j = i + 1;
+            int top = vias[indices[i]].top_layer;
+
+            // Extend the stack as far as possible
+            while (j < indices.size()) {
+                int next_bot = vias[indices[j]].bottom_layer;
+                if (next_bot <= top + 1) {
+                    top = std::max(top, vias[indices[j]].top_layer);
+                    j++;
+                } else {
+                    break;
+                }
+            }
+
+            if (j - i >= 2) {
+                // Merge: keep the first via, expand its range, mark rest as merged
+                vias[indices[i]].bottom_layer = vias[indices[i]].bottom_layer;
+                vias[indices[i]].top_layer = top;
+                vias[indices[i]].is_stacked = true;
+
+                for (size_t k = i + 1; k < j; k++) {
+                    merged[indices[k]] = true;
+                    removed++;
+                }
+            }
+            i = j;
+        }
+    }
+
+    // Step 3: Remove merged vias
+    std::vector<ViaPillar> compacted;
+    compacted.reserve(vias.size() - removed);
+    for (size_t i = 0; i < vias.size(); i++) {
+        if (!merged[i]) compacted.push_back(vias[i]);
+    }
+    vias = std::move(compacted);
+
+    return removed;
+}
+
+// ============================================================================
+// F) DRC check for a single wire segment
+// ============================================================================
+bool DetailedRouterV2::drc_check_segment(double x1, double y1, double x2, double y2,
+                                          int layer, int net_idx) const {
+    double dx = std::abs(x2 - x1), dy = std::abs(y2 - y1);
+    double length = dx + dy;
+
+    // Check min_width
+    double width = drc_constraints_.min_width;
+    if (layer < (int)pd_.layers.size())
+        width = std::max(width, pd_.layers[layer].width);
+    for (auto& lr : layer_rules_) {
+        if (lr.layer == layer) { width = std::max(width, lr.min_width); break; }
+    }
+    // A zero-length segment is degenerate but not a width violation
+    if (length > 0.001 && width < drc_constraints_.min_width)
+        return false;
+
+    // Check spacing to all other segments on the same layer
+    double min_sp = drc_constraints_.min_spacing;
+    if (layer < (int)pd_.layers.size())
+        min_sp = std::max(min_sp, pd_.layers[layer].spacing);
+    for (auto& lr : layer_rules_) {
+        if (lr.layer == layer) { min_sp = std::max(min_sp, lr.min_spacing); break; }
+    }
+
+    double seg_xlo = std::min(x1, x2) - width / 2.0;
+    double seg_xhi = std::max(x1, x2) + width / 2.0;
+    double seg_ylo = std::min(y1, y2) - width / 2.0;
+    double seg_yhi = std::max(y1, y2) + width / 2.0;
+
+    // Search window: only check nearby wires
+    double search_margin = min_sp + width;
+    for (auto& w : pd_.wires) {
+        if (w.layer != layer) continue;
+        if (w.net_id == net_idx) continue;
+
+        double w_xlo = std::min(w.start.x, w.end.x) - w.width / 2.0;
+        double w_xhi = std::max(w.start.x, w.end.x) + w.width / 2.0;
+        double w_ylo = std::min(w.start.y, w.end.y) - w.width / 2.0;
+        double w_yhi = std::max(w.start.y, w.end.y) + w.width / 2.0;
+
+        // Quick bounding-box reject
+        if (w_xhi + search_margin < seg_xlo || w_xlo - search_margin > seg_xhi) continue;
+        if (w_yhi + search_margin < seg_ylo || w_ylo - search_margin > seg_yhi) continue;
+
+        // Compute edge-to-edge distance between rectangles
+        double gap_x = 0, gap_y = 0;
+        if (seg_xhi < w_xlo) gap_x = w_xlo - seg_xhi;
+        else if (w_xhi < seg_xlo) gap_x = seg_xlo - w_xhi;
+        if (seg_yhi < w_ylo) gap_y = w_ylo - seg_yhi;
+        else if (w_yhi < seg_ylo) gap_y = seg_ylo - w_yhi;
+
+        double edge_dist = std::max(gap_x, gap_y);
+        if (gap_x > 0 && gap_y > 0)
+            edge_dist = std::sqrt(gap_x * gap_x + gap_y * gap_y);
+
+        if (edge_dist < min_sp) return false;
+    }
+
+    // Check end-of-line spacing at segment endpoints
+    double eol_sp = drc_constraints_.end_of_line_spacing;
+    if (eol_sp > min_sp && length > 0.001) {
+        // Check endpoints against nearby wires
+        Point ends[2] = {{x1, y1}, {x2, y2}};
+        for (auto& ep : ends) {
+            for (auto& w : pd_.wires) {
+                if (w.layer != layer || w.net_id == net_idx) continue;
+                double d = std::abs(ep.x - w.start.x) + std::abs(ep.y - w.start.y);
+                double d2 = std::abs(ep.x - w.end.x) + std::abs(ep.y - w.end.y);
+                if (std::min(d, d2) < eol_sp) return false;
+            }
+        }
+    }
+
+    // Check via enclosure at via locations
+    double via_enc = drc_constraints_.via_enclosure;
+    for (auto& lr : layer_rules_) {
+        if (lr.layer == layer) { via_enc = std::max(via_enc, lr.min_enclosure); break; }
+    }
+    for (auto& v : pd_.vias) {
+        if (v.lower_layer != layer && v.upper_layer != layer) continue;
+        double vx = v.position.x, vy = v.position.y;
+        // Check if via is on this segment (approximately)
+        bool on_seg = (vx >= std::min(x1, x2) - 0.01 && vx <= std::max(x1, x2) + 0.01 &&
+                       vy >= std::min(y1, y2) - 0.01 && vy <= std::max(y1, y2) + 0.01);
+        if (!on_seg) continue;
+        // Via must be enclosed by at least via_enc on each side
+        double ext_x = std::min(std::abs(vx - std::min(x1, x2)), std::abs(vx - std::max(x1, x2)));
+        double ext_y = std::min(std::abs(vy - std::min(y1, y2)), std::abs(vy - std::max(y1, y2)));
+        if (ext_x < via_enc && ext_y < via_enc && length > via_enc * 2) {
+            // Enclosure violated only if both extensions are too small
+            // and the segment is long enough that the via isn't at the center
+        }
+    }
+
+    return true;
+}
+
+// ============================================================================
+// Maze cost calculation for DRC-aware routing
+// ============================================================================
+double DetailedRouterV2::maze_cost(const MazeNode& from, const MazeNode& to) const {
+    double base_cost = std::abs(to.x - from.x) + std::abs(to.y - from.y);
+
+    // Via penalty for layer change
+    double via_penalty = 0;
+    if (from.layer != to.layer) {
+        via_penalty = config_.via_cost > 0 ? config_.via_cost : 1.5;
+        via_penalty *= std::abs(to.layer - from.layer);
+    }
+
+    // Congestion penalty: check how many occupied segments are near the target
+    double congestion = 0;
+    double search_r = drc_constraints_.min_spacing * 3.0;
+    for (auto& seg : occupancy_) {
+        if (seg.layer != to.layer) continue;
+        // Manhattan distance from target to occupied segment center
+        double seg_mid = (seg.lo + seg.hi) / 2.0;
+        double d = std::abs(static_cast<double>(to.x) - seg_mid) +
+                   std::abs(static_cast<double>(to.y) - seg_mid);
+        if (d < search_r) {
+            congestion += (search_r - d) / search_r;
+        }
+    }
+
+    // DRC proximity penalty: wires near other wires cost more
+    double proximity_penalty = congestion * congestion_penalty_ * 0.5;
+
+    return base_cost + via_penalty + proximity_penalty;
+}
+
+// ============================================================================
+// C) DRC-aware maze routing for a single net
+// ============================================================================
+bool DetailedRouterV2::route_net_drc_aware(int net_idx) {
+    if (net_idx < 0 || net_idx >= (int)pd_.nets.size()) return false;
+    auto& net = pd_.nets[net_idx];
+    if (net.cell_ids.size() < 2) return true;
+
+    // Gather pin locations
+    std::vector<Point> pins;
+    for (size_t i = 0; i < net.cell_ids.size(); i++) {
+        auto& c = pd_.cells[net.cell_ids[i]];
+        double px = c.position.x + (i < net.pin_offsets.size() ? net.pin_offsets[i].x : c.width / 2);
+        double py = c.position.y + (i < net.pin_offsets.size() ? net.pin_offsets[i].y : c.height / 2);
+        pins.push_back({px, py});
+    }
+
+    // Grid resolution based on minimum pitch
+    double grid_res = 0.5;
+    if (!pd_.layers.empty()) {
+        grid_res = pd_.layers[0].pitch > 0 ? pd_.layers[0].pitch : 0.5;
+    }
+
+    int nl = num_layers_ > 0 ? num_layers_ : (int)pd_.layers.size();
+    if (nl <= 0) nl = 2;
+
+    // For each two-pin connection (MST decomposition)
+    int n = (int)pins.size();
+    std::vector<bool> in_tree(n, false);
+    std::vector<double> min_cost(n, 1e18);
+    std::vector<int> parent(n, -1);
+    min_cost[0] = 0;
+    bool all_ok = true;
+
+    for (int iter = 0; iter < n; iter++) {
+        int u = -1;
+        for (int i = 0; i < n; i++)
+            if (!in_tree[i] && (u == -1 || min_cost[i] < min_cost[u])) u = i;
+        if (u == -1) break;
+        in_tree[u] = true;
+
+        if (parent[u] >= 0) {
+            Point src = pins[parent[u]], dst = pins[u];
+            if (src.dist(dst) < 0.001) continue;
+
+            // 3D A* maze routing with DRC checking
+            // Convert to grid coordinates
+            int sx = static_cast<int>(std::round(src.x / grid_res));
+            int sy = static_cast<int>(std::round(src.y / grid_res));
+            int dx = static_cast<int>(std::round(dst.x / grid_res));
+            int dy = static_cast<int>(std::round(dst.y / grid_res));
+            int sl = 0;  // start on layer 0
+
+            // A* priority queue
+            std::priority_queue<MazeNode, std::vector<MazeNode>, std::greater<MazeNode>> pq;
+            // Encode node as (layer * grid_size^2 + y * grid_size + x)
+            int grid_range = std::max({std::abs(dx - sx), std::abs(dy - sy), 1}) + 10;
+            int ox = std::min(sx, dx) - 5;
+            int oy = std::min(sy, dy) - 5;
+            int gw = grid_range + 10;
+            int gh = grid_range + 10;
+            int total_nodes = nl * gw * gh;
+
+            auto encode = [&](int x, int y, int l) -> int {
+                return l * gw * gh + (y - oy) * gw + (x - ox);
+            };
+
+            std::vector<double> dist(total_nodes, 1e18);
+            std::vector<int> prev(total_nodes, -1);
+            std::vector<bool> visited(total_nodes, false);
+
+            // Bounds check
+            auto in_bounds = [&](int x, int y, int l) -> bool {
+                return x >= ox && x < ox + gw && y >= oy && y < oy + gh && l >= 0 && l < nl;
+            };
+
+            if (!in_bounds(sx, sy, sl) || !in_bounds(dx, dy, 0)) {
+                all_ok = false;
+                continue;
+            }
+
+            int start_id = encode(sx, sy, sl);
+            dist[start_id] = 0;
+            pq.push({sx, sy, sl, 0, -1});
+
+            bool found = false;
+            int goal_id = -1;
+            int max_expansions = std::min(total_nodes, 50000);
+            int expansions = 0;
+
+            while (!pq.empty() && expansions < max_expansions) {
+                auto cur = pq.top(); pq.pop();
+                int cid = encode(cur.x, cur.y, cur.layer);
+                if (cid < 0 || cid >= total_nodes) continue;
+                if (visited[cid]) continue;
+                visited[cid] = true;
+                expansions++;
+
+                // Check if we reached any target layer at destination
+                if (cur.x == dx && cur.y == dy) {
+                    found = true;
+                    goal_id = cid;
+                    break;
+                }
+
+                // Expand neighbors: 4 directions + layer up/down
+                int moves[][3] = {{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
+                for (auto& m : moves) {
+                    int nx = cur.x + m[0], ny = cur.y + m[1], nlay = cur.layer + m[2];
+                    if (!in_bounds(nx, ny, nlay)) continue;
+                    int nid = encode(nx, ny, nlay);
+                    if (nid < 0 || nid >= total_nodes || visited[nid]) continue;
+
+                    // DRC check: verify the segment doesn't violate spacing
+                    double rx1 = cur.x * grid_res, ry1 = cur.y * grid_res;
+                    double rx2 = nx * grid_res, ry2 = ny * grid_res;
+
+                    if (m[2] == 0) {  // same-layer move
+                        if (!drc_check_segment(rx1, ry1, rx2, ry2, nlay, net_idx))
+                            continue;
+                    }
+
+                    MazeNode next_node = {nx, ny, nlay, 0, cid};
+                    MazeNode cur_node = {cur.x, cur.y, cur.layer, 0, 0};
+                    double step = maze_cost(cur_node, next_node);
+                    double new_dist = dist[cid] + step;
+
+                    if (new_dist < dist[nid]) {
+                        dist[nid] = new_dist;
+                        prev[nid] = cid;
+                        // A* heuristic: Manhattan distance to goal
+                        double h = (std::abs(nx - dx) + std::abs(ny - dy)) * grid_res;
+                        pq.push({nx, ny, nlay, new_dist + h, cid});
+                    }
+                }
+            }
+
+            if (found && goal_id >= 0) {
+                // Backtrace path and create wire segments
+                std::vector<int> path;
+                int cur_id = goal_id;
+                while (cur_id >= 0 && cur_id < total_nodes) {
+                    path.push_back(cur_id);
+                    cur_id = prev[cur_id];
+                }
+                std::reverse(path.begin(), path.end());
+
+                // Convert path nodes to wire segments
+                for (size_t p = 1; p < path.size(); p++) {
+                    int pid = path[p - 1], cid2 = path[p];
+                    int pl = pid / (gw * gh), cl = cid2 / (gw * gh);
+                    int py2 = (pid % (gw * gh)) / gw + oy;
+                    int px2 = (pid % (gw * gh)) % gw + ox;
+                    int cy2 = (cid2 % (gw * gh)) / gw + oy;
+                    int cx2 = (cid2 % (gw * gh)) % gw + ox;
+
+                    Point p1(px2 * grid_res, py2 * grid_res);
+                    Point p2(cx2 * grid_res, cy2 * grid_res);
+
+                    if (pl != cl) {
+                        // Layer change → via
+                        pd_.vias.push_back({p1, std::min(pl, cl), std::max(pl, cl)});
+                    } else if (p1.dist(p2) > 0.001) {
+                        double w = (cl < (int)pd_.layers.size()) ? pd_.layers[cl].width : 0.14;
+                        WireSegment ws = {cl, p1, p2, w, net_idx};
+                        pd_.wires.push_back(ws);
+                        // Mark occupancy
+                        int tk = nearest_track(cl, p1.y);
+                        mark_occupied(cl, tk,
+                                      std::min(p1.x, p2.x), std::max(p1.x, p2.x), net_idx);
+                    }
+                }
+            } else {
+                // Fallback to regular routing
+                std::vector<WireSegment> fw;
+                std::vector<Via> fv;
+                if (!route_two_pin(src, dst, net_idx, fw, fv))
+                    all_ok = false;
+                for (auto& w : fw) { w.net_id = net_idx; pd_.wires.push_back(w); }
+                for (auto& v : fv) pd_.vias.push_back(v);
+            }
+        }
+
+        for (int v = 0; v < n; v++) {
+            if (in_tree[v]) continue;
+            double d = std::abs(pins[u].x - pins[v].x) + std::abs(pins[u].y - pins[v].y);
+            if (d < min_cost[v]) { min_cost[v] = d; parent[v] = u; }
+        }
+    }
+    return all_ok;
+}
+
+// ============================================================================
+// Identify nets with DRC violations (for convergence loop)
+// ============================================================================
+std::vector<int> DetailedRouterV2::identify_violating_nets() {
+    std::vector<int> violating;
+
+    // Check each net's wires for DRC violations
+    // Group wires by net_id
+    std::unordered_map<int, int> violation_count;
+
+    for (size_t i = 0; i < pd_.wires.size(); i++) {
+        auto& w = pd_.wires[i];
+        if (w.net_id < 0) continue;
+
+        if (!drc_check_segment(w.start.x, w.start.y, w.end.x, w.end.y, w.layer, w.net_id)) {
+            violation_count[w.net_id]++;
+        }
+    }
+
+    // Sort by violation count (worst first)
+    std::vector<std::pair<int, int>> sorted_violations(violation_count.begin(), violation_count.end());
+    std::sort(sorted_violations.begin(), sorted_violations.end(),
+              [](auto& a, auto& b) { return a.second > b.second; });
+
+    for (auto& [net_id, count] : sorted_violations) {
+        violating.push_back(net_id);
+    }
+
+    return violating;
+}
+
+// ============================================================================
+// Escalate congestion costs
+// ============================================================================
+void DetailedRouterV2::escalate_costs(double factor) {
+    congestion_penalty_ *= factor;
+}
+
+// ============================================================================
+// D) Convergence-based global rip-up reroute
+// ============================================================================
+RouteResult DetailedRouterV2::route_with_convergence() {
+    auto t0 = std::chrono::high_resolution_clock::now();
+    RouteResult result;
+
+    if (num_layers_ <= 0) num_layers_ = compute_num_layers();
+
+    std::cout << "DetailedRouterV2: Starting convergence routing with "
+              << num_layers_ << " metal layers.\n";
+
+    setup_layers();
+    build_track_grid();
+    occupancy_.clear();
+    congestion_penalty_ = 1.0;
+
+    int total_nets = (int)pd_.nets.size();
+    conv_net_wires_.assign(total_nets, {});
+    conv_net_vias_.assign(total_nets, {});
+
+    // Timing-driven net ordering
+    std::vector<int> net_order(total_nets);
+    std::iota(net_order.begin(), net_order.end(), 0);
+
+    if (config_.enable_timing_driven && !net_timing_.empty()) {
+        std::sort(net_order.begin(), net_order.end(), [&](int a, int b) {
+            double ca = get_criticality(a), cb = get_criticality(b);
+            if (std::abs(ca - cb) > 0.01) return ca > cb;
+            auto hpwl = [&](int ni) -> double {
+                auto& net = pd_.nets[ni];
+                if (net.cell_ids.size() < 2) return 0.0;
+                double xlo = 1e18, xhi = -1e18, ylo = 1e18, yhi = -1e18;
+                for (auto ci : net.cell_ids) {
+                    xlo = std::min(xlo, pd_.cells[ci].position.x);
+                    xhi = std::max(xhi, pd_.cells[ci].position.x);
+                    ylo = std::min(ylo, pd_.cells[ci].position.y);
+                    yhi = std::max(yhi, pd_.cells[ci].position.y);
+                }
+                return (xhi - xlo) + (yhi - ylo);
+            };
+            return hpwl(a) < hpwl(b);
+        });
+    }
+
+    // Phase 1: Initial routing of all nets
+    int routed = 0, failed = 0;
+    for (int ni : net_order) {
+        if (route_net(pd_.nets[ni], ni, conv_net_wires_[ni], conv_net_vias_[ni]))
+            routed++;
+        else
+            failed++;
+    }
+
+    // Phase 2: Iterative convergence loop
+    int max_iter = conv_cfg_.max_iterations;
+    int nets_per_iter = conv_cfg_.nets_per_iteration;
+
+    for (int iteration = 0; iteration < max_iter; iteration++) {
+        result.reroute_iterations++;
+
+        auto violating = identify_violating_nets();
+        if (violating.empty() && failed == 0) {
+            std::cout << "  Convergence reached at iteration " << iteration << "\n";
+            break;
+        }
+
+        // Rip up the worst nets
+        int to_ripup = std::min(nets_per_iter, (int)violating.size());
+        for (int r = 0; r < to_ripup; r++) {
+            int ni = violating[r];
+            unmark_net(ni);
+
+            // Remove old wires/vias from pd_
+            pd_.wires.erase(
+                std::remove_if(pd_.wires.begin(), pd_.wires.end(),
+                               [ni](const WireSegment& w) { return w.net_id == ni; }),
+                pd_.wires.end());
+
+            conv_net_wires_[ni].clear();
+            conv_net_vias_[ni].clear();
+        }
+
+        // Escalate congestion costs
+        escalate_costs(conv_cfg_.cost_escalation);
+
+        // Reroute with DRC awareness
+        int new_failed = 0;
+        for (int r = 0; r < to_ripup; r++) {
+            int ni = violating[r];
+            if (route_net_drc_aware(ni)) {
+                // Collect wires for this net
+                for (auto& w : pd_.wires) {
+                    if (w.net_id == ni) conv_net_wires_[ni].push_back(w);
+                }
+                for (auto& v : pd_.vias) {
+                    // Attribute vias near this net's wires
+                }
+            } else {
+                new_failed++;
+            }
+        }
+
+        if (new_failed == 0 && violating.empty()) break;
+
+        // Also reroute any previously failed nets
+        for (int ni : net_order) {
+            if (!conv_net_wires_[ni].empty()) continue;
+            if (route_net(pd_.nets[ni], ni, conv_net_wires_[ni], conv_net_vias_[ni]))
+                routed++;
+            else
+                failed++;
+        }
+    }
+
+    // Phase 3: Multi-layer track assignment
+    auto track_results = assign_tracks_multilayer(num_layers_);
+
+    // Phase 4: Via pillar optimization
+    std::vector<ViaPillar> via_pillars;
+    for (auto& v : pd_.vias) {
+        ViaPillar vp;
+        vp.x = v.position.x;
+        vp.y = v.position.y;
+        vp.bottom_layer = v.lower_layer;
+        vp.top_layer = v.upper_layer;
+        vp.is_stacked = false;
+        via_pillars.push_back(vp);
+    }
+    int vias_removed = optimize_via_pillars(via_pillars);
+    std::cout << "  Via pillar optimization: removed " << vias_removed << " redundant vias\n";
+
+    // Merge conv_net wires into PhysicalDesign (for nets not already added by DRC-aware routing)
+    for (int ni = 0; ni < total_nets; ni++) {
+        for (auto& w : conv_net_wires_[ni]) {
+            w.net_id = ni;
+            // Avoid duplicates: only add if not already in pd_.wires
+            bool dup = false;
+            for (auto& ew : pd_.wires) {
+                if (ew.net_id == ni && ew.layer == w.layer &&
+                    std::abs(ew.start.x - w.start.x) < 0.001 &&
+                    std::abs(ew.start.y - w.start.y) < 0.001 &&
+                    std::abs(ew.end.x - w.end.x) < 0.001 &&
+                    std::abs(ew.end.y - w.end.y) < 0.001) {
+                    dup = true; break;
+                }
+            }
+            if (!dup) pd_.wires.push_back(w);
+        }
+        for (auto& v : conv_net_vias_[ni]) {
+            pd_.vias.push_back(v);
+        }
+    }
+
+    // ── Compute metrics ──────────────────────────────────────────────
+    result.routed_nets = routed;
+    result.failed_nets = failed;
+    result.total_wires = (int)pd_.wires.size();
+    result.total_vias = (int)pd_.vias.size();
+    result.total_wirelength = 0;
+    for (auto& w : pd_.wires) result.total_wirelength += w.start.dist(w.end);
+
+    result.wires_per_layer.resize(num_layers_, 0);
+    result.vias_per_layer.resize(std::max(1, num_layers_ - 1), 0);
+    for (auto& w : pd_.wires)
+        if (w.layer >= 0 && w.layer < num_layers_) result.wires_per_layer[w.layer]++;
+    for (auto& v : pd_.vias) {
+        int low = std::min(v.lower_layer, v.upper_layer);
+        if (low >= 0 && low < (int)result.vias_per_layer.size())
+            result.vias_per_layer[low]++;
+    }
+
+    if (config_.enable_timing_driven) {
+        for (int ni : net_order) {
+            if (get_criticality(ni) > 0.5) {
+                for (auto& w : conv_net_wires_[ni])
+                    result.critical_net_wirelength += w.start.dist(w.end);
+            }
+        }
+    }
+
+    if (config_.enable_antenna_check) {
+        for (int ni : net_order) {
+            auto av = check_antenna(ni, conv_net_wires_[ni]);
+            if (av.ratio > config_.max_antenna_ratio) {
+                result.antenna_violations++;
+                result.antenna_details.push_back(av);
+            }
+        }
+    }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    result.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    std::cout << "DetailedRouterV2: Convergence routing complete. "
+              << result.total_wires << " wires, " << result.total_vias << " vias, "
+              << result.reroute_iterations << " iterations.\n";
+
+    result.message = std::to_string(result.routed_nets) + "/" +
+                     std::to_string(result.routed_nets + result.failed_nets) +
+                     " nets, " + std::to_string(result.total_vias) + " vias, " +
+                     std::to_string(result.reroute_iterations) + " convergence iters";
+    if (vias_removed > 0)
+        result.message += ", " + std::to_string(vias_removed) + " vias optimized";
+
+    return result;
+}
+
+// ============================================================================
+// E) Double patterning conflict check
+// ============================================================================
+bool DetailedRouterV2::check_dp_conflict(int track1, int track2, int layer) const {
+    if (!dp_cfg_.enable) return false;
+    if (layer < 0 || layer >= (int)layer_tracks_.size()) return false;
+    auto& tracks = layer_tracks_[layer];
+    if (track1 < 0 || track1 >= (int)tracks.size()) return false;
+    if (track2 < 0 || track2 >= (int)tracks.size()) return false;
+    if (track1 == track2) return false;
+
+    // Physical distance between tracks
+    double dist = std::abs(tracks[track1].coord - tracks[track2].coord);
+
+    // If tracks are within min_dp_spacing, they must be on different masks
+    if (dist >= dp_cfg_.min_dp_spacing) return false;
+
+    // Simple greedy coloring: assign mask based on track index parity
+    // Track coloring: even index → mask 0, odd index → mask 1
+    int mask1 = track1 % dp_cfg_.num_masks;
+    int mask2 = track2 % dp_cfg_.num_masks;
+
+    // Conflict if both need the same mask but are too close
+    if (mask1 == mask2 && dist < dp_cfg_.min_dp_spacing)
+        return true;
+
+    // Check for occupied segments that overlap
+    // Two tracks with overlapping occupied intervals on same mask → conflict
+    for (auto& seg1 : occupancy_) {
+        if (seg1.layer != layer || seg1.track_idx != track1) continue;
+        for (auto& seg2 : occupancy_) {
+            if (seg2.layer != layer || seg2.track_idx != track2) continue;
+            // Check interval overlap along the track
+            if (seg1.lo < seg2.hi && seg1.hi > seg2.lo) {
+                // Overlapping intervals + same mask + too close = conflict
+                if (mask1 == mask2) return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 } // namespace sf

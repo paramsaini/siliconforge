@@ -157,4 +157,135 @@ NoiseResult NoiseAnalyzer::analyze() {
     return r;
 }
 
+// ── Enhanced: Power Supply Noise (Ldi/dt) ────────────────────────────
+
+PsnResult NoiseAnalyzer::analyze_power_supply_noise(double pkg_inductance_nh) {
+    PsnResult psn;
+    psn.inductance_nh = pkg_inductance_nh;
+
+    // Compute max di/dt from switching activity profile
+    double di_dt_max = cfg_.num_switching_outputs * cfg_.di_dt_ma_per_ns;
+    psn.ldi_dt_max = di_dt_max;
+
+    // V_noise = L × di/dt  (nH × mA/ns = mV)
+    psn.peak_noise_mv = pkg_inductance_nh * di_dt_max;
+
+    // Generate noise waveform (simplified triangular pulse)
+    double rise_time_ns = cfg_.output_rise_time_ns;
+    int waveform_pts = 50;
+    double total_time_ns = rise_time_ns * 4;
+    for (int i = 0; i < waveform_pts; ++i) {
+        double t = total_time_ns * i / (waveform_pts - 1);
+        double noise = 0;
+        if (t < rise_time_ns) {
+            noise = psn.peak_noise_mv * (t / rise_time_ns);
+        } else if (t < 2 * rise_time_ns) {
+            noise = psn.peak_noise_mv * (2.0 - t / rise_time_ns);
+        } else if (t < 3 * rise_time_ns) {
+            noise = -psn.peak_noise_mv * 0.3 * ((t - 2 * rise_time_ns) / rise_time_ns);
+        } else {
+            noise = -psn.peak_noise_mv * 0.3 *
+                    (1.0 - (t - 3 * rise_time_ns) / rise_time_ns);
+        }
+        psn.noise_waveform.push_back({t, noise});
+    }
+    return psn;
+}
+
+// ── Enhanced: Simultaneous Switching Output (SSO) ────────────────────
+
+SsoResult NoiseAnalyzer::analyze_sso(double max_bounce_mv) {
+    SsoResult sso;
+    sso.total_outputs = cfg_.num_switching_outputs;
+    sso.simultaneous_switching = cfg_.num_switching_outputs;
+
+    double l_pkg = cfg_.pkg_inductance_nh;
+    double di_dt_per_out = cfg_.di_dt_ma_per_ns;
+
+    // Ground bounce = N × L_pkg × di/dt_per_output  (nH × mA/ns = mV)
+    sso.ground_bounce_mv = sso.simultaneous_switching * l_pkg * di_dt_per_out;
+    // VDD droop is similar but typically ~70% of ground bounce
+    sso.vdd_droop_mv = sso.ground_bounce_mv * 0.7;
+    sso.within_budget = sso.ground_bounce_mv <= max_bounce_mv;
+    return sso;
+}
+
+// ── Enhanced: Noise Margin Verification ──────────────────────────────
+
+NoiseMarginResult NoiseAnalyzer::verify_noise_margins() {
+    NoiseMarginResult nmr;
+    double noise_margin = cfg_.vdd * 1000.0 * cfg_.noise_margin_pct / 100.0;
+    double marginal_threshold = noise_margin * 0.8;  // 80% of margin is "marginal"
+    nmr.worst_margin = noise_margin;
+
+    for (int ni = 0; ni < (int)pd_.nets.size(); ++ni) {
+        auto& net = pd_.nets[ni];
+        if (net.cell_ids.empty()) continue;
+
+        double max_noise = 0;
+        for (auto cid : net.cell_ids) {
+            auto& c = pd_.cells[cid];
+            double noise = estimate_supply_noise(
+                c.position.x + c.width / 2, c.position.y + c.height / 2);
+            max_noise = std::max(max_noise, noise);
+        }
+
+        nmr.total_nets++;
+        double remaining = noise_margin - max_noise;
+
+        if (remaining < nmr.worst_margin)
+            nmr.worst_margin = remaining;
+
+        if (max_noise > noise_margin) {
+            nmr.failing_nets++;
+            nmr.violations.push_back({ni, remaining});
+        } else if (max_noise > marginal_threshold) {
+            nmr.marginal_nets++;
+        }
+    }
+    return nmr;
+}
+
+// ── Enhanced: Jitter Analysis ────────────────────────────────────────
+
+JitterResult NoiseAnalyzer::analyze_jitter(double clock_freq_hz) {
+    JitterResult jr;
+
+    // Random jitter from thermal noise: RJ_rms ∝ kT/C × 1/slew
+    double kT = 4.14e-21;  // at 300K in Joules
+    double c_total = (cfg_.on_die_decap_nf + cfg_.pkg_decap_nf) * 1e-9;
+    double v_noise_rms = (c_total > 0) ? std::sqrt(kT / c_total) : 1e-3;
+    double slew_v_per_s = cfg_.vdd / (1.0 / clock_freq_hz * 0.1);  // 10% of period
+    jr.rj_rms_ps = (slew_v_per_s > 0) ? (v_noise_rms / slew_v_per_s) * 1e12 : 0;
+
+    // Deterministic jitter from crosstalk + supply noise
+    double psn = cfg_.pkg_inductance_nh * cfg_.di_dt_ma_per_ns;  // mV
+    double dj_supply = noise_to_jitter(psn, cfg_.vdd * 1000.0);
+    double dj_crosstalk = 2.0;  // typical crosstalk DJ in ps
+    jr.dj_pp_ps = dj_supply + dj_crosstalk;
+
+    // Total jitter at BER = 1e-12: TJ = DJ_pp + 2×Q×RJ_rms
+    double Q_ber12 = 7.03;  // Q factor for BER=1e-12
+    jr.tj_at_ber_ps = jr.dj_pp_ps + 2.0 * Q_ber12 * jr.rj_rms_ps;
+    jr.source = "thermal+supply+crosstalk";
+    return jr;
+}
+
+// ── Enhanced: Full Enhanced Noise Run ─────────────────────────────────
+
+NoiseResult NoiseAnalyzer::run_enhanced() {
+    NoiseResult r = analyze();
+
+    auto psn = analyze_power_supply_noise(cfg_.pkg_inductance_nh);
+    auto sso = analyze_sso(100.0);
+    auto margins = verify_noise_margins();
+    auto jitter = analyze_jitter(1e9 / cfg_.clock_period_ps * 1e3);
+
+    r.message += " | Enhanced: PSN=" + std::to_string((int)psn.peak_noise_mv) + "mV" +
+        ", SSO_bounce=" + std::to_string((int)sso.ground_bounce_mv) + "mV" +
+        ", margins_fail=" + std::to_string(margins.failing_nets) +
+        ", TJ=" + std::to_string((int)jitter.tj_at_ber_ps) + "ps";
+    return r;
+}
+
 } // namespace sf
