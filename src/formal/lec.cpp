@@ -785,4 +785,71 @@ LecResult LecEngine::run_enhanced() {
     return result;
 }
 
+// ── Tier 2: Hierarchical LEC ────────────────────────────────────────
+
+std::vector<std::pair<int,int>> LecEngine::partition_into_modules(
+    const Netlist& nl, int max_size) {
+    std::vector<std::pair<int,int>> modules;
+    int n = (int)nl.num_gates();
+    if (n == 0) return modules;
+
+    // Simple partition: contiguous blocks of max_size gates
+    // A real implementation would use connectivity-based clustering
+    for (int start = 0; start < n; start += max_size) {
+        int end = std::min(start + max_size, n);
+        modules.push_back({start, end});
+    }
+    return modules;
+}
+
+LecEngine::HierLecResult LecEngine::hierarchical_check(const HierLecConfig& cfg) {
+    HierLecResult hr;
+
+    auto golden_mods = partition_into_modules(golden_, cfg.max_module_size);
+    auto revised_mods = partition_into_modules(revised_, cfg.max_module_size);
+
+    // Match modules by index (simple 1:1 correspondence)
+    int num_pairs = std::min((int)golden_mods.size(), (int)revised_mods.size());
+    hr.modules_compared = num_pairs;
+
+    for (int mi = 0; mi < num_pairs; mi++) {
+        ModuleMatch mm;
+        mm.module_name = "module_" + std::to_string(mi);
+        mm.golden_start = golden_mods[mi].first;
+        mm.golden_end = golden_mods[mi].second;
+        mm.revised_start = revised_mods[mi].first;
+        mm.revised_end = revised_mods[mi].second;
+
+        // Compare outputs in this module range
+        // For each primary output driven by gates in this range, verify equivalence
+        bool mod_equiv = true;
+        for (auto po : golden_.primary_outputs()) {
+            auto& net = golden_.net(po);
+            if (net.driver >= mm.golden_start && net.driver < mm.golden_end) {
+                // Find corresponding output in revised
+                for (auto rpo : revised_.primary_outputs()) {
+                    auto& rnet = revised_.net(rpo);
+                    if (rnet.name == net.name) {
+                        LecResult sub;
+                        if (!compare_output(net.name, po, rpo, sub)) {
+                            mod_equiv = false;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        mm.equivalent = mod_equiv;
+        if (mod_equiv) hr.modules_matched++;
+        else hr.modules_failed++;
+        hr.module_results.push_back(mm);
+    }
+
+    hr.equivalent = (hr.modules_failed == 0);
+    hr.message = "Hierarchical LEC: " + std::to_string(hr.modules_matched) + "/" +
+                 std::to_string(hr.modules_compared) + " modules matched";
+    return hr;
+}
+
 } // namespace sf

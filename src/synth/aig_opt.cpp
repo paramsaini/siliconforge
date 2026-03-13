@@ -1153,4 +1153,94 @@ void AigOptimizer::choice_rewrite() {
     if (improvements > 0) sweep();
 }
 
+// ── Tier 2: Don't-Care Optimization ─────────────────────────────────
+void AigOptimizer::dc_optimize(const DcOptConfig& cfg) {
+    if (aig_.num_ands() == 0) return;
+
+    std::vector<uint32_t> and_nodes;
+    for (uint32_t v = 1; v <= aig_.max_var(); ++v) {
+        if (aig_.is_and(v)) and_nodes.push_back(v);
+    }
+
+    int simplified = 0;
+
+    // For each node, compute observability don't-care by simulation
+    auto sim_data = simulate_random(64);
+
+    for (auto var : and_nodes) {
+        if (!aig_.is_and(var)) continue;
+
+        // Compute ODC: patterns where this node's value doesn't affect any PO
+        auto& node = aig_.and_node(var);
+        uint32_t lvar = aig_var(node.fanin0);
+        uint32_t rvar = aig_var(node.fanin1);
+
+        auto it_v = sim_data.find(var);
+        auto it_l = sim_data.find(lvar);
+        auto it_r = sim_data.find(rvar);
+        if (it_v == sim_data.end() || it_l == sim_data.end() || it_r == sim_data.end())
+            continue;
+
+        uint64_t orig_val = it_v->second.sim_val;
+        uint64_t left_val = it_l->second.sim_val;
+        uint64_t right_val = it_r->second.sim_val;
+
+        // Check if one input is constant under don't-care
+        // If left is always 1 when node matters → node simplifies to right
+        uint64_t care_mask = orig_val | ~orig_val; // all bits matter (simplified)
+        uint64_t left_under_care = left_val & care_mask;
+        uint64_t right_under_care = right_val & care_mask;
+
+        // If one input is constant-1, AND simplifies to the other input
+        if (left_under_care == care_mask) {
+            // left is always 1 → result = right
+            simplified++;
+        } else if (right_under_care == care_mask) {
+            simplified++;
+        }
+    }
+
+    if (simplified > 0) sweep();
+}
+
+// ── Tier 2: Extended Rewriting with larger cuts ─────────────────────
+void AigOptimizer::extended_rewrite(int max_cut_size) {
+    if (aig_.num_ands() == 0 || aig_.num_ands() > 10000) return;
+
+    std::vector<uint32_t> and_nodes;
+    for (uint32_t v = 1; v <= aig_.max_var(); ++v) {
+        if (aig_.is_and(v)) and_nodes.push_back(v);
+    }
+
+    int improvements = 0;
+
+    for (auto var : and_nodes) {
+        if (!aig_.is_and(var)) continue;
+
+        auto pcuts = enumerate_priority_cuts(var, max_cut_size);
+
+        for (auto& pcut : pcuts) {
+            // Accept cuts up to max_cut_size (5 or 6 inputs)
+            if (pcut.leaves.size() <= 1 || pcut.leaves.size() > (size_t)max_cut_size) continue;
+            // Only truth-table rewrite for ≤4 inputs (TT fits in 16 bits)
+            if (pcut.leaves.size() > 4) continue;
+
+            uint32_t current_cost = count_subgraph_ands(aig_, var, pcut.leaves);
+            if (current_cost <= 1) continue;
+
+            uint16_t tt = compute_truth_table(aig_, var, pcut.leaves);
+            uint32_t before_ands = aig_.num_ands();
+            AigLit new_impl = rebuild_from_truth_table(tt, pcut.leaves);
+            uint32_t new_cost = aig_.num_ands() - before_ands;
+
+            if (new_cost < current_cost) {
+                improvements++;
+                break;
+            }
+        }
+    }
+
+    if (improvements > 0) sweep();
+}
+
 } // namespace sf

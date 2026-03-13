@@ -77,6 +77,19 @@ private:
         uint32_t depth;
     };
     std::vector<PriorityCut> enumerate_priority_cuts(uint32_t var, int max_cut_size = 6);
+
+    // ── Tier 2: Advanced DAG rewriting ──────────────────────────────────
+public:
+    // Don't-care optimization: use observability don't-cares (ODC) to simplify
+    // nodes whose output doesn't matter for certain input patterns
+    struct DcOptConfig {
+        int max_window_size = 16;  // max sub-graph size for ODC computation
+        bool use_satisfiability = false; // use SAT for precise ODC (slower)
+    };
+    void dc_optimize(const DcOptConfig& cfg);
+
+    // Extended rewriting: use 5/6-input cuts for larger pattern matches
+    void extended_rewrite(int max_cut_size = 6);
 };
 
 } // namespace sf

@@ -30,6 +30,12 @@ struct SstaConfig {
     bool   enable_spatial_correlation    = true;
     unsigned int seed                    = 42;
     double confidence_level              = 0.997;  // 3-sigma
+
+    // Quasi-random sampling mode (Tier 2)
+    // Sobol/Halton low-discrepancy sequences converge faster than pseudo-random.
+    // For 1000 samples, Sobol typically gives 3-5× lower estimation error.
+    enum class SamplingMode { PSEUDO_RANDOM, HALTON, SOBOL };
+    SamplingMode sampling_mode = SamplingMode::PSEUDO_RANDOM;
 };
 
 // ── Process Variation Model ──────────────────────────────────────────
@@ -231,6 +237,14 @@ private:
     double spatial_correlation(GateId a, GateId b) const;
     std::vector<double> generate_correlated_locals(
         std::mt19937& rng, const std::vector<GateId>& gates) const;
+
+    // Quasi-random sequence generators (Tier 2)
+    // Halton sequence — base-prime low-discrepancy sequence
+    static double halton_seq(int index, int base);
+    // Inverse normal CDF (rational approximation, Abramowitz & Stegun)
+    static double inv_normal_cdf(double u);
+    // Generate quasi-random normal sample for dimension d, sample s
+    double quasi_random_normal(int sample_idx, int dimension) const;
 
     // Enhanced helpers
     static double phi_cdf(double x);   // standard normal CDF Φ(x)

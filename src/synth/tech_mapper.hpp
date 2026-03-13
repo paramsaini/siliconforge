@@ -114,6 +114,19 @@ private:
 
     // Helper: convert ExtendedMatch to CellMatch
     CellMatch to_cell_match(const ExtendedMatch& em) const;
+
+    // ── Tier 2: ILP-style optimal tech mapping ──────────────────────────
+    // Dynamic programming optimal covering that considers area+delay tradeoff.
+    // Approximates ILP by evaluating all match candidates per node and
+    // selecting the globally optimal combination via Lagrangian relaxation.
+public:
+    struct IlpMapConfig {
+        double area_weight = 0.5;
+        double delay_weight = 0.5;
+        int lagrangian_iterations = 10;
+        double lambda_step = 0.1;
+    };
+    Netlist map_optimal(const IlpMapConfig& cfg);
 };
 
 } // namespace sf

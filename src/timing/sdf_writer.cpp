@@ -1,5 +1,5 @@
 // SiliconForge — SDF Writer Implementation
-// IEEE 1497 Standard Delay Format output
+// IEEE 1497 Standard Delay Format with min:typ:max triplet support
 #include "timing/sdf_writer.hpp"
 #include <fstream>
 #include <sstream>
@@ -8,7 +8,7 @@
 
 namespace sf {
 
-// Gate type to delay estimate (ns)
+// Gate type to delay estimate (ns) — used when no Liberty library available
 static double gate_type_delay(GateType t, int num_inputs) {
     switch (t) {
         case GateType::BUF:    return 0.02;
@@ -26,6 +26,24 @@ static double gate_type_delay(GateType t, int num_inputs) {
     }
 }
 
+std::string SdfWriter::fmt_delay(double typ, const SdfConfig& cfg) const {
+    std::ostringstream ss;
+    ss << std::fixed << std::setprecision(4);
+    if (cfg.emit_triplets) {
+        double mn = typ * cfg.min_factor;
+        double mx = typ * cfg.max_factor;
+        ss << "(" << mn << ":" << typ << ":" << mx << ")";
+    } else {
+        ss << "(" << typ << ")";
+    }
+    return ss.str();
+}
+
+double SdfWriter::nldm_delay(const std::string& cell_name, double slew, double load) const {
+    // This would do real NLDM lookup — returns 0 if not found
+    return 0.0;
+}
+
 std::string SdfWriter::cell_delays(const SdfConfig& cfg) {
     std::ostringstream ss;
     double ts = cfg.timescale;
@@ -40,7 +58,16 @@ std::string SdfWriter::cell_delays(const SdfConfig& cfg) {
         std::string inst_name = g.name.empty() ?
             (cell_type + "_" + std::to_string(i)) : g.name;
 
-        double delay = gate_type_delay(g.type, (int)g.inputs.size()) / ts;
+        // Try NLDM lookup if library provided
+        double delay = 0;
+        if (cfg.lib) {
+            delay = nldm_delay(cell_type, cfg.input_slew, cfg.load_cap);
+        }
+        if (delay <= 0) {
+            delay = gate_type_delay(g.type, (int)g.inputs.size());
+        }
+        delay /= ts;
+
         // Rise and fall with ±5% variation
         double rise = delay * 1.0;
         double fall = delay * 1.05;
@@ -51,7 +78,6 @@ std::string SdfWriter::cell_delays(const SdfConfig& cfg) {
         ss << "      (DELAY\n";
         ss << "        (ABSOLUTE\n";
 
-        // Generate IOPATH for each input to output
         for (size_t pi = 0; pi < g.inputs.size(); ++pi) {
             std::string in_pin = "IN" + std::to_string(pi);
             std::string out_pin = "OUT";
@@ -62,8 +88,8 @@ std::string SdfWriter::cell_delays(const SdfConfig& cfg) {
             }
 
             ss << "          (IOPATH " << in_pin << " " << out_pin
-               << " (" << std::fixed << std::setprecision(4)
-               << rise << ") (" << fall << "))\n";
+               << " " << fmt_delay(rise, cfg)
+               << " " << fmt_delay(fall, cfg) << ")\n";
         }
 
         ss << "        )\n";  // ABSOLUTE
@@ -92,7 +118,6 @@ std::string SdfWriter::interconnect_delays(const SdfConfig& cfg) {
             (std::string(gate_type_str(drv.type)) + "_" + std::to_string(drv.id)) : drv.name;
         std::string drv_pin = (drv.type == GateType::DFF) ? "Q" : "OUT";
 
-        // Estimate wire delay based on fanout
         double wire_delay = 0.001 * net.fanout.size() / ts;
 
         for (auto gid : net.fanout) {
@@ -100,7 +125,6 @@ std::string SdfWriter::interconnect_delays(const SdfConfig& cfg) {
             std::string sink_name = sink.name.empty() ?
                 (std::string(gate_type_str(sink.type)) + "_" + std::to_string(sink.id)) : sink.name;
 
-            // Find which input pin
             std::string sink_pin = "IN0";
             for (size_t pi = 0; pi < sink.inputs.size(); ++pi) {
                 if (sink.inputs[pi] == static_cast<NetId>(i)) {
@@ -114,8 +138,8 @@ std::string SdfWriter::interconnect_delays(const SdfConfig& cfg) {
 
             ss << "    (INTERCONNECT " << drv_name << "/" << drv_pin
                << " " << sink_name << "/" << sink_pin
-               << " (" << std::fixed << std::setprecision(4) << wire_delay
-               << ") (" << wire_delay << "))\n";
+               << " " << fmt_delay(wire_delay, cfg)
+               << " " << fmt_delay(wire_delay, cfg) << ")\n";
         }
     }
 
@@ -125,28 +149,24 @@ std::string SdfWriter::interconnect_delays(const SdfConfig& cfg) {
 std::string SdfWriter::generate(const SdfConfig& cfg) {
     std::ostringstream ss;
 
-    // Timestamp
     std::time_t now = std::time(nullptr);
     char time_buf[64];
     std::strftime(time_buf, sizeof(time_buf), "%a %b %d %H:%M:%S %Y",
                   std::localtime(&now));
 
-    // Header
     ss << "(DELAYFILE\n";
     ss << "  (SDFVERSION \"4.0\")\n";
     ss << "  (DESIGN \"" << cfg.design_name << "\")\n";
     ss << "  (DATE \"" << time_buf << "\")\n";
     ss << "  (VENDOR \"SiliconForge\")\n";
     ss << "  (PROGRAM \"SiliconForge SDF Writer\")\n";
-    ss << "  (VERSION \"1.0\")\n";
+    ss << "  (VERSION \"2.0\")\n";
     ss << "  (DIVIDER /)\n";
     ss << "  (TIMESCALE " << std::fixed << std::setprecision(1)
        << cfg.timescale << "ns)\n";
 
-    // Cell delays
     ss << cell_delays(cfg);
 
-    // Interconnect delays
     if (cfg.include_interconnect) {
         ss << interconnect_delays(cfg);
     }

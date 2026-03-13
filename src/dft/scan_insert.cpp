@@ -3,6 +3,7 @@
 #include <iostream>
 #include <algorithm>
 #include <numeric>
+#include <unordered_map>
 #include <cmath>
 
 namespace sf {
@@ -237,6 +238,129 @@ ScanResult ScanInserter::run_enhanced(const ScanConfig& scan_cfg,
                       ", " + std::to_string(tp.observe_points + tp.control_points) + " test points"
                       ", routing " + std::to_string(ro.improvement_pct).substr(0, 5) + "% improved";
 
+    return result;
+}
+
+// ── Tier 2: SCOAP testability analysis ──────────────────────────────
+std::unordered_map<GateId, ScanInserter::TestabilityScore> ScanInserter::compute_scoap() {
+    std::unordered_map<GateId, TestabilityScore> scores;
+    auto topo = nl_.topo_order();
+
+    // Forward pass: controllability
+    for (auto pi : nl_.primary_inputs()) {
+        // Primary inputs are easy to control
+        auto& net = nl_.net(pi);
+        if (net.driver >= 0) {
+            scores[net.driver].controllability_0 = 1;
+            scores[net.driver].controllability_1 = 1;
+        }
+    }
+
+    for (GateId gid : topo) {
+        auto& g = nl_.gate(gid);
+        if (g.type == GateType::INPUT) {
+            scores[gid].controllability_0 = 1;
+            scores[gid].controllability_1 = 1;
+            continue;
+        }
+
+        double c0_sum = 0, c1_sum = 0;
+        for (auto inp : g.inputs) {
+            auto& inet = nl_.net(inp);
+            if (inet.driver >= 0) {
+                c0_sum += scores[inet.driver].controllability_0;
+                c1_sum += scores[inet.driver].controllability_1;
+            }
+        }
+        int n_in = std::max(1, (int)g.inputs.size());
+
+        switch (g.type) {
+            case GateType::AND: case GateType::NAND:
+                scores[gid].controllability_1 = c1_sum + 1; // all inputs to 1
+                scores[gid].controllability_0 = (c0_sum / n_in) + 1; // any to 0
+                break;
+            case GateType::OR: case GateType::NOR:
+                scores[gid].controllability_0 = c0_sum + 1;
+                scores[gid].controllability_1 = (c1_sum / n_in) + 1;
+                break;
+            default:
+                scores[gid].controllability_0 = (c0_sum / n_in) + 1;
+                scores[gid].controllability_1 = (c1_sum / n_in) + 1;
+                break;
+        }
+    }
+
+    // Backward pass: observability
+    for (auto po : nl_.primary_outputs()) {
+        auto& net = nl_.net(po);
+        if (net.driver >= 0) scores[net.driver].observability = 1;
+    }
+
+    for (auto it = topo.rbegin(); it != topo.rend(); ++it) {
+        GateId gid = *it;
+        auto& g = nl_.gate(gid);
+        double obs = scores[gid].observability;
+        for (auto inp : g.inputs) {
+            auto& inet = nl_.net(inp);
+            if (inet.driver >= 0) {
+                double cost = obs + scores[gid].controllability_0 + 1;
+                scores[inet.driver].observability =
+                    std::max(scores[inet.driver].observability, cost);
+            }
+        }
+    }
+
+    return scores;
+}
+
+ScanInserter::PartialScanResult ScanInserter::select_partial_scan(const PartialScanConfig& cfg) {
+    PartialScanResult result;
+
+    auto ffs = nl_.flip_flops();
+    result.total_ffs = (int)ffs.size();
+    if (ffs.empty()) {
+        result.message = "No flip-flops found";
+        return result;
+    }
+
+    int max_scan = (int)(cfg.scan_ratio * ffs.size());
+
+    if (cfg.mode == PartialScanConfig::SCOAP) {
+        auto scores = compute_scoap();
+
+        // Rank FFs by testability difficulty (higher = harder to test = more important to scan)
+        struct FfScore { GateId id; double difficulty; };
+        std::vector<FfScore> ranked;
+        for (auto fid : ffs) {
+            double diff = scores[fid].controllability_0 + scores[fid].controllability_1 +
+                          scores[fid].observability;
+            ranked.push_back({fid, diff});
+        }
+        std::sort(ranked.begin(), ranked.end(),
+                  [](const FfScore& a, const FfScore& b) { return a.difficulty > b.difficulty; });
+
+        // Select top-ranked FFs up to max_scan
+        for (int i = 0; i < max_scan && i < (int)ranked.size(); i++) {
+            result.selected_ff_ids.push_back(ranked[i].id);
+        }
+    } else {
+        // RANDOM or CRITICAL_PATH: just select first max_scan FFs
+        for (int i = 0; i < max_scan && i < (int)ffs.size(); i++) {
+            result.selected_ff_ids.push_back(ffs[i]);
+        }
+    }
+
+    result.selected_ffs = (int)result.selected_ff_ids.size();
+    result.scan_ratio = (double)result.selected_ffs / result.total_ffs;
+    // Estimate coverage: approximately sqrt(scan_ratio) for random, higher for SCOAP
+    result.estimated_coverage = std::min(1.0,
+        cfg.mode == PartialScanConfig::SCOAP
+            ? 0.7 + 0.3 * result.scan_ratio
+            : std::sqrt(result.scan_ratio));
+    result.message = "Partial scan: " + std::to_string(result.selected_ffs) + "/" +
+                     std::to_string(result.total_ffs) + " FFs selected (" +
+                     std::to_string((int)(result.scan_ratio * 100)) + "%), est. coverage: " +
+                     std::to_string((int)(result.estimated_coverage * 100)) + "%";
     return result;
 }
 

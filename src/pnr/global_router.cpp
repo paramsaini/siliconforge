@@ -966,4 +966,138 @@ RouteResult GlobalRouter::route_with_rr() {
     return result;
 }
 
+// ── Pattern Routing (Tier 2) ─────────────────────────────────────────
+// L-shape: two-segment rectilinear path (horizontal-first or vertical-first)
+GlobalRouter::PatternRoute GlobalRouter::route_l_shape(
+    int sx, int sy, int dx, int dy, int net_idx, bool h_first) {
+    PatternRoute pr;
+    pr.type = h_first ? PatternType::L_HV : PatternType::L_VH;
+    pr.cost = 0;
+    bool have_grid = !grid_.empty();
+
+    if (h_first) {
+        // Horizontal first, then vertical
+        int step_x = (dx > sx) ? 1 : -1;
+        for (int x = sx; x != dx; x += step_x) {
+            pr.path.push_back({x, sy});
+            if (have_grid && sy >= 0 && sy < grid_y_ && x >= 0 && x < grid_x_)
+                pr.cost += grid_[sy][x].total_cost();
+        }
+        int step_y = (dy > sy) ? 1 : -1;
+        for (int y = sy; y != dy; y += step_y) {
+            pr.path.push_back({dx, y});
+            if (have_grid && y >= 0 && y < grid_y_ && dx >= 0 && dx < grid_x_)
+                pr.cost += grid_[y][dx].total_cost();
+        }
+    } else {
+        // Vertical first, then horizontal
+        int step_y = (dy > sy) ? 1 : -1;
+        for (int y = sy; y != dy; y += step_y) {
+            pr.path.push_back({sx, y});
+            if (have_grid && y >= 0 && y < grid_y_ && sx >= 0 && sx < grid_x_)
+                pr.cost += grid_[y][sx].total_cost();
+        }
+        int step_x = (dx > sx) ? 1 : -1;
+        for (int x = sx; x != dx; x += step_x) {
+            pr.path.push_back({x, dy});
+            if (have_grid && dy >= 0 && dy < grid_y_ && x >= 0 && x < grid_x_)
+                pr.cost += grid_[dy][x].total_cost();
+        }
+    }
+    pr.path.push_back({dx, dy});
+    return pr;
+}
+
+// Z-shape: three-segment rectilinear path with one intermediate bend
+GlobalRouter::PatternRoute GlobalRouter::route_z_shape(
+    int sx, int sy, int dx, int dy, int net_idx, bool h_first) {
+    PatternRoute pr;
+    pr.type = h_first ? PatternType::Z_HVH : PatternType::Z_VHV;
+    pr.cost = 0;
+    bool have_grid = !grid_.empty();
+
+    if (h_first) {
+        // H-V-H: go horizontal to midpoint, vertical, then horizontal to target
+        int mid_x = (sx + dx) / 2;
+        int step_x = (mid_x > sx) ? 1 : (mid_x < sx) ? -1 : 0;
+        for (int x = sx; x != mid_x && step_x != 0; x += step_x) {
+            pr.path.push_back({x, sy});
+            if (have_grid && sy >= 0 && sy < grid_y_ && x >= 0 && x < grid_x_)
+                pr.cost += grid_[sy][x].total_cost();
+        }
+        int step_y = (dy > sy) ? 1 : (dy < sy) ? -1 : 0;
+        for (int y = sy; y != dy && step_y != 0; y += step_y) {
+            pr.path.push_back({mid_x, y});
+            if (have_grid && y >= 0 && y < grid_y_ && mid_x >= 0 && mid_x < grid_x_)
+                pr.cost += grid_[y][mid_x].total_cost();
+        }
+        step_x = (dx > mid_x) ? 1 : (dx < mid_x) ? -1 : 0;
+        for (int x = mid_x; x != dx && step_x != 0; x += step_x) {
+            pr.path.push_back({x, dy});
+            if (have_grid && dy >= 0 && dy < grid_y_ && x >= 0 && x < grid_x_)
+                pr.cost += grid_[dy][x].total_cost();
+        }
+    } else {
+        // V-H-V: go vertical to midpoint, horizontal, then vertical to target
+        int mid_y = (sy + dy) / 2;
+        int step_y = (mid_y > sy) ? 1 : (mid_y < sy) ? -1 : 0;
+        for (int y = sy; y != mid_y && step_y != 0; y += step_y) {
+            pr.path.push_back({sx, y});
+            if (have_grid && y >= 0 && y < grid_y_ && sx >= 0 && sx < grid_x_)
+                pr.cost += grid_[y][sx].total_cost();
+        }
+        int step_x = (dx > sx) ? 1 : (dx < sx) ? -1 : 0;
+        for (int x = sx; x != dx && step_x != 0; x += step_x) {
+            pr.path.push_back({x, mid_y});
+            if (have_grid && mid_y >= 0 && mid_y < grid_y_ && x >= 0 && x < grid_x_)
+                pr.cost += grid_[mid_y][x].total_cost();
+        }
+        step_y = (dy > mid_y) ? 1 : (dy < mid_y) ? -1 : 0;
+        for (int y = mid_y; y != dy && step_y != 0; y += step_y) {
+            pr.path.push_back({dx, y});
+            if (have_grid && y >= 0 && y < grid_y_ && dx >= 0 && dx < grid_x_)
+                pr.cost += grid_[y][dx].total_cost();
+        }
+    }
+    pr.path.push_back({dx, dy});
+    return pr;
+}
+
+// Select best pattern route among L, Z candidates; fall back to A* if all are too costly
+GlobalRouter::PatternRoute GlobalRouter::route_pattern(
+    int sx, int sy, int dx, int dy, int net_idx) {
+
+    // Generate all 4 pattern candidates
+    std::vector<PatternRoute> candidates;
+    candidates.push_back(route_l_shape(sx, sy, dx, dy, net_idx, true));   // L_HV
+    candidates.push_back(route_l_shape(sx, sy, dx, dy, net_idx, false));  // L_VH
+    if (std::abs(dx - sx) > 1 && std::abs(dy - sy) > 1) {
+        candidates.push_back(route_z_shape(sx, sy, dx, dy, net_idx, true));  // Z_HVH
+        candidates.push_back(route_z_shape(sx, sy, dx, dy, net_idx, false)); // Z_VHV
+    }
+
+    // Pick lowest cost
+    PatternRoute best = candidates[0];
+    for (size_t i = 1; i < candidates.size(); i++) {
+        if (candidates[i].cost < best.cost)
+            best = candidates[i];
+    }
+
+    // Sanity: if pattern cost is excessive (>2× Manhattan), fall back to A*
+    double manhattan = std::abs(dx - sx) + std::abs(dy - sy);
+    if (best.cost > 2.0 * manhattan * 10.0 && manhattan > 2) {
+        auto astar_path = astar_route(sx, sy, dx, dy, net_idx);
+        PatternRoute astar_pr;
+        astar_pr.type = PatternType::ASTAR;
+        astar_pr.cost = 0;
+        for (auto& node : astar_path) {
+            astar_pr.path.push_back({node.x, node.y});
+            astar_pr.cost += node.g_cost;
+        }
+        if (!astar_path.empty() && astar_pr.cost < best.cost)
+            return astar_pr;
+    }
+    return best;
+}
+
 } // namespace sf

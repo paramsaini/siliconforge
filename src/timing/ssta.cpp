@@ -186,6 +186,82 @@ std::vector<double> SstaEngine::generate_correlated_locals(
     return correlated;
 }
 
+// ── Quasi-random sequence generators (Tier 2) ───────────────────────
+
+// Halton sequence: low-discrepancy sequence in base b
+// Reference: Halton, "On the efficiency of certain quasi-random sequences", 1960
+double SstaEngine::halton_seq(int index, int base) {
+    double result = 0.0;
+    double f = 1.0 / base;
+    int i = index + 1;  // 1-based
+    while (i > 0) {
+        result += f * (i % base);
+        i /= base;
+        f /= base;
+    }
+    return result;
+}
+
+// Inverse normal CDF (rational approximation)
+// Reference: Abramowitz & Stegun, Handbook of Mathematical Functions, 26.2.23
+// Accurate to ~4.5×10⁻⁴ relative error
+double SstaEngine::inv_normal_cdf(double u) {
+    // Clamp to avoid infinities
+    if (u <= 0.0) u = 1e-10;
+    if (u >= 1.0) u = 1.0 - 1e-10;
+
+    // Beasley-Springer-Moro approximation
+    static const double a[] = {
+        -3.969683028665376e+01,  2.209460984245205e+02,
+        -2.759285104469687e+02,  1.383577518672690e+02,
+        -3.066479806614716e+01,  2.506628277459239e+00
+    };
+    static const double b[] = {
+        -5.447609879822406e+01,  1.615858368580409e+02,
+        -1.556989798598866e+02,  6.680131188771972e+01,
+        -1.328068155288572e+01
+    };
+    static const double c[] = {
+        -7.784894002430293e-03, -3.223964580411365e-01,
+        -2.400758277161838e+00, -2.549732539343734e+00,
+         4.374664141464968e+00,  2.938163982698783e+00
+    };
+    static const double d[] = {
+         7.784695709041462e-03,  3.224671290700398e-01,
+         2.445134137142996e+00,  3.754408661907416e+00
+    };
+
+    double q, r;
+    if (u < 0.02425) {
+        // Lower region
+        q = std::sqrt(-2.0 * std::log(u));
+        return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) /
+                ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1.0);
+    } else if (u <= 0.97575) {
+        // Central region
+        q = u - 0.5;
+        r = q * q;
+        return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q /
+               (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1.0);
+    } else {
+        // Upper region
+        q = std::sqrt(-2.0 * std::log(1.0 - u));
+        return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) /
+                 ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1.0);
+    }
+}
+
+// Generate quasi-random normal sample for a given sample index and dimension
+double SstaEngine::quasi_random_normal(int sample_idx, int dimension) const {
+    static const int primes[] = {
+        2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53,
+        59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113
+    };
+    int base = primes[dimension % 30];
+    double u = halton_seq(sample_idx, base);
+    return inv_normal_cdf(u);
+}
+
 // ── Main Monte Carlo analysis ────────────────────────────────────────
 
 SstaResult SstaEngine::run_monte_carlo() {
@@ -232,11 +308,23 @@ SstaResult SstaEngine::run_monte_carlo() {
     }
 
     for (int s = 0; s < config_.num_samples; ++s) {
-        // Global variation (same for all gates in this sample)
-        double global_var = global_dist(rng);
+        double global_var;
+        std::vector<double> local_vars;
 
-        // Local variations (per-gate, possibly spatially correlated)
-        auto local_vars = generate_correlated_locals(rng, comb_gates);
+        if (config_.sampling_mode != SstaConfig::SamplingMode::PSEUDO_RANDOM) {
+            // Quasi-random: dimension 0 = global, dimensions 1..N = local
+            double gv_scale = config_.global_variation_pct / 100.0;
+            global_var = quasi_random_normal(s, 0) * gv_scale;
+            double lv_scale = config_.local_variation_pct / 100.0;
+            local_vars.resize(comb_gates.size());
+            for (size_t i = 0; i < comb_gates.size(); ++i) {
+                local_vars[i] = quasi_random_normal(s, (int)(i + 1)) * lv_scale;
+            }
+        } else {
+            // Pseudo-random (original path)
+            global_var = global_dist(rng);
+            local_vars = generate_correlated_locals(rng, comb_gates);
+        }
 
         // Build gate delay map for this sample
         std::unordered_map<GateId, double> gate_delays;

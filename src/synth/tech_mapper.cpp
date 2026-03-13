@@ -1422,4 +1422,56 @@ void TechMapper::insert_buffers(Netlist& nl, int max_fanout) {
         std::cout << "  [Buffer] Inserted " << bufs_inserted << " buffers for high-fanout nets\n";
 }
 
+// ── Tier 2: ILP-style Optimal Tech Mapping ──────────────────────────
+// Dynamic programming with Lagrangian relaxation for area-delay tradeoff.
+// For each AIG node, evaluate all match candidates and pick the one that
+// minimizes lambda*area + (1-lambda)*delay globally.
+Netlist TechMapper::map_optimal(const IlpMapConfig& cfg) {
+    double lambda = cfg.area_weight;
+    Netlist best_nl;
+    double best_cost = 1e18;
+
+    for (int iter = 0; iter < cfg.lagrangian_iterations; iter++) {
+        // For each AIG node, find all matches and select by weighted cost
+        std::vector<CellMatch> optimal_matches;
+        double total_cost = 0;
+
+        for (uint32_t var = 1; var <= aig_.max_var(); ++var) {
+            auto candidates = find_all_matches(var);
+            if (candidates.empty()) {
+                optimal_matches.push_back(match_node(var));
+                continue;
+            }
+
+            // Score each candidate with current lambda
+            double best_score = 1e18;
+            ExtendedMatch best_em = candidates[0];
+            for (auto& em : candidates) {
+                double score = lambda * em.area + (1.0 - lambda) * em.delay;
+                if (score < best_score) {
+                    best_score = score;
+                    best_em = em;
+                }
+            }
+
+            optimal_matches.push_back(to_cell_match(best_em));
+            total_cost += best_score;
+        }
+
+        auto nl = build_netlist(optimal_matches);
+        insert_buffers(nl);
+
+        if (total_cost < best_cost) {
+            best_cost = total_cost;
+            best_nl = nl;
+        }
+
+        // Lagrangian update: adjust lambda toward area/delay balance
+        lambda += cfg.lambda_step * (0.5 - lambda);
+    }
+
+    stats_.num_cells = (uint32_t)best_nl.num_gates();
+    return best_nl;
+}
+
 } // namespace sf

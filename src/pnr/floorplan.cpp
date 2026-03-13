@@ -754,4 +754,99 @@ FloorplanResult Floorplanner::floorplan_sa() {
 // Original methods above are unchanged
 // ---------------------------------------------------------------------------
 
+// ── Tier 2: Hierarchical Floorplanning ──────────────────────────────
+
+void Floorplanner::add_module(const std::string& name, const std::vector<int>& macro_ids) {
+    HierModule mod;
+    mod.name = name;
+    mod.macro_ids = macro_ids;
+    modules_.push_back(mod);
+}
+
+void Floorplanner::set_module_region(const std::string& name, const Rect& region) {
+    for (auto& m : modules_) {
+        if (m.name == name) {
+            m.region = region;
+            m.has_region = true;
+            return;
+        }
+    }
+}
+
+Floorplanner::HierFloorplanResult Floorplanner::hierarchical_floorplan(
+    const HierFloorplanConfig& cfg) {
+    HierFloorplanResult result;
+    result.num_modules = (int)modules_.size();
+
+    if (modules_.empty()) {
+        // No hierarchy — fall back to flat floorplan
+        auto flat = floorplan_sa();
+        result.total_area = flat.total_area;
+        result.wirelength = flat.wirelength;
+        result.levels = 1;
+        result.message = "Flat floorplan (no modules defined)";
+        return result;
+    }
+
+    // Level 1: Assign regions to modules based on total area of their macros
+    double total_macro_area = 0;
+    for (auto& m : macros_) total_macro_area += m.width * m.height;
+    double die_side = std::sqrt(total_macro_area / cfg.area_util);
+
+    // Partition die area among modules proportionally
+    double y_cursor = 0;
+    for (auto& mod : modules_) {
+        double mod_area = 0;
+        for (int mid : mod.macro_ids) {
+            if (mid >= 0 && mid < (int)macros_.size())
+                mod_area += macros_[mid].width * macros_[mid].height;
+        }
+        double mod_height = (mod_area / cfg.area_util) / die_side;
+        if (!mod.has_region) {
+            mod.region = Rect(0, y_cursor, die_side, y_cursor + mod_height);
+            mod.has_region = true;
+        }
+        y_cursor += mod_height;
+    }
+
+    // Level 2: Place macros within each module's region
+    double total_wl = 0;
+    for (auto& mod : modules_) {
+        double region_w = mod.region.width();
+        double region_h = mod.region.height();
+
+        // Simple left-bottom packing within region
+        double x_cur = mod.region.x0;
+        double y_cur = mod.region.y0;
+        double row_height = 0;
+
+        for (int mid : mod.macro_ids) {
+            if (mid < 0 || mid >= (int)macros_.size()) continue;
+            auto& macro = macros_[mid];
+
+            if (x_cur + macro.width > mod.region.x1) {
+                x_cur = mod.region.x0;
+                y_cur += row_height;
+                row_height = 0;
+            }
+
+            macro.position.x = x_cur;
+            macro.position.y = y_cur;
+            x_cur += macro.width;
+            row_height = std::max(row_height, macro.height);
+        }
+    }
+
+    // Compute total wirelength
+    total_wl = compute_wirelength();
+
+    result.total_area = die_side * y_cursor;
+    result.wirelength = total_wl;
+    result.levels = 2;
+    result.message = "Hierarchical: " + std::to_string(result.num_modules) +
+                     " modules, area=" + std::to_string((int)result.total_area) +
+                     ", WL=" + std::to_string((int)total_wl);
+    return result;
+}
+
 } // namespace sf

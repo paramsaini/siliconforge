@@ -1769,4 +1769,149 @@ PlaceResult AnalyticalPlacer::incremental_place(const std::vector<int>& modified
     return r;
 }
 
+// ── Macro Halo Enforcement (Tier 2) ─────────────────────────────────
+// Converts macro halos into blockage regions and enforces them.
+// After calling this, standard cells won't overlap macro keepout zones.
+void AnalyticalPlacer::enforce_macro_halos() {
+    if (macro_halos_.empty()) return;
+    int n = (int)pd_.cells.size();
+
+    for (auto& mh : macro_halos_) {
+        if (mh.cell_id < 0 || mh.cell_id >= n) continue;
+        auto& macro = pd_.cells[mh.cell_id];
+
+        // Create blockage rectangle = macro bbox expanded by halo
+        Rect halo_rect(
+            macro.position.x - mh.halo_west,
+            macro.position.y - mh.halo_south,
+            macro.position.x + macro.width + mh.halo_east,
+            macro.position.y + macro.height + mh.halo_north
+        );
+
+        // Push all non-fixed standard cells out of the halo zone
+        for (int ci = 0; ci < n; ci++) {
+            if (ci == mh.cell_id) continue;
+            if (fixed_cells_.count(ci)) continue;
+
+            auto& cell = pd_.cells[ci];
+            Rect cr(cell.position.x, cell.position.y,
+                    cell.position.x + cell.width,
+                    cell.position.y + cell.height);
+
+            // Check overlap with halo zone
+            if (cr.x1 > halo_rect.x0 && cr.x0 < halo_rect.x1 &&
+                cr.y1 > halo_rect.y0 && cr.y0 < halo_rect.y1) {
+                // Push to nearest halo edge (minimum displacement)
+                double push_right = halo_rect.x1 - cell.position.x;
+                double push_left  = halo_rect.x0 - cell.width - cell.position.x;
+                double push_up    = halo_rect.y1 - cell.position.y;
+                double push_down  = halo_rect.y0 - cell.height - cell.position.y;
+
+                double dx = 0, dy = 0;
+                double best = 1e18;
+                if (std::abs(push_right) < best) { best = std::abs(push_right); dx = push_right; dy = 0; }
+                if (std::abs(push_left) < best)  { best = std::abs(push_left);  dx = push_left;  dy = 0; }
+                if (std::abs(push_up) < best)    { best = std::abs(push_up);    dx = 0; dy = push_up; }
+                if (std::abs(push_down) < best)  { dx = 0; dy = push_down; }
+
+                cell.position.x += dx;
+                cell.position.y += dy;
+                if (ci < (int)x_.size()) { x_[ci] = cell.position.x; y_[ci] = cell.position.y; }
+            }
+        }
+    }
+}
+
+// ── Thermal-Aware Placement (Tier 2) ────────────────────────────────
+// Iterative thermal model using Gauss-Seidel heat diffusion.
+// Spreads cells away from thermal hotspots to stay under max_temp.
+void AnalyticalPlacer::thermal_aware_refine() {
+    if (!thermal_cfg_.enabled) return;
+    int n = (int)pd_.cells.size();
+    if (n == 0) return;
+
+    int gnx = thermal_cfg_.grid_nx;
+    int gny = thermal_cfg_.grid_ny;
+
+    // Compute die extents
+    double die_w = pd_.die_area.width() > 0 ? pd_.die_area.width() : 1000.0;
+    double die_h = pd_.die_area.height() > 0 ? pd_.die_area.height() : 1000.0;
+    double bin_w = die_w / gnx;
+    double bin_h = die_h / gny;
+
+    // Initialize thermal grid
+    thermal_grid_.assign(gnx, std::vector<ThermalBin>(gny));
+
+    // Step 1: Compute power density per bin
+    // Estimate power proportional to cell area (simple model)
+    double total_area = 0;
+    for (int ci = 0; ci < n; ci++) {
+        total_area += pd_.cells[ci].width * pd_.cells[ci].height;
+    }
+    double avg_power_per_area = (total_area > 0) ? 1.0 / total_area : 0;  // normalized
+
+    for (int ci = 0; ci < n; ci++) {
+        auto& cell = pd_.cells[ci];
+        int bx = std::clamp((int)(cell.position.x / bin_w), 0, gnx - 1);
+        int by = std::clamp((int)(cell.position.y / bin_h), 0, gny - 1);
+        double cell_power = cell.width * cell.height * avg_power_per_area;
+        thermal_grid_[bx][by].power_density += cell_power / (bin_w * bin_h);
+    }
+
+    // Step 2: Gauss-Seidel heat diffusion (steady-state T = T_ambient + R_th × P)
+    // With neighbor averaging for heat spreading
+    for (int iter = 0; iter < 20; iter++) {
+        for (int bx = 0; bx < gnx; bx++) {
+            for (int by = 0; by < gny; by++) {
+                double self_temp = thermal_cfg_.ambient_temp +
+                    thermal_cfg_.thermal_resist * thermal_grid_[bx][by].power_density;
+                // Average with neighbors (heat conduction)
+                double neighbor_sum = 0;
+                int nc = 0;
+                if (bx > 0)     { neighbor_sum += thermal_grid_[bx-1][by].temperature; nc++; }
+                if (bx < gnx-1) { neighbor_sum += thermal_grid_[bx+1][by].temperature; nc++; }
+                if (by > 0)     { neighbor_sum += thermal_grid_[bx][by-1].temperature; nc++; }
+                if (by < gny-1) { neighbor_sum += thermal_grid_[bx][by+1].temperature; nc++; }
+                double avg_neighbor = (nc > 0) ? neighbor_sum / nc : thermal_cfg_.ambient_temp;
+                thermal_grid_[bx][by].temperature = 0.5 * self_temp + 0.5 * avg_neighbor;
+            }
+        }
+    }
+
+    // Step 3: Spread cells away from hotspots exceeding max_temp
+    double max_temp = thermal_cfg_.max_temp;
+    for (int ci = 0; ci < n; ci++) {
+        if (fixed_cells_.count(ci)) continue;
+        auto& cell = pd_.cells[ci];
+        int bx = std::clamp((int)(cell.position.x / bin_w), 0, gnx - 1);
+        int by = std::clamp((int)(cell.position.y / bin_h), 0, gny - 1);
+
+        double temp = thermal_grid_[bx][by].temperature;
+        if (temp <= max_temp) continue;
+
+        // Find coolest neighbor bin
+        double coolest = temp;
+        int best_bx = bx, best_by = by;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                int nx = bx + dx, ny = by + dy;
+                if (nx < 0 || nx >= gnx || ny < 0 || ny >= gny) continue;
+                if (thermal_grid_[nx][ny].temperature < coolest) {
+                    coolest = thermal_grid_[nx][ny].temperature;
+                    best_bx = nx; best_by = ny;
+                }
+            }
+        }
+
+        if (best_bx != bx || best_by != by) {
+            double target_x = (best_bx + 0.5) * bin_w;
+            double target_y = (best_by + 0.5) * bin_h;
+            double sf = thermal_cfg_.spreading_factor;
+            cell.position.x += sf * (target_x - cell.position.x);
+            cell.position.y += sf * (target_y - cell.position.y);
+            if (ci < (int)x_.size()) { x_[ci] = cell.position.x; y_[ci] = cell.position.y; }
+        }
+    }
+}
+
 } // namespace sf

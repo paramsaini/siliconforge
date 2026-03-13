@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <utility>
 #include <limits>
 #include <cmath>
 
@@ -22,20 +23,36 @@ enum class OcvMode { NONE, OCV, AOCV, POCV };
 
 // AOCV depth-dependent derating table
 // Uses √N statistical averaging: deeper paths accumulate less variation.
+// Supports per-cell AOCV coefficients loaded from Liberty characterization.
 struct AocvTable {
     double late_variation  = 0.10;  // 10% base late variation (setup pessimism)
     double early_variation = 0.10;  // 10% base early variation (hold pessimism)
     int    min_depth       = 1;     // minimum depth clamp
 
+    // Per-cell AOCV coefficients (cell_type → {late_var, early_var})
+    // Loaded from Liberty or technology file. Overrides base variation.
+    std::unordered_map<std::string, std::pair<double,double>> cell_coeffs;
+
     // Late derate: multiplier > 1 (makes data path slower for setup worst-case)
-    double late_derate(int depth) const {
+    double late_derate(int depth, const std::string& cell_type = "") const {
         depth = std::max(depth, min_depth);
-        return 1.0 + late_variation / std::sqrt(static_cast<double>(depth));
+        double var = late_variation;
+        auto it = cell_coeffs.find(cell_type);
+        if (it != cell_coeffs.end()) var = it->second.first;
+        return 1.0 + var / std::sqrt(static_cast<double>(depth));
     }
     // Early derate: multiplier < 1 (makes data path faster for hold worst-case)
-    double early_derate(int depth) const {
+    double early_derate(int depth, const std::string& cell_type = "") const {
         depth = std::max(depth, min_depth);
-        return 1.0 - early_variation / std::sqrt(static_cast<double>(depth));
+        double var = early_variation;
+        auto it = cell_coeffs.find(cell_type);
+        if (it != cell_coeffs.end()) var = it->second.second;
+        return 1.0 - var / std::sqrt(static_cast<double>(depth));
+    }
+
+    // Load per-cell coefficients from a table
+    void set_cell_aocv(const std::string& cell_type, double late_var, double early_var) {
+        cell_coeffs[cell_type] = {late_var, early_var};
     }
 };
 
@@ -84,7 +101,7 @@ struct CrosstalkConfig {
     double max_coupling_distance_um = 1.0;  // beyond this, ignore coupling
 };
 
-// Multi-corner derating factors
+// Multi-corner derating factors with Temperature/Voltage scaling
 struct CornerDerate {
     std::string name = "typical";
     double cell_derate = 1.0;   // multiply cell delay (LATE/setup data path)
@@ -93,12 +110,34 @@ struct CornerDerate {
     double early_wire  = 1.0;   // for hold (best-case wire, EARLY data path)
 
     // OCV: separate clock path derating (for capture clock)
-    // Setup: capture clock uses early derate (clock arrives early = pessimistic)
-    // Hold:  capture clock uses late derate (clock arrives late = pessimistic)
     double clock_late_cell  = 1.0;
     double clock_late_wire  = 1.0;
     double clock_early_cell = 1.0;
     double clock_early_wire = 1.0;
+
+    // Temperature / Voltage derating (Tier 2)
+    // Reference corner conditions
+    double ref_temperature = 25.0;    // °C (nominal)
+    double ref_voltage     = 1.0;     // V  (nominal VDD)
+    // Actual operating conditions
+    double temperature     = 25.0;    // °C
+    double voltage         = 1.0;     // V
+    // Scaling coefficients (per °C and per V)
+    // Positive temp_coeff → delay increases with temperature (typical for thin-oxide)
+    // Negative volt_coeff → delay decreases with higher voltage
+    double temp_coeff      = 0.0015;  // +0.15% per °C (typical CMOS)
+    double volt_coeff      = -1.5;    // -1.5x delay per 1V increase
+
+    // Compute T/V scaling factor relative to reference corner
+    double tv_scale() const {
+        double dt = temperature - ref_temperature;
+        double dv = voltage - ref_voltage;
+        double t_factor = 1.0 + temp_coeff * dt;
+        double v_factor = 1.0 + volt_coeff * dv;
+        // Clamp to reasonable range [0.5, 2.0]
+        double combined = t_factor * v_factor;
+        return std::min(2.0, std::max(0.5, combined));
+    }
 };
 
 struct TimingArc {

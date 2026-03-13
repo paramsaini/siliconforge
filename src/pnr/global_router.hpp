@@ -145,6 +145,20 @@ public:
     };
     CongestionMap get_congestion_map() const;
 
+    // Pattern routing (Tier 2) — L-shape and Z-shape routing
+    // Selects the lower-cost pattern route between pins before falling back to A*.
+    // L-route: horizontal-first or vertical-first two-segment path
+    // Z-route: three-segment path with one bend point
+    enum class PatternType { L_HV, L_VH, Z_HVH, Z_VHV, ASTAR };
+    struct PatternRoute {
+        PatternType type;
+        std::vector<std::pair<int,int>> path;  // gcell coordinates
+        double cost;
+    };
+    PatternRoute route_l_shape(int sx, int sy, int dx, int dy, int net_idx, bool h_first);
+    PatternRoute route_z_shape(int sx, int sy, int dx, int dy, int net_idx, bool h_first);
+    PatternRoute route_pattern(int sx, int sy, int dx, int dy, int net_idx);
+
     // Enhanced routing with rip-up reroute
     RouteResult route_with_rr();
 

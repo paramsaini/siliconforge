@@ -139,6 +139,33 @@ private:
 
     // Channel estimation for routing
     double estimate_channel_area(const BStarTree::PackResult& pack) const;
+
+    // ── Tier 2: Hierarchical Floorplanning ──────────────────────────────
+public:
+    // Module hierarchy: group macros into logical modules, floorplan hierarchically
+    struct HierModule {
+        std::string name;
+        std::vector<int> macro_ids;     // indices into macros_
+        Rect region;                    // assigned region
+        bool has_region = false;
+    };
+    struct HierFloorplanConfig {
+        double area_util = 0.8;        // target area utilization per module
+        int sa_iters_per_level = 2000; // SA iterations per hierarchy level
+    };
+    struct HierFloorplanResult {
+        int num_modules = 0;
+        int levels = 0;
+        double total_area = 0;
+        double wirelength = 0;
+        std::string message;
+    };
+    void add_module(const std::string& name, const std::vector<int>& macro_ids);
+    void set_module_region(const std::string& name, const Rect& region);
+    HierFloorplanResult hierarchical_floorplan(const HierFloorplanConfig& cfg);
+
+private:
+    std::vector<HierModule> modules_;
 };
 
 } // namespace sf

@@ -116,6 +116,34 @@ private:
 
     // Simulation-based equivalence check (robust to structural changes)
     bool sim_compare(LecResult& result);
+
+    // ── Tier 2: Hierarchical LEC ────────────────────────────────────────
+public:
+    // Hierarchical equivalence checking: decompose designs by module boundaries,
+    // verify each module independently, compose results.
+    struct HierLecConfig {
+        bool enabled = false;
+        int max_module_size = 500; // max gates per module before splitting
+    };
+    struct ModuleMatch {
+        std::string module_name;
+        int golden_start, golden_end;     // gate ID ranges
+        int revised_start, revised_end;
+        bool equivalent = false;
+    };
+    struct HierLecResult {
+        bool equivalent = false;
+        int modules_compared = 0;
+        int modules_matched = 0;
+        int modules_failed = 0;
+        std::vector<ModuleMatch> module_results;
+        std::string message;
+    };
+    HierLecResult hierarchical_check(const HierLecConfig& cfg);
+
+private:
+    // Partition netlist into modules by connectivity clustering
+    std::vector<std::pair<int,int>> partition_into_modules(const Netlist& nl, int max_size);
 };
 
 } // namespace sf

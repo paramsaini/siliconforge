@@ -94,6 +94,32 @@ public:
     void set_target_density(double d) { target_density_ = d; }
     void set_macro_fixed(int cell_id) { fixed_cells_.insert(cell_id); }
 
+    // Macro halo enforcement (Tier 2)
+    // Automatically creates blockage zones around macros with specified keepout distance
+    struct MacroHalo {
+        int cell_id;
+        double halo_north = 2.0;  // keepout in µm
+        double halo_south = 2.0;
+        double halo_east  = 2.0;
+        double halo_west  = 2.0;
+    };
+    void register_macro_halos(const std::vector<MacroHalo>& halos) { macro_halos_ = halos; }
+    void enforce_macro_halos();
+
+    // Thermal-aware placement (Tier 2)
+    // Iterative thermal model: power density → temperature → cell spreading
+    struct ThermalConfig {
+        bool   enabled           = false;
+        double ambient_temp      = 25.0;    // °C
+        double thermal_resist    = 10.0;    // °C·mm²/W (substrate thermal resistance)
+        double max_temp          = 105.0;   // °C (thermal limit)
+        int    grid_nx           = 16;
+        int    grid_ny           = 16;
+        double spreading_factor  = 0.5;     // how aggressively to spread hot cells
+    };
+    void set_thermal_config(const ThermalConfig& cfg) { thermal_cfg_ = cfg; }
+    void thermal_aware_refine();
+
     // --- Timing-driven placement configuration ---
     // Enable timing-driven mode: requires netlist for STA
     void enable_timing_driven(const Netlist& nl,
@@ -285,6 +311,15 @@ private:
     DensityConfig density_cfg_;
     std::vector<IoPad> io_pads_;
     std::vector<MultiRowCell> multi_row_;
+    std::vector<MacroHalo> macro_halos_;
+    ThermalConfig thermal_cfg_;
+
+    // Thermal grid (Tier 2)
+    struct ThermalBin {
+        double power_density = 0;  // W/mm²
+        double temperature = 25.0; // °C
+    };
+    std::vector<std::vector<ThermalBin>> thermal_grid_;
 
     // FFT helpers (simplified 2D DCT for density smoothing)
     std::vector<std::vector<double>> compute_density_map();

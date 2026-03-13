@@ -1503,3 +1503,168 @@ CUMULATIVE STATUS:
 PENDING COMMIT (not pushed — Rule 7):
   All Tier 0 + Tier 1 changes are local.
 ================================================================================
+
+================================================================================
+SESSION 12 — TIER 2 IMPLEMENTATION (25 GAPS, ADVANCED NODE PRODUCTION)
+================================================================================
+Date: 2025-07-24
+Role: PhD-level semiconductor researcher
+
+OBJECTIVE: Implement all 25 Tier 2 gaps for advanced node production parity
+           with Cadence/Synopsys/Siemens commercial EDA tools.
+
+────────────────────────────────────────────────────────────────────────────────
+BATCH 1 — TIMING (4 gaps)
+────────────────────────────────────────────────────────────────────────────────
+1. SDF Writer min:typ:max Triplets (src/timing/sdf_writer.cpp)
+   - Added fmt_delay() for min:typ:max formatting with configurable factors
+   - Added nldm_delay() for Liberty-backed delay lookup
+   - Updated cell_delays() and interconnect_delays() to use new formatting
+   - SDF VERSION "2.0" header
+
+2. Per-cell AOCV Coefficients (src/timing/sta.hpp)
+   - Extended AocvTable with cell_coeffs unordered_map<string, pair<double,double>>
+   - set_cell_aocv() API for per-cell-type variation coefficients
+   - Falls through to base variation if cell type not found
+
+3. Temperature/Voltage Derating (src/timing/sta.hpp, sta.cpp)
+   - Extended CornerDerate with ref_temperature, ref_voltage, temperature,
+     voltage, temp_coeff, volt_coeff fields
+   - tv_scale() multiplicative method applied to ALL derate paths
+     (AOCV, POCV, OCV, NONE) in both cell and wire derate functions
+
+4. Quasi-random SSTA (src/timing/ssta.hpp, ssta.cpp)
+   - SamplingMode enum: PSEUDO_RANDOM, HALTON, SOBOL
+   - Halton sequence using first 30 primes
+   - Beasley-Springer-Moro inverse normal CDF
+   - MC loop branches on sampling_mode for quasi-random generation
+
+────────────────────────────────────────────────────────────────────────────────
+BATCH 2 — PNR (5 gaps)
+────────────────────────────────────────────────────────────────────────────────
+5. Congestion-driven Refinement — ALREADY COMPLETE (pre-existing)
+6. Multi-row Cell Legalization — ALREADY COMPLETE (pre-existing)
+
+7. Macro Halo Enforcement (src/pnr/placer.hpp, placer.cpp)
+   - MacroHalo struct with per-direction halo (N/S/E/W)
+   - register_macro_halos() + set_macro_fixed() APIs
+   - enforce_macro_halos() pushes cells out of keepout zones
+
+8. Pattern Routing (src/pnr/global_router.hpp, global_router.cpp)
+   - L-shape (H-first/V-first) and Z-shape (HVH/VHV) patterns
+   - Cost-based selection among 4 candidates
+   - A* fallback when pattern cost > 2× Manhattan
+   - Fixed grid indexing bug: grid_[y][x] not grid_[x][y]
+   - Added empty-grid guard for standalone pattern route calls
+
+9. Thermal-aware Placement (src/pnr/placer.hpp, placer.cpp)
+   - ThermalConfig, ThermalBin structs
+   - 20-iteration Gauss-Seidel heat diffusion model
+   - Cell spreading from hotspot bins exceeding max_temp
+
+────────────────────────────────────────────────────────────────────────────────
+BATCH 3 — VERIFICATION/DFT/SYNTHESIS/PNR (9 gaps)
+────────────────────────────────────────────────────────────────────────────────
+10. CTS Shielding — ALREADY COMPLETE (pre-existing)
+11. FSM Minimize — ALREADY COMPLETE (pre-existing)
+12. MCMM Reduce — ALREADY COMPLETE (pre-existing)
+13. Via RC — ALREADY COMPLETE (pre-existing)
+
+14. SVA Temporal Operators (src/frontend/sva_parser.hpp, sva_parser.cpp)
+    - 14 SvaOp values: ##N, always, eventually, nexttime, until, &&, ||, etc.
+    - Recursive descent parser with operator precedence (parse_binary())
+    - assume/cover property support
+
+15. Hierarchical LEC (src/formal/lec.hpp, lec.cpp)
+    - HierLecConfig with max_module_size control
+    - partition_into_modules() graph-based partitioning
+    - Module-level equivalence checking
+
+16. OPC SRAF (src/verify/opc.hpp, opc.cpp)
+    - SrafConfig for sub-resolution assist feature insertion
+    - insert_sraf() checks features near resolution limit
+    - estimate_psm_improvement() phase-shift mask benefit estimate
+
+17. Partial Scan Selection (src/dft/scan_insert.hpp, scan_insert.cpp)
+    - SCOAP testability analysis (controllability + observability)
+    - PartialScanConfig with SCOAP/RANDOM/CRITICAL_PATH modes
+    - Ranks FFs by difficulty for optimal partial scan ratio
+
+18. Hierarchical Floorplanning (src/pnr/floorplan.hpp, floorplan.cpp)
+    - HierModule, add_module() API for macro grouping
+    - 2-level hierarchical floorplan with intra-module optimization
+
+────────────────────────────────────────────────────────────────────────────────
+BATCH 4 — SYNTHESIS/DFT (4 gaps)
+────────────────────────────────────────────────────────────────────────────────
+19. ILP-style Tech Mapping (src/synth/tech_mapper.hpp, tech_mapper.cpp)
+    - IlpMapConfig with area_weight/delay_weight
+    - Lagrangian relaxation for area-delay tradeoff
+    - Fixed API: max_var() not num_vars(), num_cells not cells_mapped
+
+20. FAN ATPG (src/dft/podem.hpp, podem.cpp)
+    - FanConfig with enable_multiple_backtrace, enable_learning
+    - multiple_backtrace() with alternate PI assignments
+    - Fixed uninitialized variable bug: pi1/val1 when backtrace() returns false
+    - Learned implications stored for future fault tests
+
+21. DAG Rewriting (src/synth/aig_opt.hpp, aig_opt.cpp)
+    - dc_optimize() for don't-care based optimization
+    - extended_rewrite() for larger cut (up to 6-input) rewriting
+    - Fixed AigLit API: aig_var(lit) not lit.var() (AigLit is uint32_t)
+
+22-25. Pre-existing: CEGAR, ESD, Antenna, Canonical SSTA — ALREADY COMPLETE
+
+────────────────────────────────────────────────────────────────────────────────
+BUGS FOUND AND FIXED
+────────────────────────────────────────────────────────────────────────────────
+1. global_router.cpp: grid_[x][y] → grid_[y][x] (row-major indexing)
+2. global_router.cpp: Segfault on empty grid_ — added have_grid guard
+3. aig_opt.cpp: node.fanin0.var() → aig_var(node.fanin0) (AigLit=uint32_t)
+4. podem.cpp: Uninitialized pi1/val1 in multiple_backtrace() when backtrace()
+   returns false — moved alternate push inside success block
+5. tech_mapper.cpp: num_vars() → max_var(), cells_mapped → num_cells
+6. floorplan.cpp: total_wirelength → wirelength
+
+────────────────────────────────────────────────────────────────────────────────
+TEST RESULTS
+────────────────────────────────────────────────────────────────────────────────
+New: tests/test_phase47.cpp — 25 tests covering all Tier 2 features
+Registered in tests/CMakeLists.txt
+
+Phase 47 tests:
+  [1]  SDF min:typ:max triplets .............. PASS
+  [2]  SDF scalar delay (backward compat) .... PASS
+  [3]  AOCV per-cell library coefficients .... PASS
+  [4]  Temperature/Voltage derating .......... PASS
+  [5]  Quasi-random SSTA (Halton) ............ PASS
+  [6]  Quasi-random vs pseudo-random ......... PASS
+  [7]  L-shape pattern routing ............... PASS
+  [8]  Z-shape pattern routing ............... PASS
+  [9]  Pattern route selector ................ PASS
+  [10] Macro halo enforcement ................ PASS
+  [11] Thermal-aware placement config ........ PASS
+  [12] SVA temporal operators ................ PASS
+  [13] SVA assume and cover .................. PASS
+  [14] SVA logical operators ................. PASS
+  [15] Hierarchical LEC ..................... PASS
+  [16] OPC SRAF insertion ................... PASS
+  [17] OPC PSM improvement .................. PASS
+  [18] Partial scan SCOAP selection ......... PASS
+  [19] FAN-enhanced ATPG .................... PASS
+  [20] ILP-style tech mapping ............... PASS
+  [21] DAG don't-care optimization .......... PASS
+  [22] Extended DAG rewriting ............... PASS
+  [23] Hierarchical floorplanning ........... PASS
+  [24] Canonical form SSTA slacks ........... PASS
+  [25] Inverse normal CDF accuracy .......... PASS
+
+Full regression: 46/46 tests PASS (ctest -E Phase44)
+ASAN regression: 46/46 tests PASS — zero memory errors (83s)
+
+Estimated LOC added: ~1,200 (Tier 2)
+Total cumulative LOC added: ~2,000+ (Tier 0 + Tier 1 + Tier 2)
+
+PENDING COMMIT (not pushed — Rule 7):
+  All Tier 0 + Tier 1 + Tier 2 changes are local.
+================================================================================

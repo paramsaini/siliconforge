@@ -76,8 +76,35 @@ public:
                            const MultiChainConfig& mc_cfg = {4, MultiChainConfig::BY_LENGTH},
                            const CompressionConfig& comp_cfg = {4, 2, 10.0});
 
+    // ── Tier 2: Partial scan selection ─────────────────────────────────
+    // Instead of making all FFs scannable, select a subset based on testability
+    // analysis (SCOAP controllability/observability) to achieve target coverage
+    // with minimal area overhead.
+    struct PartialScanConfig {
+        double target_coverage = 0.95;  // target fault coverage (0.0-1.0)
+        double scan_ratio = 0.7;        // max fraction of FFs to make scannable
+        enum SelectionMode { SCOAP, RANDOM, CRITICAL_PATH } mode = SCOAP;
+    };
+    struct PartialScanResult {
+        int total_ffs = 0;
+        int selected_ffs = 0;
+        double scan_ratio = 0;
+        double estimated_coverage = 0;
+        std::vector<int> selected_ff_ids;
+        std::string message;
+    };
+    PartialScanResult select_partial_scan(const PartialScanConfig& cfg);
+
 private:
     Netlist& nl_;
+
+    // SCOAP testability scores per gate
+    struct TestabilityScore {
+        double controllability_0 = 0; // difficulty to set to 0
+        double controllability_1 = 0; // difficulty to set to 1
+        double observability = 0;     // difficulty to observe
+    };
+    std::unordered_map<GateId, TestabilityScore> compute_scoap();
 };
 
 } // namespace sf

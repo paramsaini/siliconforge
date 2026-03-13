@@ -826,4 +826,104 @@ FaultCoverage PodemAtpg::run_enhanced() {
     return fc;
 }
 
+// ── Tier 2: FAN Algorithm Enhancements ──────────────────────────────
+
+bool PodemAtpg::is_fanout_stem(NetId net) const {
+    auto& n = nl_.net(net);
+    return n.fanout.size() > 1;
+}
+
+std::vector<PodemAtpg::BacktraceAlt> PodemAtpg::multiple_backtrace(
+    NetId obj_net, DLogic obj_val, int max_alts) {
+    std::vector<BacktraceAlt> alts;
+
+    // Standard backtrace first
+    NetId pi1 = -1;
+    Logic4 val1 = Logic4::X;
+    if (backtrace(obj_net, obj_val, pi1, val1)) {
+        alts.push_back({pi1, val1, 1.0});
+
+        // Try alternate values at decision points
+        if (fan_cfg_.enable_multiple_backtrace && alts.size() < (size_t)max_alts) {
+            Logic4 alt_val = (val1 == Logic4::ZERO) ? Logic4::ONE : Logic4::ZERO;
+            alts.push_back({pi1, alt_val, 2.0});
+        }
+    }
+
+    return alts;
+}
+
+FaultCoverage PodemAtpg::run_fan_atpg() {
+    FaultCoverage fc;
+    auto faults = enumerate_faults();
+    fc.total_faults = faults.size();
+
+    // Clear learning database
+    learned_implications_.clear();
+
+    for (auto& fault : faults) {
+        init_values();
+        backtrack_count_ = 0;
+        current_fault_ = &fault;
+
+        bool detected = false;
+
+        if (fan_cfg_.enable_multiple_backtrace) {
+            // FAN-style: try multiple backtrace alternatives before standard PODEM
+            NetId obj_net;
+            DLogic obj_val;
+            if (objective(fault, obj_net, obj_val)) {
+                auto alternatives = multiple_backtrace(obj_net, obj_val,
+                    fan_cfg_.max_backtrace_alternatives);
+
+                for (auto& alt : alternatives) {
+                    // Save state
+                    auto saved = net_values_;
+
+                    // Apply assignment
+                    net_values_[alt.pi] = (alt.value == Logic4::ONE) ? DLogic::ONE : DLogic::ZERO;
+                    forward_imply_with_fault(fault);
+
+                    if (fault_propagated(fault)) {
+                        detected = true;
+                        break;
+                    }
+
+                    // Restore and try next alternative
+                    net_values_ = saved;
+                }
+            }
+        }
+
+        if (!detected) {
+            // Fall back to standard PODEM
+            detected = podem_recursive(fault, 0);
+        }
+
+        if (detected) {
+            fc.detected++;
+            std::vector<std::pair<NetId, Logic4>> tv;
+            for (auto pi : nl_.primary_inputs()) {
+                auto& nv = net_values_[pi];
+                Logic4 v = (nv == DLogic::ONE || nv == DLogic::D) ? Logic4::ONE :
+                           (nv == DLogic::ZERO || nv == DLogic::DBAR) ? Logic4::ZERO :
+                           Logic4::X;
+                tv.push_back({pi, v});
+            }
+            fc.tests.push_back({fault, tv});
+
+            // FAN learning: record successful implications
+            if (fan_cfg_.enable_learning) {
+                for (size_t ni = 0; ni < net_values_.size(); ni++) {
+                    if (net_values_[ni] != DLogic::X) {
+                        learned_implications_[(NetId)ni] = net_values_[ni];
+                    }
+                }
+            }
+        }
+    }
+
+    return fc;
+}
+
 } // namespace sf

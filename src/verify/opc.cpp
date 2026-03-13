@@ -118,4 +118,64 @@ OpcResult OpcEngine::apply_opc() {
     return r;
 }
 
+// ── Tier 2: SRAF insertion ───────────────────────────────────────────
+OpcEngine::SrafResult OpcEngine::insert_sraf(const SrafConfig& cfg) {
+    SrafResult result;
+    double res_limit = resolution_limit();
+
+    for (auto& c : pd_.cells) {
+        if (!c.placed) continue;
+        result.features_checked++;
+
+        double w_nm = c.width * 1000;
+        double h_nm = c.height * 1000;
+
+        // Only insert SRAF for features near resolution limit
+        if (w_nm > res_limit * 3.0 && h_nm > res_limit * 3.0) continue;
+
+        double cx = c.position.x;
+        double cy = c.position.y;
+
+        // Insert assist features on each side of the narrow dimension
+        for (int side = 0; side < cfg.max_sraf_per_side; side++) {
+            double offset_nm = cfg.sraf_spacing_nm + side * (cfg.sraf_width_nm + cfg.min_pitch_nm);
+            double offset_um = offset_nm / 1000.0;
+            double sraf_w_um = cfg.sraf_width_nm / 1000.0;
+
+            if (w_nm <= res_limit * 2.0) {
+                // Add SRAF left and right of feature
+                result.assist_features.push_back(Rect(
+                    cx - offset_um - sraf_w_um, cy,
+                    cx - offset_um, cy + c.height));
+                result.assist_features.push_back(Rect(
+                    cx + c.width + offset_um, cy,
+                    cx + c.width + offset_um + sraf_w_um, cy + c.height));
+                result.sraf_inserted += 2;
+            }
+            if (h_nm <= res_limit * 2.0) {
+                // Add SRAF above and below
+                result.assist_features.push_back(Rect(
+                    cx, cy - offset_um - sraf_w_um,
+                    cx + c.width, cy - offset_um));
+                result.assist_features.push_back(Rect(
+                    cx, cy + c.height + offset_um,
+                    cx + c.width, cy + c.height + offset_um + sraf_w_um));
+                result.sraf_inserted += 2;
+            }
+        }
+    }
+
+    result.message = std::to_string(result.sraf_inserted) + " SRAFs inserted for " +
+                     std::to_string(result.features_checked) + " features";
+    return result;
+}
+
+double OpcEngine::estimate_psm_improvement() const {
+    // Alternating PSM doubles resolution: k1 drops from 0.5 to ~0.25
+    // Process window improvement is proportional to NA²
+    double k1_standard = 0.5;
+    double k1_psm = 0.25;
+    return k1_standard / k1_psm;  // ~2× improvement factor
+}
+
 } // namespace sf

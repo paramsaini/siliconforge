@@ -50,13 +50,32 @@ public:
         return 0.5 * params_.wavelength_nm / params_.numerical_aperture;
     }
 
+    // ── Tier 2: SRAF (Sub-Resolution Assist Features) ──────────────────
+    // Insert non-printing assist features near isolated lines to improve
+    // process window and CD uniformity.
+    struct SrafConfig {
+        double sraf_width_nm = 40;       // assist feature width (< resolution limit)
+        double sraf_spacing_nm = 80;     // distance from main feature
+        int    max_sraf_per_side = 2;    // max assist features per side
+        double min_pitch_nm = 120;       // minimum pitch for SRAF insertion
+    };
+    struct SrafResult {
+        int features_checked = 0;
+        int sraf_inserted = 0;
+        std::vector<Rect> assist_features;
+        std::string message;
+    };
+    SrafResult insert_sraf(const SrafConfig& cfg);
+
+    // ── Tier 2: Phase-shift estimation ─────────────────────────────────
+    // Returns estimated process window improvement from alternating PSM
+    double estimate_psm_improvement() const;
+
 private:
     const PhysicalDesign& pd_;
     LithoParams params_;
 
-    // Compute edge bias for a feature
     double compute_bias(double feature_width) const;
-    // Apply correction to a rectangle
     Rect apply_correction(const Rect& feature) const;
 };
 

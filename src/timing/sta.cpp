@@ -19,24 +19,30 @@ double StaEngine::effective_cell_derate(GateId gid) const {
         auto it = gate_depth_.find(gid);
         if (it != gate_depth_.end()) depth = std::max(1, it->second);
 
+        // Use per-cell AOCV coefficient if available
+        std::string cell_type;
+        if (gid >= 0 && static_cast<size_t>(gid) < nl_.num_gates()) {
+            cell_type = gate_type_str(nl_.gate(gid).type);
+        }
+
         if (analyzing_late_)
-            return aocv_table_.late_derate(depth) * derate_.cell_derate;
+            return aocv_table_.late_derate(depth, cell_type) * derate_.cell_derate * derate_.tv_scale();
         else
-            return aocv_table_.early_derate(depth) * derate_.early_cell;
+            return aocv_table_.early_derate(depth, cell_type) * derate_.early_cell * derate_.tv_scale();
     }
     if (ocv_mode_ == OcvMode::POCV) {
         // POCV: base derate is 1.0, path-level sigma applied later via PBA
         // At gate level, use 1.0 (mean) — the statistical adjustment happens per-path
-        return analyzing_late_ ? derate_.cell_derate : derate_.early_cell;
+        return (analyzing_late_ ? derate_.cell_derate : derate_.early_cell) * derate_.tv_scale();
     }
     if (ocv_mode_ == OcvMode::OCV) {
         if (analyzing_late_)
-            return derate_.cell_derate * ocv_late_cell_;
+            return derate_.cell_derate * ocv_late_cell_ * derate_.tv_scale();
         else
-            return derate_.early_cell * ocv_early_cell_;
+            return derate_.early_cell * ocv_early_cell_ * derate_.tv_scale();
     }
     // NONE: use base corner derate
-    return analyzing_late_ ? derate_.cell_derate : derate_.early_cell;
+    return (analyzing_late_ ? derate_.cell_derate : derate_.early_cell) * derate_.tv_scale();
 }
 
 double StaEngine::effective_wire_derate(GateId gid) const {
@@ -47,21 +53,21 @@ double StaEngine::effective_wire_derate(GateId gid) const {
 
         if (analyzing_late_)
             return (1.0 + aocv_table_.late_variation / std::sqrt((double)depth))
-                   * derate_.wire_derate;
+                   * derate_.wire_derate * derate_.tv_scale();
         else
             return (1.0 - aocv_table_.early_variation / std::sqrt((double)depth))
-                   * derate_.early_wire;
+                   * derate_.early_wire * derate_.tv_scale();
     }
     if (ocv_mode_ == OcvMode::POCV) {
-        return analyzing_late_ ? derate_.wire_derate : derate_.early_wire;
+        return (analyzing_late_ ? derate_.wire_derate : derate_.early_wire) * derate_.tv_scale();
     }
     if (ocv_mode_ == OcvMode::OCV) {
         if (analyzing_late_)
-            return derate_.wire_derate * ocv_late_cell_;  // use same ratio
+            return derate_.wire_derate * ocv_late_cell_ * derate_.tv_scale();
         else
-            return derate_.early_wire * ocv_early_cell_;
+            return derate_.early_wire * ocv_early_cell_ * derate_.tv_scale();
     }
-    return analyzing_late_ ? derate_.wire_derate : derate_.early_wire;
+    return (analyzing_late_ ? derate_.wire_derate : derate_.early_wire) * derate_.tv_scale();
 }
 
 // === Gate Depth Computation (for AOCV) ===
