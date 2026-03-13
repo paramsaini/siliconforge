@@ -111,19 +111,43 @@ static LvsGraph build_schem_graph(const Netlist& nl, std::vector<int>& gate_ids)
     return g;
 }
 
-// Build LvsGraph from PhysicalDesign
+// Check if a cell type is physical infrastructure (not in schematic netlist)
+static bool is_infrastructure_cell(const std::string& cell_type) {
+    std::string ct = cell_type;
+    std::transform(ct.begin(), ct.end(), ct.begin(), ::toupper);
+    return ct.find("ENDCAP") != std::string::npos ||
+           ct.find("WELLTAP") != std::string::npos ||
+           ct.find("FILL") != std::string::npos ||
+           ct.find("FILLER") != std::string::npos ||
+           ct.find("TAP") != std::string::npos ||
+           ct.find("DECAP") != std::string::npos;
+}
+
+// Build LvsGraph from PhysicalDesign, skipping infrastructure cells
 static LvsGraph build_layout_graph(const PhysicalDesign& pd) {
     LvsGraph g;
-    for (auto& c : pd.cells) g.cell_types.push_back(c.cell_type);
+    std::vector<int> pd_to_graph(pd.cells.size(), -1);
+    for (size_t i = 0; i < pd.cells.size(); i++) {
+        if (is_infrastructure_cell(pd.cells[i].cell_type)) continue;
+        pd_to_graph[i] = (int)g.cell_types.size();
+        g.cell_types.push_back(pd.cells[i].cell_type);
+    }
     g.cell_nets.resize(g.cell_types.size());
 
     for (int ni = 0; ni < (int)pd.nets.size(); ni++) {
         auto& net = pd.nets[ni];
-        if (net.cell_ids.size() >= 2) {
-            g.net_cells.push_back(net.cell_ids);
-            for (int c : net.cell_ids)
+        // Remap cell IDs, skipping infrastructure cells
+        std::vector<int> mapped;
+        for (int c : net.cell_ids) {
+            if (c >= 0 && c < (int)pd_to_graph.size() && pd_to_graph[c] >= 0)
+                mapped.push_back(pd_to_graph[c]);
+        }
+        if (mapped.size() >= 2) {
+            int graph_net = (int)g.net_cells.size();
+            g.net_cells.push_back(mapped);
+            for (int c : mapped)
                 if (c >= 0 && c < (int)g.cell_nets.size())
-                    g.cell_nets[c].push_back(ni);
+                    g.cell_nets[c].push_back(graph_net);
         }
     }
     return g;
@@ -206,9 +230,9 @@ LvsResult LvsChecker::check() {
         }
     }
     if (r.unmatched_layout > 0) {
-        // Check if ALL unmatched layout cells are CTS-inserted buffers.
-        // Post-CTS LVS: clock buffers are expected physical-only additions.
-        bool all_cts_buffers = true;
+        // Check if ALL unmatched layout cells are CTS-inserted buffers
+        // or physical infrastructure cells (already filtered, but check residual).
+        bool all_cts_or_infra = true;
         for (int i = 0; i < (int)lg.cell_types.size(); i++) {
             if (!matched_layout.count(i)) {
                 std::string ct = lg.cell_types[i];
@@ -216,10 +240,11 @@ LvsResult LvsChecker::check() {
                 bool is_cts = (ct.find("CLKBUF") != std::string::npos ||
                                ct.find("CLK_BUF") != std::string::npos ||
                                ct.find("CTS") != std::string::npos);
-                if (!is_cts) { all_cts_buffers = false; break; }
+                bool is_infra = is_infrastructure_cell(ct);
+                if (!is_cts && !is_infra) { all_cts_or_infra = false; break; }
             }
         }
-        if (!all_cts_buffers) {
+        if (!all_cts_or_infra) {
             for (int i = 0; i < (int)lg.cell_types.size(); i++) {
                 if (!matched_layout.count(i)) {
                     r.mismatches.push_back({"extra_cell",
@@ -229,7 +254,7 @@ LvsResult LvsChecker::check() {
                 }
             }
         }
-        // CTS buffers are expected additions — not a mismatch
+        // CTS buffers and infrastructure cells are expected additions — not a mismatch
     }
 
     // Step 6: Power rail check — verify VDD/GND nets exist in layout
