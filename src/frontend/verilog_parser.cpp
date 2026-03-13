@@ -313,6 +313,13 @@ std::vector<VerilogParser::Token> VerilogParser::tokenize(const std::string& src
             else if (ident == "always_latch") tokens.push_back({Token::ALWAYS_LATCH_KW, ident, line});
             else if (ident == "unique") tokens.push_back({Token::UNIQUE_KW, ident, line});
             else if (ident == "priority") tokens.push_back({Token::PRIORITY_KW, ident, line});
+            else if (ident == "typedef") tokens.push_back({Token::TYPEDEF_KW, ident, line});
+            else if (ident == "enum") tokens.push_back({Token::ENUM_KW, ident, line});
+            else if (ident == "struct") tokens.push_back({Token::STRUCT_KW, ident, line});
+            else if (ident == "packed") tokens.push_back({Token::PACKED_KW, ident, line});
+            else if (ident == "package") tokens.push_back({Token::PACKAGE_KW, ident, line});
+            else if (ident == "endpackage") tokens.push_back({Token::ENDPACKAGE_KW, ident, line});
+            else if (ident == "import") tokens.push_back({Token::IMPORT_KW, ident, line});
             else tokens.push_back({Token::IDENT, ident, line});
         }
         else i++;
@@ -1224,6 +1231,11 @@ size_t VerilogParser::parse_module(const std::vector<Token>& t, size_t pos, Netl
                     is_sv_net_type(t[pos].value)) {
                     sv_tw = sv_type_width(t[pos].value);
                     pos++;
+                } else if (pos < t.size() && t[pos].type == Token::IDENT &&
+                           sv_typedefs_.count(t[pos].value)) {
+                    // SV Phase 2: typedef'd type as port type
+                    resolve_sv_type(t[pos].value, sv_tw);
+                    pos++;
                 }
                 if (pos < t.size() && t[pos].type == Token::SIGNED_KW) pos++;
                 auto range = parse_bus_range(t, pos);
@@ -1277,7 +1289,9 @@ size_t VerilogParser::parse_module(const std::vector<Token>& t, size_t pos, Netl
             t[pos].type != Token::GENERATE_KW && t[pos].type != Token::GENVAR_KW &&
             t[pos].type != Token::FUNCTION_KW && t[pos].type != Token::TASK_KW &&
             t[pos].type != Token::INITIAL_KW && t[pos].type != Token::SPECIFY_KW &&
-            t[pos].type != Token::DEFPARAM_KW && t[pos].type != Token::DISABLE_KW) {
+            t[pos].type != Token::DEFPARAM_KW && t[pos].type != Token::DISABLE_KW &&
+            t[pos].type != Token::TYPEDEF_KW && t[pos].type != Token::ENUM_KW &&
+            t[pos].type != Token::IMPORT_KW) {
             pos++; continue;
         }
 
@@ -1505,10 +1519,42 @@ size_t VerilogParser::parse_module(const std::vector<Token>& t, size_t pos, Netl
             while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
             if (pos < t.size()) pos++;
         }
+        // SystemVerilog Phase 2: typedef, enum, import
+        else if (t[pos].type == Token::TYPEDEF_KW) {
+            pos = parse_typedef(t, pos);
+        }
+        else if (t[pos].type == Token::ENUM_KW) {
+            // Anonymous enum at module level — skip to semicolon
+            pos++;
+            while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+            if (pos < t.size()) pos++;
+        }
+        else if (t[pos].type == Token::IMPORT_KW) {
+            pos = parse_import(t, pos);
+        }
         else {
+            // SV Phase 2: typedef'd type used as variable declaration
+            // e.g., state_t current_state;  or  state_t current_state, next_state;
+            if (t[pos].type == Token::IDENT && sv_typedefs_.count(t[pos].value)) {
+                int tw = 0;
+                resolve_sv_type(t[pos].value, tw);
+                pos++; // skip type name
+                while (pos < t.size() && t[pos].type == Token::IDENT) {
+                    std::string vname = t[pos].value; pos++;
+                    if (tw > 1) {
+                        get_or_create_bus(nl, vname, tw - 1, 0);
+                        bus_ranges_[vname] = {tw - 1, 0};
+                    } else {
+                        get_or_create_net(nl, vname);
+                    }
+                    r.num_wires++;
+                    if (pos < t.size() && t[pos].type == Token::COMMA) pos++;
+                }
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            }
             // Module instantiation: ident [#(...)] ident (...)
             // Also handle system tasks at module level ($display, etc.)
-            if (t[pos].type == Token::IDENT && t[pos].value.size() > 1 && t[pos].value[0] == '$') {
+            else if (t[pos].type == Token::IDENT && t[pos].value.size() > 1 && t[pos].value[0] == '$') {
                 // System task at module level — skip to semicolon
                 pos++;
                 if (pos < t.size() && t[pos].type == Token::LPAREN) {
@@ -1571,6 +1617,8 @@ VerilogParseResult VerilogParser::parse_tokens(const std::vector<Token>& t, Netl
     tasks_.clear();
     multidim_arrays_.clear();
     module_defs_.clear();
+    sv_typedefs_.clear();
+    sv_packages_.clear();
     hierarchy_depth_ = 0;
 
     // === Pass 1: Collect all module definitions (token ranges) ===
@@ -1602,6 +1650,21 @@ VerilogParseResult VerilogParser::parse_tokens(const std::vector<Token>& t, Netl
                     module_defs_[mod_name] = std::move(md);
                 }
             } else pos++;
+        }
+    }
+
+    // === Pass 1.5: Parse packages and file-level typedefs ===
+    {
+        size_t pos = 0;
+        while (pos < t.size() && t[pos].type != Token::END) {
+            if (t[pos].type == Token::PACKAGE_KW) {
+                pos = parse_package(t, pos);
+            } else if (t[pos].type == Token::TYPEDEF_KW) {
+                // File-level typedef (outside any module/package)
+                pos = parse_typedef(t, pos);
+            } else {
+                pos++;
+            }
         }
     }
 
@@ -1984,6 +2047,289 @@ size_t VerilogParser::parse_always_sv(const std::vector<Token>& t, size_t pos, s
     parent->add(always);
     has_behavioral_blocks = true;
     return pos;
+}
+
+// =============================================================================
+// SystemVerilog Phase 2: typedef parsing
+// =============================================================================
+// Handles:
+//   typedef enum [logic [N:0]] { A, B=val, C } name_t;
+//   typedef logic [N:0] name_t;
+//   typedef struct packed { type field; ... } name_t;
+size_t VerilogParser::parse_typedef(const std::vector<Token>& t, size_t pos) {
+    pos++; // skip 'typedef'
+    if (pos >= t.size()) return pos;
+
+    if (t[pos].type == Token::ENUM_KW) {
+        // typedef enum [logic [N:0]] { ... } name_t;
+        pos++; // skip 'enum'
+        int base_width = 32; // default enum width
+
+        // Optional base type: logic [N:0]
+        if (pos < t.size() && t[pos].type == Token::IDENT &&
+            (t[pos].value == "logic" || t[pos].value == "bit" || t[pos].value == "reg")) {
+            pos++;
+            if (pos < t.size() && t[pos].type == Token::LBRACKET) {
+                auto range = parse_bus_range(t, pos);
+                if (range.first >= 0)
+                    base_width = std::abs(range.first - range.second) + 1;
+            }
+        }
+
+        // Parse enum body { A, B=1, C, ... }
+        SvTypeDef td;
+        td.is_enum = true;
+        td.width = base_width;
+        int next_val = 0;
+
+        if (pos < t.size() && t[pos].type == Token::LBRACE) {
+            pos++; // skip '{'
+            while (pos < t.size() && t[pos].type != Token::RBRACE) {
+                if (t[pos].type == Token::IDENT) {
+                    std::string ename = t[pos].value;
+                    td.enum_names.push_back(ename);
+                    pos++;
+                    // Optional = value
+                    if (pos < t.size() && t[pos].type == Token::ASSIGN) {
+                        pos++;
+                        if (pos < t.size() && t[pos].type == Token::NUMBER) {
+                            next_val = (int)parse_verilog_number(t[pos].value);
+                            pos++;
+                        }
+                    }
+                    // Register enum constant as parameter (accessible in expressions)
+                    params_[ename] = next_val;
+                    next_val++;
+                    if (pos < t.size() && t[pos].type == Token::COMMA) pos++;
+                } else {
+                    pos++;
+                }
+            }
+            if (pos < t.size() && t[pos].type == Token::RBRACE) pos++;
+        }
+
+        // Type name
+        if (pos < t.size() && t[pos].type == Token::IDENT) {
+            std::string type_name = t[pos].value;
+            sv_typedefs_[type_name] = td;
+            pos++;
+        }
+        if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+    }
+    else if (t[pos].type == Token::STRUCT_KW) {
+        // typedef struct packed { type field; ... } name_t;
+        pos++; // skip 'struct'
+        if (pos < t.size() && t[pos].type == Token::PACKED_KW) pos++; // skip 'packed'
+
+        SvTypeDef td;
+        td.is_struct = true;
+        td.width = 0;
+
+        if (pos < t.size() && t[pos].type == Token::LBRACE) {
+            pos++; // skip '{'
+            while (pos < t.size() && t[pos].type != Token::RBRACE) {
+                // Parse field: type [range] name;
+                int field_width = 1;
+                if (pos < t.size() && t[pos].type == Token::IDENT) {
+                    std::string ftype = t[pos].value;
+                    if (is_sv_net_type(ftype)) {
+                        field_width = sv_type_width(ftype);
+                        if (field_width == 0) field_width = 1; // logic/bit default
+                        pos++;
+                    } else if (sv_typedefs_.count(ftype)) {
+                        resolve_sv_type(ftype, field_width);
+                        pos++;
+                    } else {
+                        pos++;
+                    }
+                } else if (pos < t.size() && t[pos].type == Token::SIGNED_KW) {
+                    pos++;
+                    continue;
+                } else {
+                    pos++;
+                    continue;
+                }
+                // Optional [range]
+                if (pos < t.size() && t[pos].type == Token::LBRACKET) {
+                    auto range = parse_bus_range(t, pos);
+                    if (range.first >= 0)
+                        field_width = std::abs(range.first - range.second) + 1;
+                }
+                if (pos < t.size() && t[pos].type == Token::SIGNED_KW) pos++;
+                // Field name
+                if (pos < t.size() && t[pos].type == Token::IDENT) {
+                    std::string fname = t[pos].value;
+                    td.struct_fields.push_back({fname, field_width});
+                    td.width += field_width;
+                    pos++;
+                }
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            }
+            if (pos < t.size() && t[pos].type == Token::RBRACE) pos++;
+        }
+
+        // Type name
+        if (pos < t.size() && t[pos].type == Token::IDENT) {
+            std::string type_name = t[pos].value;
+            sv_typedefs_[type_name] = td;
+            pos++;
+        }
+        if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+    }
+    else if (pos < t.size() && t[pos].type == Token::IDENT &&
+             (is_sv_net_type(t[pos].value) || t[pos].value == "integer")) {
+        // typedef logic [N:0] name_t;  or  typedef reg [7:0] name_t;
+        std::string base = t[pos].value;
+        int tw = sv_type_width(base);
+        pos++;
+
+        // Optional signed
+        if (pos < t.size() && t[pos].type == Token::SIGNED_KW) pos++;
+
+        // Optional [range]
+        if (pos < t.size() && t[pos].type == Token::LBRACKET) {
+            auto range = parse_bus_range(t, pos);
+            if (range.first >= 0)
+                tw = std::abs(range.first - range.second) + 1;
+        }
+
+        if (tw == 0) tw = 1; // default 1-bit for logic/bit without range
+
+        // Type name
+        if (pos < t.size() && t[pos].type == Token::IDENT) {
+            SvTypeDef td;
+            td.width = tw;
+            sv_typedefs_[t[pos].value] = td;
+            pos++;
+        }
+        if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+    }
+    else {
+        // Unknown typedef — skip to semicolon
+        while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+        if (pos < t.size()) pos++;
+    }
+    return pos;
+}
+
+// =============================================================================
+// SystemVerilog Phase 2: package parsing
+// =============================================================================
+size_t VerilogParser::parse_package(const std::vector<Token>& t, size_t pos) {
+    pos++; // skip 'package'
+    SvPackage pkg;
+    if (pos < t.size() && t[pos].type == Token::IDENT) {
+        pkg.name = t[pos].value;
+        pos++;
+    }
+    if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+
+    // Parse package body until endpackage
+    while (pos < t.size() && t[pos].type != Token::ENDPACKAGE_KW && t[pos].type != Token::END) {
+        if (t[pos].type == Token::TYPEDEF_KW) {
+            auto before = sv_typedefs_;
+            pos = parse_typedef(t, pos);
+            for (auto& [name, td] : sv_typedefs_) {
+                if (!before.count(name))
+                    pkg.typedefs[name] = td;
+            }
+        } else if (t[pos].type == Token::PARAMETER_KW) {
+            pos++; // skip parameter/localparam
+            if (pos < t.size() && t[pos].type == Token::SIGNED_KW) pos++;
+            if (pos < t.size() && t[pos].type == Token::INTEGER_KW) pos++;
+            if (pos < t.size() && t[pos].type == Token::LBRACKET) {
+                while (pos < t.size() && t[pos].type != Token::RBRACKET) pos++;
+                if (pos < t.size()) pos++;
+            }
+            while (pos < t.size() && t[pos].type != Token::SEMI) {
+                if (t[pos].type == Token::IDENT) {
+                    std::string name = t[pos].value; pos++;
+                    if (pos < t.size() && t[pos].type == Token::ASSIGN) {
+                        pos++;
+                        if (pos < t.size() && t[pos].type == Token::NUMBER) {
+                            int val = (int)parse_verilog_number(t[pos].value);
+                            pkg.params[name] = val;
+                            params_[name] = val;
+                            pos++;
+                        }
+                    }
+                } else pos++;
+            }
+            if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+        } else {
+            pos++;
+        }
+    }
+    if (pos < t.size() && t[pos].type == Token::ENDPACKAGE_KW) pos++;
+
+    if (!pkg.name.empty())
+        sv_packages_[pkg.name] = std::move(pkg);
+    return pos;
+}
+
+// =============================================================================
+// SystemVerilog Phase 2: import parsing
+// =============================================================================
+size_t VerilogParser::parse_import(const std::vector<Token>& t, size_t pos) {
+    pos++; // skip 'import'
+    std::string pkg_name;
+    if (pos < t.size() && t[pos].type == Token::IDENT) {
+        pkg_name = t[pos].value;
+        pos++;
+    }
+    // Skip ::
+    if (pos + 1 < t.size() && t[pos].type == Token::COLON && t[pos+1].type == Token::COLON) {
+        pos += 2;
+    }
+    bool wildcard = false;
+    std::string symbol;
+    if (pos < t.size()) {
+        if (t[pos].type == Token::STAR) {
+            wildcard = true;
+            pos++;
+        } else if (t[pos].type == Token::IDENT) {
+            symbol = t[pos].value;
+            pos++;
+        }
+    }
+    if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+
+    auto it = sv_packages_.find(pkg_name);
+    if (it != sv_packages_.end()) {
+        const auto& pkg = it->second;
+        if (wildcard) {
+            for (auto& [name, td] : pkg.typedefs)
+                sv_typedefs_[name] = td;
+            for (auto& [name, val] : pkg.params)
+                params_[name] = val;
+            for (auto& [name, td] : pkg.typedefs) {
+                if (td.is_enum) {
+                    int v = 0;
+                    for (auto& ename : td.enum_names) {
+                        if (!params_.count(ename))
+                            params_[ename] = v;
+                        v++;
+                    }
+                }
+            }
+        } else if (!symbol.empty()) {
+            if (pkg.typedefs.count(symbol))
+                sv_typedefs_[symbol] = pkg.typedefs.at(symbol);
+            if (pkg.params.count(symbol))
+                params_[symbol] = pkg.params.at(symbol);
+        }
+    }
+    return pos;
+}
+
+// =============================================================================
+// SystemVerilog Phase 2: resolve typedef to bit width
+// =============================================================================
+bool VerilogParser::resolve_sv_type(const std::string& name, int& width) const {
+    auto it = sv_typedefs_.find(name);
+    if (it == sv_typedefs_.end()) return false;
+    width = it->second.width;
+    return true;
 }
 
 size_t VerilogParser::parse_statement_block(const std::vector<Token>& t, size_t pos, std::shared_ptr<AstNode> parent) {

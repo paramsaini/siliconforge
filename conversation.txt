@@ -1886,4 +1886,97 @@ CUMULATIVE STATUS:
 
 PENDING COMMIT (not pushed — Rule 7):
   All Tier 0-3 + SV Phase 1 changes are local.
+
+================================================================================
+SESSION 15 — SystemVerilog Phase 2: Type System (IEEE 1800)
+================================================================================
+
+OBJECTIVE: Add SystemVerilog type system to the Verilog parser for
+  typedef enum, typedef logic, struct packed, package/endpackage, and
+  import pkg::*/import pkg::symbol.
+
+IMPLEMENTATION:
+
+1. Token Types (verilog_parser.hpp):
+   - TYPEDEF_KW, ENUM_KW, STRUCT_KW, PACKED_KW, PACKAGE_KW, ENDPACKAGE_KW, IMPORT_KW
+
+2. Data Structures (verilog_parser.hpp):
+   - SvTypeDef: width, is_enum, is_struct, enum_names[], struct_fields[]
+   - SvPackage: name, typedefs map, params map
+   - sv_typedefs_: global type registry
+   - sv_packages_: package registry
+
+3. New Methods:
+   - parse_typedef(): handles enum, struct packed, logic/bit/reg aliases
+   - parse_package(): handles package body (typedefs + parameters)
+   - parse_import(): handles wildcard (::*) and specific (::symbol) imports
+   - resolve_sv_type(): resolves typedef name to bit width
+
+4. Tokenizer: 7 new keywords recognized
+
+5. parse_tokens() Pass 1.5: Pre-parse packages and file-level typedefs
+   before module parsing (between module collection and top module parse)
+
+6. Module Body Dispatch:
+   - typedef/enum/import tokens added to skip filter
+   - typedef → parse_typedef()
+   - enum → skip anonymous enum
+   - import → parse_import()
+   - Typedef'd type names as variable declarations (before module inst check)
+
+7. ANSI Port Parsing:
+   - Typedef'd type names resolved via resolve_sv_type() for port widths
+
+KEY DESIGN DECISIONS:
+  - Enum default width: 32 bits (IEEE 1800 standard)
+  - Enum constants registered in params_ map (usable in constant expressions)
+  - struct packed: total width = sum of field widths (synthesizable as flat vector)
+  - Package parsing happens before module parsing (Pass 1.5)
+  - import::* pulls all typedefs + params + enum constants
+  - Nested struct supported (typedef field type resolves via sv_typedefs_)
+  - File-level typedefs (outside package/module) supported
+
+BUILD & TEST:
+  Release build: ✅ Clean (0 errors)
+  Phase 50 tests: ✅ 25/25 PASS
+  Full regression: ✅ 49/49 PASS (0.86s)
+  ASAN build+test: ✅ 49/49 PASS, zero memory errors (345.92s)
+
+TEST COVERAGE (test_phase50.cpp — 25 tests):
+  Tests 1-3:   typedef enum (basic, explicit values, custom width)
+  Tests 4-5:   typedef logic (8-bit, 32-bit)
+  Tests 6-8:   struct packed (basic, multi-field, body declaration)
+  Tests 9-13:  package/import (typedef, wildcard, specific, enum, parameter)
+  Test 14:     multiple typedefs
+  Test 15:     enum as port type
+  Test 16:     struct with byte fields
+  Test 17:     typedef in always blocks
+  Test 18:     file-level typedef
+  Test 19:     nested struct (typedef field type)
+  Test 20:     mixed Phase 1 + Phase 2 features
+  Test 21:     typedef inside module body
+  Test 22:     multiple packages
+  Test 23:     enum default 32-bit width
+  Test 24:     struct variable with always_ff
+  Test 25:     empty package (edge case)
+
+FILES MODIFIED:
+  src/frontend/verilog_parser.hpp — 7 tokens, 4 data structures, 4 method declarations
+  src/frontend/verilog_parser.cpp — ~300 lines added (tokenizer, parse methods, dispatch)
+
+FILES CREATED:
+  tests/test_phase50.cpp — 25 SV Phase 2 tests (~510 lines)
+  tests/CMakeLists.txt — registered test_phase50
+
+CUMULATIVE STATUS:
+  ✅ Tier 0: 4/4 gaps complete
+  ✅ Tier 1: 5/5 gaps complete
+  ✅ Tier 2: 7/7 gaps complete
+  ✅ Tier 3: 11/11 gaps complete
+  ✅ SV Phase 1: Core keywords (always_ff/comb/latch, 6 types, unique/priority)
+  ✅ SV Phase 2: Type system (typedef enum/logic/struct packed, package, import)
+  Total test phases: 50 (49 active + Phase44 SAT excluded from quick regression)
+
+PENDING COMMIT (not pushed — Rule 7):
+  All Tier 0-3 + SV Phase 1-2 changes are local.
 ================================================================================

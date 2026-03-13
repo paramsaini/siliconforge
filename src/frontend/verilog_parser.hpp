@@ -91,6 +91,14 @@ private:
             ALWAYS_LATCH_KW,     // always_latch
             UNIQUE_KW,           // unique (case/if synthesis directive)
             PRIORITY_KW,         // priority (case/if synthesis directive)
+            // SystemVerilog IEEE 1800 — Phase 2 keywords
+            TYPEDEF_KW,          // typedef
+            ENUM_KW,             // enum
+            STRUCT_KW,           // struct
+            PACKED_KW,           // packed
+            PACKAGE_KW,          // package
+            ENDPACKAGE_KW,       // endpackage
+            IMPORT_KW,           // import
             END
         };
         Type type;
@@ -190,6 +198,28 @@ private:
     std::unordered_map<std::string, FuncDef> tasks_;
     // Multi-dimensional arrays: name → {word_width, dim1_depth, dim2_depth}
     std::unordered_map<std::string, std::tuple<int,int,int>> multidim_arrays_;
+
+    // SystemVerilog Phase 2 — type system
+    struct SvTypeDef {
+        int width = 0;                      // total bit width
+        bool is_enum = false;
+        bool is_struct = false;
+        std::vector<std::string> enum_names; // enum constant names (in order)
+        std::vector<std::pair<std::string,int>> struct_fields; // {name, width}
+    };
+    std::unordered_map<std::string, SvTypeDef> sv_typedefs_; // type_name → definition
+
+    struct SvPackage {
+        std::string name;
+        std::unordered_map<std::string, SvTypeDef> typedefs;
+        std::unordered_map<std::string, int> params; // constants
+    };
+    std::unordered_map<std::string, SvPackage> sv_packages_;
+
+    size_t parse_typedef(const std::vector<Token>& t, size_t pos);
+    size_t parse_package(const std::vector<Token>& t, size_t pos);
+    size_t parse_import(const std::vector<Token>& t, size_t pos);
+    bool resolve_sv_type(const std::string& name, int& width) const;
 };
 
 } // namespace sf
