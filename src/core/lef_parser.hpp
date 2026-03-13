@@ -230,4 +230,21 @@ private:
     void parse_property(LefLibrary& lib);
 };
 
+// ── LEF Writer ───────────────────────────────────────────────────────────────
+
+class LefWriter {
+public:
+    explicit LefWriter(const LefLibrary& lib) : lib_(lib) {}
+
+    bool write(const std::string& filename);
+    std::string to_string();
+
+private:
+    const LefLibrary& lib_;
+
+    void write_header(std::ostream& os);
+    void write_layers(std::ostream& os);
+    void write_macros(std::ostream& os);
+};
+
 } // namespace sf

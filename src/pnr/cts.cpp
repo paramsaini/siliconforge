@@ -1048,4 +1048,85 @@ DerivedClockResult CtsEngine::build_derived_clock(const ClockDomain& derived,
     return result;
 }
 
+// ---------------------------------------------------------------------------
+// Phase C: Useful Skew Optimization
+// ---------------------------------------------------------------------------
+
+CtsEngine::UsefulSkewResult CtsEngine::apply_useful_skew_opt(
+    const std::vector<int>& sink_cells,
+    const std::vector<double>& sink_slack_ps,
+    const CtsConfig& cfg)
+{
+    UsefulSkewResult result;
+
+    if (sink_cells.empty() || sink_slack_ps.empty()) {
+        result.message = "No sinks for useful skew";
+        return result;
+    }
+
+    double max_useful_skew = cfg.useful_skew_max_ps;
+    double total_improvement = 0;
+
+    // Identify setup-critical paths (negative slack)
+    for (size_t i = 0; i < sink_cells.size() && i < sink_slack_ps.size(); ++i) {
+        double slack = sink_slack_ps[i];
+        if (slack >= 0) continue; // not critical
+
+        // For a critical capture FF, we can advance clock arrival
+        // (reduce insertion delay) to improve setup slack.
+        // Beneficial skew = min(|slack|, max_useful_skew)
+        double beneficial_skew = std::min(std::abs(slack), max_useful_skew);
+
+        // Find the tree node for this sink
+        int sink_node = -1;
+        for (size_t n = 0; n < tree_.size(); ++n) {
+            if (tree_[n].cell_id == sink_cells[i]) {
+                sink_node = static_cast<int>(n);
+                break;
+            }
+        }
+
+        if (sink_node < 0) continue;
+
+        // Adjust the delay at this sink node (reduce = advance clock arrival)
+        tree_[sink_node].delay -= beneficial_skew * 0.5;
+
+        // Track the applied skew (buffer delay adjustment)
+        // In practice: remove a buffer level or downsize buffers on this path
+        result.paths_improved++;
+        total_improvement += beneficial_skew * 0.5;
+        result.max_applied_skew = std::max(result.max_applied_skew, beneficial_skew);
+    }
+
+    // Also look for opportunities to borrow slack from non-critical paths
+    // by delaying their clock arrival (inserting extra buffer delay)
+    for (size_t i = 0; i < sink_cells.size() && i < sink_slack_ps.size(); ++i) {
+        double slack = sink_slack_ps[i];
+        if (slack <= 0) continue; // skip critical paths
+
+        // For non-critical launch FFs, delay clock to lend slack to capture
+        double lendable = std::min(slack * 0.3, max_useful_skew);
+        if (lendable < 1.0) continue;
+
+        int sink_node = -1;
+        for (size_t n = 0; n < tree_.size(); ++n) {
+            if (tree_[n].cell_id == sink_cells[i]) {
+                sink_node = static_cast<int>(n);
+                break;
+            }
+        }
+        if (sink_node < 0) continue;
+
+        tree_[sink_node].delay += lendable * 0.5;
+        total_improvement += lendable * 0.2; // partial benefit from slack lending
+    }
+
+    result.slack_improvement = total_improvement;
+    result.message = std::to_string(result.paths_improved) + " paths improved, " +
+                     std::to_string(static_cast<int>(result.slack_improvement)) +
+                     "ps total slack improvement, max skew=" +
+                     std::to_string(static_cast<int>(result.max_applied_skew)) + "ps";
+    return result;
+}
+
 } // namespace sf

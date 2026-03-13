@@ -8,6 +8,7 @@ add_library(siliconforge_lib STATIC
     core/liberty_parser.cpp
     core/def_parser.cpp
     core/lef_parser.cpp
+    core/lef_writer.cpp
     core/report_gen.cpp
 
     # ── Frontend Parsers ──────────────────────────────────────────────
@@ -23,6 +24,7 @@ add_library(siliconforge_lib STATIC
     synth/eco.cpp
     synth/fsm_extract.cpp
     synth/multi_vt.cpp
+    synth/multibit.cpp
     synth/resource_share.cpp
     synth/retiming.cpp
     synth/tech_mapper.cpp
@@ -67,6 +69,7 @@ add_library(siliconforge_lib STATIC
     pnr/cts.cpp
     pnr/post_route_opt.cpp
     pnr/gdsii_writer.cpp
+    pnr/oasis_writer.cpp
     pnr/chip_assembler.cpp
     pnr/tsv_mgr.cpp
     pnr/ai_tuner.cpp

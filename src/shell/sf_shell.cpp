@@ -54,6 +54,8 @@ void SiliconForgeShell::print_help() const {
     std::cout << "  adv_formal               : Run Advanced Formal (IC3/LTL/CEGAR)\n";
     std::cout << "  run_all [w] [h]          : Run full RTL-to-GDSII flow\n";
     std::cout << "  write_gds <file>         : Export GDSII binary\n";
+    std::cout << "  write_oasis <file>       : Export OASIS format\n";
+    std::cout << "  write_lef <file>         : Export LEF format\n";
     std::cout << "  dashboard <file>         : Generate Ultimate HTML Dashboard\n";
     std::cout << "  export_json <file>       : Dump basic state to JSON (legacy)\n";
     std::cout << "  export_full <file>       : Dump FULL EDA state to JSON (for frontend)\n";
@@ -156,6 +158,18 @@ bool SiliconForgeShell::execute_command(const std::string& cmd_line) {
         std::string file;
         if (iss >> file) engine_.write_gds(file);
         else std::cerr << "Usage: write_gds <file>\n";
+    } else if (cmd == "write_oasis") {
+        std::string file;
+        if (iss >> file) engine_.write_oasis(file);
+        else std::cerr << "Usage: write_oasis <file>\n";
+    } else if (cmd == "write_lef") {
+        std::string file;
+        if (iss >> file) engine_.write_lef(file);
+        else std::cerr << "Usage: write_lef <file>\n";
+    } else if (cmd == "run_eco") {
+        int mode = 0;
+        iss >> mode;
+        engine_.run_eco(mode);
     } else if (cmd == "dashboard") {
         std::string file;
         if (iss >> file) engine_.generate_dashboard(file);

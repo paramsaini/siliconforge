@@ -58,6 +58,7 @@ struct CtsConfig {
     bool enable_gate_cloning = false;   // clone gates for better buffering
     bool power_aware = false;           // minimize clock power
     double clock_gating_threshold = 0.3; // ICG insertion threshold
+    double useful_skew_max_ps = 200.0;  // max allowed useful skew per path
 };
 
 struct MultiCtsResult {
@@ -154,6 +155,19 @@ public:
     // ── Phase 43: Derived/generated clocks ──────────────────────────────────
     DerivedClockResult build_derived_clock(const ClockDomain& derived,
                                             const ClockDomain& parent);
+
+    // ── Phase C: Useful skew optimization ──────────────────────────────────
+    struct UsefulSkewResult {
+        int paths_improved = 0;
+        double slack_improvement = 0;
+        double max_applied_skew = 0;
+        std::string message;
+    };
+
+    UsefulSkewResult apply_useful_skew_opt(
+        const std::vector<int>& sink_cells,
+        const std::vector<double>& sink_slack_ps,
+        const CtsConfig& cfg = {});
 
     // ── Accessors ───────────────────────────────────────────────────────────
     int tree_size() const { return (int)tree_.size(); }

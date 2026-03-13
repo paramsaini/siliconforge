@@ -23,6 +23,11 @@
 #include "pnr/power_plan.hpp"
 #include "pnr/metal_fill.hpp"
 #include "pnr/cell_insert.hpp"
+#include "pnr/oasis_writer.hpp"
+#include "synth/multibit.hpp"
+#include "synth/eco.hpp"
+#include "synth/clock_gating.hpp"
+#include "core/lef_parser.hpp"
 #include "verify/erc.hpp"
 #include "verify/esd.hpp"
 #include "verify/latchup.hpp"
@@ -137,6 +142,42 @@ struct DecapResultData {
     int decaps_inserted = 0;
 };
 
+struct MultiBitResultData {
+    int original_ffs = 0;
+    int banked_groups = 0;
+    int banked_ffs = 0;
+    double area_savings_pct = 0;
+};
+
+struct PhysSynthResultData {
+    int paths_optimized = 0;
+    int gates_resized = 0;
+    double timing_improvement_pct = 0;
+};
+
+struct FullEcoResultData {
+    int changes = 0;
+    int gates_added = 0;
+    int gates_removed = 0;
+    int gates_resized = 0;
+    int spare_cells_used = 0;
+    int nets_rerouted = 0;
+    double timing_impact_ns = 0;
+};
+
+struct ClkGateVerifyData {
+    int total_icg = 0;
+    int latch_based = 0;
+    int issues = 0;
+    bool clean = true;
+};
+
+struct UsefulSkewData {
+    int paths_improved = 0;
+    double slack_improvement = 0;
+    double max_applied_skew = 0;
+};
+
 // ── Main Engine ──────────────────────────────────────────────────────
 
 class SiliconForge {
@@ -195,6 +236,14 @@ public:
     bool run_rdc();
     bool run_sdf_export(const std::string& filename = "");
     bool run_decap_insert();
+
+    // --- Phase C: Final Gap Analysis Features ---
+    bool run_multibit_banking();
+    bool run_physical_synthesis();
+    bool run_eco(int mode = 0);  // 0=functional, 1=metal-only, 2=spare-cell
+    bool run_clock_gate_verify();
+    bool write_oasis(const std::string& filename);
+    bool write_lef(const std::string& filename);
 
     // --- ML & Tuners ---
     bool optimize_pnr_with_ai();
@@ -259,6 +308,10 @@ private:
     bool is_rdc_done_ = false;
     bool is_sdf_done_ = false;
     bool is_decap_done_ = false;
+    bool is_multibit_done_ = false;
+    bool is_phys_synth_done_ = false;
+    bool is_eco_done_ = false;
+    bool is_clk_gate_verified_ = false;
     Netlist pre_synth_nl_; // saved for LEC
     std::unordered_map<int, double> cts_insertion_delays_; // gate_id → insertion delay
     SdcConstraints sdc_constraints_;
@@ -280,6 +333,11 @@ private:
     RdcResultData rdc_result_;
     MultiClockStaResultData multi_clock_result_;
     DecapResultData decap_result_;
+    MultiBitResultData multibit_result_;
+    PhysSynthResultData phys_synth_result_;
+    FullEcoResultData eco_result_data_;
+    ClkGateVerifyData clk_gate_verify_result_;
+    UsefulSkewData useful_skew_result_;
     SimTrace sim_trace_;
 
     // Advanced analysis results (Phases 20-44)

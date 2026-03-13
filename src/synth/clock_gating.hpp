@@ -54,4 +54,43 @@ private:
     std::vector<FfGroup> find_groups();
 };
 
+// ── Phase C: Clock Gating Verification ──────────────────────────────────────
+
+struct ClockGateVerifyResult {
+    int total_icg_cells = 0;
+    int latch_based = 0;
+    int and_gate_based = 0;      // glitch-prone
+    int enable_timing_ok = 0;
+    int enable_timing_fail = 0;
+    int glitch_risk = 0;
+    bool clean = true;
+    std::string message;
+
+    struct Issue {
+        std::string icg_name;
+        std::string type;        // "AND_GATE_GATING", "ENABLE_TIMING", "GLITCH_RISK"
+        std::string detail;
+    };
+    std::vector<Issue> issues;
+};
+
+class ClockGateVerifier {
+public:
+    explicit ClockGateVerifier(const Netlist& nl) : nl_(nl) {}
+
+    ClockGateVerifyResult verify();
+
+private:
+    const Netlist& nl_;
+
+    // Check that enable is stable during active clock edge
+    bool check_enable_timing(GateId icg_gate) const;
+
+    // Check for potential glitches on gated clock output
+    bool check_glitch_free(GateId icg_gate) const;
+
+    // Verify latch-based gating (not bare AND gate)
+    bool is_latch_based(GateId icg_gate) const;
+};
+
 } // namespace sf

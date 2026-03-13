@@ -59,4 +59,38 @@ private:
     std::vector<EcoChange> changes_;
 };
 
+// ── Phase C: Full ECO Flow ──────────────────────────────────────────────────
+
+struct EcoConfig {
+    enum Mode { FUNCTIONAL, METAL_ONLY, SPARE_CELL };
+    Mode mode = FUNCTIONAL;
+    int max_spare_cells = 50;
+    double max_timing_impact_ns = 0.5;
+};
+
+struct FullEcoResult {
+    int changes = 0;
+    int gates_added = 0;
+    int gates_removed = 0;
+    int gates_resized = 0;
+    int spare_cells_used = 0;
+    int nets_rerouted = 0;
+    double timing_impact_ns = 0;
+    std::string message;
+};
+
+class FullEcoEngine {
+public:
+    explicit FullEcoEngine(Netlist& nl) : nl_(nl) {}
+
+    FullEcoResult run_eco(const EcoConfig& cfg = {});
+
+private:
+    Netlist& nl_;
+
+    FullEcoResult run_functional_eco(const EcoConfig& cfg);
+    FullEcoResult run_metal_only_eco(const EcoConfig& cfg);
+    FullEcoResult run_spare_cell_eco(const EcoConfig& cfg);
+};
+
 } // namespace sf
