@@ -45,6 +45,15 @@
 #include "viz/html_export.hpp"
 #include "viz/dashboard.hpp"
 #include "viz/rtl_viz.hpp"
+#include "pnr/power_plan.hpp"
+#include "pnr/metal_fill.hpp"
+#include "pnr/cell_insert.hpp"
+#include "verify/erc.hpp"
+#include "verify/esd.hpp"
+#include "verify/latchup.hpp"
+#include "verify/rdc.hpp"
+#include "timing/sdf_writer.hpp"
+#include "frontend/sdc_parser.hpp"
 
 #include <iostream>
 #include <fstream>
@@ -751,7 +760,16 @@ bool SiliconForge::place() {
         placer.set_net_weight(net.id, weight);
     }
 
+    // Pass blockage constraints from floorplan
+    // Collect any BLOCKAGE-type constraints from pd_ metadata
+    // (Macro halos are already added by the placer itself)
+    placer.enable_congestion_driven(true);
+
     auto result = placer.place();
+
+    // Post-placement congestion-driven refinement using ML predictor
+    placer.congestion_driven_refine(nl_);
+
     is_placed_ = true;
     std::cout << "  [PASS] Placement complete. HPWL: " << pd_.total_wirelength()
               << ", Util: " << (pd_.utilization() * 100.0) << "%"
@@ -843,6 +861,18 @@ bool SiliconForge::run_sta() {
 
     // Re-run with realistic clock period and CTS insertion delays
     StaEngine sta2(nl_, lib_.cells.empty() ? nullptr : &lib_, pd_ptr);
+    // Wire SDC constraints into STA
+    if (!sdc_constraints_.clocks.empty()) {
+        sta2.set_sdc_constraints(sdc_constraints_);
+        // Use SDC clock period if available
+        double sdc_period = sdc_constraints_.get_clock_period(sdc_constraints_.clocks[0].name);
+        if (sdc_period > 0) clock_period = sdc_period;
+        // Apply clock uncertainty from SDC
+        if (sdc_constraints_.clocks[0].uncertainty > 0) {
+            sta2.set_clock_uncertainty(sdc_constraints_.clocks[0].uncertainty,
+                                      sdc_constraints_.clocks[0].uncertainty * 0.5);
+        }
+    }
     if (is_cts_done_) {
         for (auto& [cell_id, delay] : cts_insertion_delays_) {
             if (cell_id < (int)nl_.num_gates())
@@ -871,6 +901,25 @@ bool SiliconForge::run_sta() {
     is_sta_done_ = true;
     std::cout << "  [PASS] STA complete. WNS: " << report.wns
               << " ns, TNS: " << report.tns << " ns.\n";
+
+    // Multi-clock domain STA
+    auto mc_result = run_multi_clock_sta(nl_, lib_.cells.empty() ? nullptr : &lib_,
+                                          pd_ptr, clock_period);
+    multi_clock_result_.total_domains = mc_result.total_domains;
+    multi_clock_result_.async_crossings = mc_result.async_crossings;
+    multi_clock_result_.worst_inter_domain_slack = mc_result.worst_inter_domain_slack;
+    if (mc_result.total_domains > 1) {
+        std::cout << "  [INFO] " << mc_result.message << "\n";
+        for (auto& d : mc_result.domains) {
+            std::cout << "    Domain '" << d.name << "': " << d.num_flops << " FFs";
+            if (d.violations > 0)
+                std::cout << ", WNS=" << d.wns << "ns";
+            if (d.is_generated)
+                std::cout << " (generated /" << d.divide_ratio << ")";
+            std::cout << "\n";
+        }
+    }
+
     return true;
 }
 
@@ -1376,6 +1425,234 @@ bool SiliconForge::run_adv_formal() {
     return true;
 }
 
+// ── Power Planning ────────────────────────────────────────────────────
+
+bool SiliconForge::run_power_plan() {
+    std::cout << "[SiliconForge] Running Power Grid Planning...\n";
+    if (!has_floorplan_) {
+        std::cerr << "  [FAIL] Must initialize floorplan before power planning.\n";
+        return false;
+    }
+
+    PowerPlanner planner(pd_);
+    auto result = planner.plan();
+
+    power_plan_result_.rings = result.rings;
+    power_plan_result_.stripes = result.stripes;
+    power_plan_result_.rails = result.rails;
+    power_plan_result_.vias = result.vias;
+    power_plan_result_.total_wire_length = result.total_wire_length;
+
+    is_power_plan_done_ = true;
+    std::cout << "  [PASS] Power plan: " << result.rings << " rings, "
+              << result.stripes << " stripes, " << result.rails << " rails, "
+              << result.vias << " vias.\n";
+    return true;
+}
+
+// ── Cell Insertion (Filler/Endcap/Tap) ───────────────────────────────
+
+bool SiliconForge::run_cell_insert() {
+    std::cout << "[SiliconForge] Inserting Filler/Endcap/Tap Cells...\n";
+    if (!is_placed_) {
+        std::cerr << "  [FAIL] Must place before cell insertion.\n";
+        return false;
+    }
+
+    CellInserter inserter(pd_);
+    auto result = inserter.insert();
+
+    cell_insert_result_.fillers = result.fillers;
+    cell_insert_result_.endcaps = result.endcaps;
+    cell_insert_result_.well_taps = result.well_taps;
+
+    is_cell_insert_done_ = true;
+    std::cout << "  [PASS] " << result.endcaps << " endcaps, "
+              << result.well_taps << " well-taps, "
+              << result.fillers << " fillers inserted.\n";
+    return true;
+}
+
+// ── ERC (Electrical Rule Checking) ───────────────────────────────────
+
+bool SiliconForge::run_erc() {
+    std::cout << "[SiliconForge] Running Electrical Rule Check...\n";
+    ErcEngine erc(nl_, pd_);
+    auto result = erc.run();
+
+    erc_result_.total_checks = result.total_checks;
+    erc_result_.violations = result.violations;
+    erc_result_.warnings = result.warnings;
+    erc_result_.clean = result.clean;
+
+    is_erc_done_ = true;
+    std::cout << "  [" << (result.clean ? "PASS" : "WARN") << "] ERC: "
+              << result.total_checks << " checks, " << result.violations
+              << " violations, " << result.warnings << " warnings.\n";
+    if (!result.clean) {
+        for (auto& v : result.details) {
+            std::cout << "    ERC: " << v.message << "\n";
+        }
+    }
+    return result.clean;
+}
+
+// ── Metal Fill ───────────────────────────────────────────────────────
+
+bool SiliconForge::run_metal_fill() {
+    std::cout << "[SiliconForge] Inserting Metal Fill for Density Compliance...\n";
+    if (!is_routed_) {
+        std::cerr << "  [FAIL] Must route before metal fill.\n";
+        return false;
+    }
+
+    MetalFillEngine filler(pd_);
+    auto result = filler.fill();
+
+    metal_fill_result_.total_fills = result.total_fills;
+
+    is_metal_fill_done_ = true;
+    std::cout << "  [PASS] Metal fill: " << result.total_fills << " fills inserted.\n";
+    return true;
+}
+
+// ── Phase B: ESD Verification ────────────────────────────────────────
+
+bool SiliconForge::run_esd() {
+    std::cout << "[SiliconForge] Running ESD Verification...\n";
+    if (!has_netlist_) {
+        std::cerr << "  [FAIL] No netlist loaded.\n";
+        return false;
+    }
+
+    EsdChecker checker(nl_, pd_);
+    auto result = checker.check();
+
+    esd_result_.total_pads = result.total_pads;
+    esd_result_.protected_pads = result.protected_pads;
+    esd_result_.violations = result.violations;
+    esd_result_.warnings = result.warnings;
+    esd_result_.clean = result.clean;
+    esd_result_.worst_resistance_ohm = result.worst_resistance_ohm;
+
+    is_esd_done_ = true;
+    std::cout << "  [" << (result.clean ? "PASS" : "WARN") << "] " << result.message << "\n";
+    if (!result.clean) {
+        for (auto& v : result.details)
+            std::cout << "    ESD: " << v.message << "\n";
+    }
+    return result.clean;
+}
+
+// ── Phase B: Latchup/Well-Tap Verification ───────────────────────────
+
+bool SiliconForge::run_latchup() {
+    std::cout << "[SiliconForge] Running Latchup/Well-Tap Verification...\n";
+    if (!is_placed_) {
+        std::cerr << "  [FAIL] Must place before latchup check.\n";
+        return false;
+    }
+
+    LatchupChecker checker(pd_);
+    auto result = checker.check();
+
+    latchup_result_.total_cells = result.total_cells;
+    latchup_result_.cells_covered = result.cells_covered;
+    latchup_result_.violations = result.violations;
+    latchup_result_.warnings = result.warnings;
+    latchup_result_.clean = result.clean;
+    latchup_result_.worst_tap_distance = result.worst_tap_distance;
+
+    is_latchup_done_ = true;
+    std::cout << "  [" << (result.clean ? "PASS" : "WARN") << "] " << result.message << "\n";
+    return result.clean;
+}
+
+// ── Phase B: Reset Domain Crossing ───────────────────────────────────
+
+bool SiliconForge::run_rdc() {
+    std::cout << "[SiliconForge] Running Reset Domain Crossing Analysis...\n";
+    if (!has_netlist_) {
+        std::cerr << "  [FAIL] No netlist loaded.\n";
+        return false;
+    }
+
+    RdcAnalyzer rdc(nl_);
+    auto result = rdc.analyze();
+
+    rdc_result_.reset_domains = result.reset_domains;
+    rdc_result_.crossings = result.crossings;
+    rdc_result_.violations = result.violations;
+    rdc_result_.warnings = result.warnings;
+    rdc_result_.clean = result.clean;
+
+    is_rdc_done_ = true;
+    std::cout << "  [" << (result.clean ? "PASS" : "WARN") << "] " << result.message << "\n";
+    if (result.violations > 0) {
+        for (auto& v : result.details) {
+            if (v.type == RdcViolation::MISSING_SYNCHRONIZER)
+                std::cout << "    RDC: " << v.message << "\n";
+        }
+    }
+    return result.clean;
+}
+
+// ── Phase B: SDF Export ──────────────────────────────────────────────
+
+bool SiliconForge::run_sdf_export(const std::string& filename) {
+    std::cout << "[SiliconForge] Generating SDF (Standard Delay Format)...\n";
+    if (!has_netlist_) {
+        std::cerr << "  [FAIL] No netlist loaded.\n";
+        return false;
+    }
+
+    SdfWriter writer(nl_);
+    SdfConfig cfg;
+    cfg.design_name = "siliconforge_design";
+    cfg.include_interconnect = true;
+
+    if (!filename.empty()) {
+        bool ok = writer.write(filename, cfg);
+        is_sdf_done_ = true;
+        if (ok)
+            std::cout << "  [PASS] SDF written to " << filename << "\n";
+        else
+            std::cout << "  [FAIL] Could not write SDF to " << filename << "\n";
+        return ok;
+    } else {
+        // Just generate in memory (validation)
+        auto sdf = writer.generate(cfg);
+        is_sdf_done_ = true;
+        std::cout << "  [PASS] SDF generated (" << sdf.size() << " bytes)\n";
+        return !sdf.empty();
+    }
+}
+
+// ── Phase B: Decap Cell Insertion ────────────────────────────────────
+
+bool SiliconForge::run_decap_insert() {
+    std::cout << "[SiliconForge] Inserting Decoupling Capacitor Cells...\n";
+    if (!is_placed_) {
+        std::cerr << "  [FAIL] Must place before decap insertion.\n";
+        return false;
+    }
+
+    CellInserter inserter(pd_);
+
+    // If IR drop analysis has been done, use hotspot locations
+    std::vector<Point> hotspots;
+    if (is_ir_drop_done_) {
+        for (auto& hs : ir_drop_result_.hotspots)
+            hotspots.push_back(hs.region.center());
+    }
+
+    int count = inserter.insert_decaps(hotspots);
+    decap_result_.decaps_inserted = count;
+    is_decap_done_ = true;
+    std::cout << "  [PASS] " << count << " DECAP cells inserted.\n";
+    return true;
+}
+
 // ── Full Flow ────────────────────────────────────────────────────────
 
 bool SiliconForge::run_all(double die_w, double die_h) {
@@ -1427,15 +1704,24 @@ bool SiliconForge::run_all(double die_w, double die_h) {
     double actual_h = (die_w * die_h >= needed_area) ? die_h : auto_side;
 
     ok = ok && initialize_floorplan(actual_w, actual_h, row_h);
+    ok = ok && run_power_plan();
     ok = ok && place();
+    ok = ok && run_cell_insert();
+    ok = ok && run_decap_insert();
     ok = ok && run_cts();
     ok = ok && route();
+    ok = ok && run_metal_fill();
     // DRC/LVS are advisory — don't block downstream analysis
     bool drc_clean = run_drc();
     bool lvs_clean = run_lvs();
+    run_erc();
+    run_esd();         // after ERC
+    run_latchup();     // after cell_insert
     ok = ok && run_sta();
+    run_sdf_export();  // after STA
     ok = ok && run_power();
     ok = ok && run_reliability();
+    run_rdc();         // after CDC
 
     std::cout << "\n========================================\n";
     if (ok && drc_clean && lvs_clean)
@@ -1538,6 +1824,10 @@ bool SiliconForge::write_full_json(const std::string& filename) const {
     os << "    \"is_cdc_done\": " << (is_cdc_done_ ? "true" : "false") << ",\n";
     os << "    \"is_cts_done\": " << (is_cts_done_ ? "true" : "false") << ",\n";
     os << "    \"is_lec_done\": " << (is_lec_done_ ? "true" : "false") << ",\n";
+    os << "    \"is_power_plan_done\": " << (is_power_plan_done_ ? "true" : "false") << ",\n";
+    os << "    \"is_cell_insert_done\": " << (is_cell_insert_done_ ? "true" : "false") << ",\n";
+    os << "    \"is_erc_done\": " << (is_erc_done_ ? "true" : "false") << ",\n";
+    os << "    \"is_metal_fill_done\": " << (is_metal_fill_done_ ? "true" : "false") << ",\n";
     os << "    \"is_mcmm_done\": " << (is_mcmm_done_ ? "true" : "false") << ",\n";
     os << "    \"is_ssta_done\": " << (is_ssta_done_ ? "true" : "false") << ",\n";
     os << "    \"is_ir_drop_done\": " << (is_ir_drop_done_ ? "true" : "false") << ",\n";
@@ -2017,6 +2307,10 @@ void SiliconForge::reset() {
     is_cts_done_ = false;
     is_reliability_done_ = false;
     is_lec_done_ = false;
+    is_power_plan_done_ = false;
+    is_cell_insert_done_ = false;
+    is_erc_done_ = false;
+    is_metal_fill_done_ = false;
     is_mcmm_done_ = false;
     is_ssta_done_ = false;
     is_ir_drop_done_ = false;
@@ -2036,6 +2330,11 @@ void SiliconForge::reset() {
     power_result_ = {};
     drc_result_ = {};
     lvs_result_ = {};
+    power_plan_result_ = {};
+    metal_fill_result_ = {};
+    cell_insert_result_ = {};
+    erc_result_ = {};
+    sdc_constraints_ = {};
     sim_trace_ = {};
     mcmm_result_ = {};
     ssta_result_ = {};

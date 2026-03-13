@@ -128,6 +128,15 @@ public:
     void enable_congestion_driven(bool en = true) { congestion_driven_ = en; }
     void set_congestion_weight(double w) { congestion_weight_ = w; }
 
+    // Set blockages from floorplanner constraints
+    void set_blockages(const std::vector<Rect>& blockages) {
+        for (auto& b : blockages)
+            constraints_.push_back({ConstraintType::BLOCKAGE, "blockage", b, {}});
+    }
+
+    // Post-placement congestion-driven refinement using ML predictor
+    void congestion_driven_refine(const Netlist& nl);
+
     // Incremental placement (ECO mode): only move specified cells
     void enable_incremental_mode(const std::vector<int>& cells_to_move) {
         incremental_mode_ = true;

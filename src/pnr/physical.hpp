@@ -44,6 +44,8 @@ struct CellInstance {
     Point position;
     bool placed = false;
     int orientation = 0; // 0=N, 1=S, 2=W, 3=E, 4=FN, etc.
+    bool is_macro = false;   // true for hard macros (SRAMs, analog blocks)
+    double halo = 5.0;       // keepout zone around macros (um)
 };
 
 // Net: connects pins on cell instances

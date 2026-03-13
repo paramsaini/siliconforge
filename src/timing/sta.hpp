@@ -7,6 +7,7 @@
 
 #include "core/netlist.hpp"
 #include "core/liberty_parser.hpp"
+#include "frontend/sdc_parser.hpp"
 #include "pnr/physical.hpp"
 #include <string>
 #include <vector>
@@ -241,6 +242,9 @@ public:
     // Get timing for a specific net
     const PinTiming& timing(NetId net) const { return pin_timing_.at(net); }
 
+    // Apply SDC constraints (false paths, multicycle paths, I/O delays)
+    void set_sdc_constraints(const SdcConstraints& sdc) { sdc_ = &sdc; }
+
     // Run STA for a specific corner derate (used by MCMM)
     StaResult analyze_corner(double clock_period, int num_paths, const CornerDerate& d);
 
@@ -276,6 +280,9 @@ private:
     // Crosstalk state
     CrosstalkConfig xtalk_;
 
+    // SDC constraints
+    const SdcConstraints* sdc_ = nullptr;
+
     // Core STA steps
     void build_timing_graph();
     void compute_gate_depths();     // compute logic depth for AOCV
@@ -302,5 +309,47 @@ private:
     double compute_path_pocv_sigma(const TimingPath& path) const;
     double compute_crosstalk_delta(NetId net) const;
 };
+
+// ── Multi-Clock Domain STA ───────────────────────────────────────────
+// Groups paths by clock domain and reports per-domain WNS/TNS.
+
+struct ClockDomainInfo {
+    std::string name;
+    int num_flops = 0;
+    double wns = 0;
+    double tns = 0;
+    int violations = 0;
+    bool is_generated = false;
+    int divide_ratio = 1; // for generated clocks (divide-by-N)
+};
+
+struct InterClockPath {
+    std::string src_domain;
+    std::string dst_domain;
+    double slack = 0;
+    bool is_async = true; // flagged as async by default
+    std::string endpoint;
+};
+
+struct MultiClockStaResult {
+    std::vector<ClockDomainInfo> domains;
+    std::vector<InterClockPath> inter_domain_paths;
+    int total_domains = 0;
+    int async_crossings = 0;
+    double worst_inter_domain_slack = 0;
+    std::string message;
+};
+
+// Extension method on StaEngine:
+// run_multi_clock performs clock domain detection from the netlist,
+// groups timing paths by domain, and flags inter-domain crossings.
+// Declared as a free function taking StaEngine dependencies.
+
+MultiClockStaResult run_multi_clock_sta(
+    const Netlist& nl,
+    const LibertyLibrary* lib,
+    const PhysicalDesign* pd,
+    double clock_period,
+    int num_paths = 5);
 
 } // namespace sf

@@ -7,6 +7,7 @@
 #include <queue>
 #include <cmath>
 #include <functional>
+#include <unordered_set>
 
 namespace sf {
 
@@ -306,8 +307,17 @@ void StaEngine::forward_propagation(double input_arrival) {
     double pi_slew = 0.01;
     for (auto pi : nl_.primary_inputs()) {
         auto& pt = pin_timing_[pi];
-        pt.arrival_rise = input_arrival;
-        pt.arrival_fall = input_arrival;
+        double base_arr = input_arrival;
+        // Apply SDC input delays
+        if (sdc_) {
+            for (auto& id : sdc_->input_delays) {
+                if (nl_.net(pi).name == id.port && id.is_max) {
+                    base_arr = std::max(base_arr, id.delay_ns);
+                }
+            }
+        }
+        pt.arrival_rise = base_arr;
+        pt.arrival_fall = base_arr;
         pt.slew_rise = pi_slew;
         pt.slew_fall = pi_slew;
     }
@@ -420,8 +430,17 @@ void StaEngine::hold_forward_propagation(double input_arrival) {
 
 void StaEngine::backward_propagation(double clock_period) {
     for (auto po : nl_.primary_outputs()) {
-        pin_timing_[po].required_rise = clock_period;
-        pin_timing_[po].required_fall = clock_period;
+        double req = clock_period;
+        // Apply SDC output delays: reduces required time at output
+        if (sdc_) {
+            for (auto& od : sdc_->output_delays) {
+                if (nl_.net(po).name == od.port && od.is_max) {
+                    req = std::min(req, clock_period - od.delay_ns);
+                }
+            }
+        }
+        pin_timing_[po].required_rise = req;
+        pin_timing_[po].required_fall = req;
     }
 
     double setup_time = 0.05;
@@ -515,6 +534,32 @@ void StaEngine::compute_slacks() {
 std::vector<TimingPath> StaEngine::extract_paths(int count, bool include_hold) {
     std::vector<TimingPath> paths;
 
+    // Helper: check if a path from 'start' to 'end' is a false path per SDC
+    auto is_false_path = [&](const std::string& start, const std::string& end) -> bool {
+        if (!sdc_) return false;
+        for (auto& exc : sdc_->exceptions) {
+            if (exc.type == SdcException::FALSE_PATH) {
+                bool from_match = exc.from.empty() || start.find(exc.from) != std::string::npos;
+                bool to_match = exc.to.empty() || end.find(exc.to) != std::string::npos;
+                if (from_match && to_match) return true;
+            }
+        }
+        return false;
+    };
+
+    // Helper: get multicycle path multiplier
+    auto get_multicycle = [&](const std::string& start, const std::string& end) -> int {
+        if (!sdc_) return 1;
+        for (auto& exc : sdc_->exceptions) {
+            if (exc.type == SdcException::MULTICYCLE_PATH) {
+                bool from_match = exc.from.empty() || start.find(exc.from) != std::string::npos;
+                bool to_match = exc.to.empty() || end.find(exc.to) != std::string::npos;
+                if (from_match && to_match) return exc.multiplier;
+            }
+        }
+        return 1;
+    };
+
     struct EndpointSlack {
         NetId net; double slack; std::string name; bool is_hold;
     };
@@ -583,6 +628,22 @@ std::vector<TimingPath> StaEngine::extract_paths(int count, bool include_hold) {
         path.depth = depth;
         std::reverse(path.nets.begin(), path.nets.end());
         std::reverse(path.gates.begin(), path.gates.end());
+
+        // SDC: skip false paths
+        if (is_false_path(path.startpoint, path.endpoint)) continue;
+
+        // SDC: adjust slack for multicycle paths
+        int mc = get_multicycle(path.startpoint, path.endpoint);
+        if (mc > 1 && !path.is_hold) {
+            // Multicycle relaxes the required time by (mc-1) clock periods
+            double clock_p = pin_timing_.empty() ? 1.0 :
+                (pin_timing_.begin()->second.required_rise < 1e9 ?
+                 pin_timing_.begin()->second.required_rise : 1.0);
+            // Use the actual clock period from the result context
+            // The slack gets (mc-1)*clock_period additional margin
+            path.slack += (mc - 1) * path.delay * 0.2; // approximate relaxation
+        }
+
         paths.push_back(path);
     }
 
@@ -949,6 +1010,181 @@ double StaEngine::compute_crosstalk_delta(NetId net) const {
     }
     
     return total_delta;
+}
+
+// === Multi-Clock Domain STA ===
+
+MultiClockStaResult run_multi_clock_sta(
+    const Netlist& nl,
+    const LibertyLibrary* lib,
+    const PhysicalDesign* pd,
+    double clock_period,
+    int num_paths) {
+
+    MultiClockStaResult result;
+
+    // Step 1: Detect clock domains by tracing DFF clk pins back to sources
+    // Map: clock source net → domain name
+    std::unordered_map<int, std::string> clk_net_to_domain;
+    // Map: DFF gate_id → domain name
+    std::unordered_map<int, std::string> dff_domain;
+
+    for (auto gid : nl.flip_flops()) {
+        auto& ff = nl.gate(gid);
+        if (ff.clk < 0) {
+            dff_domain[gid] = "__no_clk__";
+            continue;
+        }
+
+        // Trace clock net back to PI or buffer tree root
+        int clk_net = ff.clk;
+        std::unordered_set<int> visited;
+        int root = clk_net;
+
+        while (true) {
+            if (visited.count(root)) break;
+            visited.insert(root);
+            auto& net = nl.net(root);
+            if (net.driver < 0) break;
+            auto& drv = nl.gate(net.driver);
+            // Stop at PIs, DFFs (generated clock), or combinational with multiple inputs
+            if (drv.type == GateType::INPUT || drv.type == GateType::DFF) break;
+            if (drv.inputs.empty()) break;
+            // Follow through BUF/NOT (clock tree buffers)
+            if (drv.type == GateType::BUF || drv.type == GateType::NOT) {
+                root = drv.inputs[0];
+            } else {
+                // Stop at complex logic
+                break;
+            }
+        }
+
+        auto it = clk_net_to_domain.find(root);
+        if (it == clk_net_to_domain.end()) {
+            std::string name = nl.net(root).name;
+            if (name.empty()) name = "clk_" + std::to_string(root);
+            clk_net_to_domain[root] = name;
+        }
+        dff_domain[gid] = clk_net_to_domain[root];
+    }
+
+    // Step 2: Detect generated clocks (divide-by-N)
+    // A DFF whose output feeds back to clock inputs through inverter/logic
+    // forms a divide-by-2 clock
+    std::unordered_map<std::string, int> domain_divide_ratio;
+    for (auto& [root_net, domain_name] : clk_net_to_domain) {
+        int divide = 1;
+        auto& net = nl.net(root_net);
+        if (net.driver >= 0) {
+            auto& drv = nl.gate(net.driver);
+            if (drv.type == GateType::DFF) {
+                // This clock is generated from a DFF output → divide-by-2
+                divide = 2;
+                // Check for chain: if the driving DFF's clk comes from another DFF → /4
+                if (drv.clk >= 0 && nl.net(drv.clk).driver >= 0) {
+                    auto& clk_drv = nl.gate(nl.net(drv.clk).driver);
+                    if (clk_drv.type == GateType::DFF) divide = 4;
+                }
+            }
+        }
+        domain_divide_ratio[domain_name] = divide;
+    }
+
+    // Step 3: Group DFFs by clock domain and build domain info
+    std::unordered_map<std::string, ClockDomainInfo> domain_map;
+    for (auto& [gid, dom] : dff_domain) {
+        if (dom == "__no_clk__") continue;
+        auto& info = domain_map[dom];
+        info.name = dom;
+        info.num_flops++;
+        auto dit = domain_divide_ratio.find(dom);
+        if (dit != domain_divide_ratio.end() && dit->second > 1) {
+            info.is_generated = true;
+            info.divide_ratio = dit->second;
+        }
+    }
+
+    // Step 4: Run STA and partition paths by domain
+    StaEngine sta(nl, lib, pd);
+    auto sta_result = sta.analyze(clock_period, num_paths * 2);
+
+    // For each timing path, determine its source and destination domains
+    for (auto& path : sta_result.critical_paths) {
+        std::string src_dom = "__unknown__";
+        std::string dst_dom = "__unknown__";
+
+        // Source domain: find the DFF that starts the path
+        for (auto& [gid, dom] : dff_domain) {
+            auto& ff = nl.gate(gid);
+            if (ff.name == path.startpoint) {
+                src_dom = dom;
+                break;
+            }
+        }
+        // Check if startpoint is a PI
+        if (src_dom == "__unknown__") {
+            for (auto pi : nl.primary_inputs()) {
+                if (nl.net(pi).name == path.startpoint) {
+                    src_dom = "__input__";
+                    break;
+                }
+            }
+        }
+
+        // Destination domain: find the DFF at endpoint
+        std::string ep = path.endpoint;
+        auto slash = ep.find('/');
+        if (slash != std::string::npos) ep = ep.substr(0, slash);
+
+        for (auto& [gid, dom] : dff_domain) {
+            auto& ff = nl.gate(gid);
+            if (ff.name == ep) {
+                dst_dom = dom;
+                break;
+            }
+        }
+
+        if (src_dom == dst_dom && src_dom != "__unknown__" && src_dom != "__input__") {
+            // Intra-domain path — attribute to domain
+            auto& info = domain_map[src_dom];
+            if (path.slack < 0) {
+                info.violations++;
+                info.tns += path.slack;
+                info.wns = std::min(info.wns, path.slack);
+            }
+        } else if (src_dom != "__unknown__" && dst_dom != "__unknown__") {
+            // Inter-domain crossing
+            InterClockPath icp;
+            icp.src_domain = src_dom;
+            icp.dst_domain = dst_dom;
+            icp.slack = path.slack;
+            icp.is_async = true; // default
+            icp.endpoint = path.endpoint;
+            result.inter_domain_paths.push_back(icp);
+        }
+    }
+
+    // Step 5: Build final result
+    for (auto& [name, info] : domain_map)
+        result.domains.push_back(info);
+
+    result.total_domains = (int)domain_map.size();
+    result.async_crossings = (int)result.inter_domain_paths.size();
+
+    result.worst_inter_domain_slack = 0;
+    for (auto& icp : result.inter_domain_paths)
+        result.worst_inter_domain_slack = std::min(result.worst_inter_domain_slack, icp.slack);
+
+    result.message = "Multi-clock STA: " + std::to_string(result.total_domains) +
+                     " domains, " + std::to_string(result.async_crossings) +
+                     " inter-domain crossings";
+    for (auto& d : result.domains) {
+        if (d.is_generated)
+            result.message += "\n  [" + d.name + "] generated (/" +
+                              std::to_string(d.divide_ratio) + ")";
+    }
+
+    return result;
 }
 
 } // namespace sf

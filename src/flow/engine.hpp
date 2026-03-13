@@ -20,6 +20,15 @@
 #include "pnr/cts.hpp"
 #include "pnr/post_route_opt.hpp"
 #include "pnr/chip_assembler.hpp"
+#include "pnr/power_plan.hpp"
+#include "pnr/metal_fill.hpp"
+#include "pnr/cell_insert.hpp"
+#include "verify/erc.hpp"
+#include "verify/esd.hpp"
+#include "verify/latchup.hpp"
+#include "verify/rdc.hpp"
+#include "timing/sdf_writer.hpp"
+#include "frontend/sdc_parser.hpp"
 #include "ml/ml_opt.hpp"
 #include "formal/advanced_formal.hpp"
 #include "hls/c_parser.hpp"
@@ -84,6 +93,50 @@ struct LvsResultData {
     int net_mismatches = 0;
 };
 
+struct PowerPlanResultData {
+    int rings = 0, stripes = 0, rails = 0, vias = 0;
+    double total_wire_length = 0;
+};
+
+struct MetalFillResultData {
+    int total_fills = 0;
+};
+
+struct CellInsertResultData {
+    int fillers = 0, endcaps = 0, well_taps = 0;
+};
+
+struct ErcResultData {
+    int total_checks = 0, violations = 0, warnings = 0;
+    bool clean = false;
+};
+
+struct EsdResultData {
+    int total_pads = 0, protected_pads = 0, violations = 0, warnings = 0;
+    bool clean = false;
+    double worst_resistance_ohm = 0;
+};
+
+struct LatchupResultData {
+    int total_cells = 0, cells_covered = 0, violations = 0, warnings = 0;
+    bool clean = false;
+    double worst_tap_distance = 0;
+};
+
+struct RdcResultData {
+    int reset_domains = 0, crossings = 0, violations = 0, warnings = 0;
+    bool clean = false;
+};
+
+struct MultiClockStaResultData {
+    int total_domains = 0, async_crossings = 0;
+    double worst_inter_domain_slack = 0;
+};
+
+struct DecapResultData {
+    int decaps_inserted = 0;
+};
+
 // ── Main Engine ──────────────────────────────────────────────────────
 
 class SiliconForge {
@@ -118,6 +171,10 @@ public:
     bool run_cts();
     bool run_reliability();
     bool run_lec();
+    bool run_power_plan();
+    bool run_cell_insert();
+    bool run_erc();
+    bool run_metal_fill();
 
     // --- Advanced Analysis (Phases 20-44) ---
     bool run_mcmm();
@@ -131,6 +188,13 @@ public:
     bool run_post_route_opt();
     bool run_chip_assemble();
     bool run_adv_formal();
+
+    // --- Phase B: Gap Analysis Features ---
+    bool run_esd();
+    bool run_latchup();
+    bool run_rdc();
+    bool run_sdf_export(const std::string& filename = "");
+    bool run_decap_insert();
 
     // --- ML & Tuners ---
     bool optimize_pnr_with_ai();
@@ -174,6 +238,10 @@ private:
     bool is_cts_done_ = false;
     bool is_reliability_done_ = false;
     bool is_lec_done_ = false;
+    bool is_power_plan_done_ = false;
+    bool is_cell_insert_done_ = false;
+    bool is_erc_done_ = false;
+    bool is_metal_fill_done_ = false;
     bool is_mcmm_done_ = false;
     bool is_ssta_done_ = false;
     bool is_ir_drop_done_ = false;
@@ -186,8 +254,14 @@ private:
     bool is_chip_assembled_ = false;
     bool is_ml_done_ = false;
     bool is_adv_formal_done_ = false;
+    bool is_esd_done_ = false;
+    bool is_latchup_done_ = false;
+    bool is_rdc_done_ = false;
+    bool is_sdf_done_ = false;
+    bool is_decap_done_ = false;
     Netlist pre_synth_nl_; // saved for LEC
     std::unordered_map<int, double> cts_insertion_delays_; // gate_id → insertion delay
+    SdcConstraints sdc_constraints_;
 
     // Per-step stored results for JSON export
     SynthResultData synth_result_;
@@ -197,6 +271,15 @@ private:
     PowerResultData power_result_;
     DrcResultData drc_result_;
     LvsResultData lvs_result_;
+    PowerPlanResultData power_plan_result_;
+    MetalFillResultData metal_fill_result_;
+    CellInsertResultData cell_insert_result_;
+    ErcResultData erc_result_;
+    EsdResultData esd_result_;
+    LatchupResultData latchup_result_;
+    RdcResultData rdc_result_;
+    MultiClockStaResultData multi_clock_result_;
+    DecapResultData decap_result_;
     SimTrace sim_trace_;
 
     // Advanced analysis results (Phases 20-44)

@@ -3,6 +3,7 @@
 // Timing-driven: STA-based slack analysis → criticality-weighted net model
 #include "pnr/placer.hpp"
 #include "timing/sta.hpp"
+#include "ml/congestion_model.hpp"
 #include <algorithm>
 #include <numeric>
 #include <chrono>
@@ -763,6 +764,63 @@ PlaceResult AnalyticalPlacer::place() {
     auto t0 = std::chrono::high_resolution_clock::now();
     int n = (int)pd_.cells.size();
 
+    // === Macro placement: place macros at die boundaries first ===
+    {
+        std::vector<int> macro_ids;
+        for (int i = 0; i < n; i++) {
+            if (pd_.cells[i].is_macro && !pd_.cells[i].placed) {
+                macro_ids.push_back(i);
+            }
+        }
+        if (!macro_ids.empty()) {
+            // Sort macros by area (largest first)
+            std::sort(macro_ids.begin(), macro_ids.end(), [&](int a, int b) {
+                return pd_.cells[a].width * pd_.cells[a].height >
+                       pd_.cells[b].width * pd_.cells[b].height;
+            });
+            // Place macros at corners and edges
+            double dx = pd_.die_area.x0;
+            double dy = pd_.die_area.y0;
+            double die_w = pd_.die_area.width();
+            double die_h = pd_.die_area.height();
+            // Corner positions: TL, TR, BL, BR, then edges
+            struct Slot { double x, y; bool used; };
+            std::vector<Slot> slots = {
+                {dx, dy, false},
+                {dx + die_w, dy, false},     // will adjust
+                {dx, dy + die_h, false},      // will adjust
+                {dx + die_w, dy + die_h, false} // will adjust
+            };
+            for (size_t mi = 0; mi < macro_ids.size(); mi++) {
+                int cid = macro_ids[mi];
+                auto& cell = pd_.cells[cid];
+                double mx, my;
+                if (mi == 0)      { mx = dx; my = dy; }
+                else if (mi == 1) { mx = dx + die_w - cell.width; my = dy; }
+                else if (mi == 2) { mx = dx; my = dy + die_h - cell.height; }
+                else if (mi == 3) { mx = dx + die_w - cell.width; my = dy + die_h - cell.height; }
+                else {
+                    // Place along top/bottom edges
+                    mx = dx + ((mi - 4) % 2 == 0 ? (mi - 4) / 2 * 30.0 : die_w - cell.width - (mi - 4) / 2 * 30.0);
+                    my = (mi % 2 == 0) ? dy : dy + die_h - cell.height;
+                    mx = std::max(dx, std::min(mx, dx + die_w - cell.width));
+                    my = std::max(dy, std::min(my, dy + die_h - cell.height));
+                }
+                cell.position = {mx, my};
+                cell.placed = true;
+                fixed_cells_.insert(cid);
+                // Add blockage for macro halo
+                if (cell.halo > 0) {
+                    Rect halo_rect(mx - cell.halo, my - cell.halo,
+                                   mx + cell.width + cell.halo,
+                                   my + cell.height + cell.halo);
+                    constraints_.push_back({ConstraintType::BLOCKAGE,
+                                           "macro_halo_" + cell.name, halo_rect, {}});
+                }
+            }
+        }
+    }
+
     // In incremental mode, freeze all cells except specified ones
     if (incremental_mode_) {
         for (int i = 0; i < n; i++) {
@@ -882,6 +940,93 @@ PlaceResult AnalyticalPlacer::place() {
     r.message += ", disp_avg=" + std::to_string(r.displacement_avg).substr(0, 5);
 
     return r;
+}
+
+// ── Congestion-driven refinement using ML predictor ──────────────────
+void AnalyticalPlacer::congestion_driven_refine(const Netlist& nl) {
+    int n = (int)pd_.cells.size();
+    if (n == 0) return;
+
+    // Ensure position vectors are in sync
+    x_.resize(n);
+    y_.resize(n);
+    for (int i = 0; i < n; i++) {
+        x_[i] = pd_.cells[i].position.x;
+        y_[i] = pd_.cells[i].position.y;
+    }
+
+    constexpr int MAX_REFINE_ITERS = 3;
+    constexpr double HOTSPOT_THRESHOLD = 0.80;
+
+    for (int iter = 0; iter < MAX_REFINE_ITERS; iter++) {
+        // Run ML congestion predictor
+        int grid_sz = std::max(5, (int)std::sqrt(n / 4.0));
+        MlCongestionPredictor predictor(pd_, grid_sz, grid_sz);
+        auto cong = predictor.predict();
+
+        if (cong.peak_congestion < HOTSPOT_THRESHOLD) break; // No hotspots
+
+        // Identify hotspot tiles (>80% congestion)
+        double bw = pd_.die_area.width() / grid_sz;
+        double bh = pd_.die_area.height() / grid_sz;
+
+        for (int gy = 0; gy < grid_sz && gy < (int)cong.heatmap_grid.size(); gy++) {
+            for (int gx = 0; gx < grid_sz && gx < (int)cong.heatmap_grid[gy].size(); gx++) {
+                double c = cong.heatmap_grid[gy][gx];
+                if (c <= HOTSPOT_THRESHOLD) continue;
+
+                // Spread cells in this hotspot region toward less congested neighbors
+                double bin_x0 = pd_.die_area.x0 + gx * bw;
+                double bin_y0 = pd_.die_area.y0 + gy * bh;
+                double bin_x1 = bin_x0 + bw;
+                double bin_y1 = bin_y0 + bh;
+                double bin_cx = (bin_x0 + bin_x1) / 2.0;
+                double bin_cy = (bin_y0 + bin_y1) / 2.0;
+
+                // Find least congested neighbor
+                double min_cong = c;
+                double target_x = bin_cx, target_y = bin_cy;
+                auto get_cong = [&](int r, int cc) -> double {
+                    if (r < 0 || r >= (int)cong.heatmap_grid.size()) return 1.0;
+                    if (cc < 0 || cc >= (int)cong.heatmap_grid[r].size()) return 1.0;
+                    return cong.heatmap_grid[r][cc];
+                };
+
+                // Check 4 neighbors
+                struct Dir { int dr, dc; };
+                Dir dirs[] = {{0,-1},{0,1},{-1,0},{1,0}};
+                for (auto& d : dirs) {
+                    int nr = gy + d.dr, nc = gx + d.dc;
+                    double nc_val = get_cong(nr, nc);
+                    if (nc_val < min_cong) {
+                        min_cong = nc_val;
+                        target_x = pd_.die_area.x0 + (nc + 0.5) * bw;
+                        target_y = pd_.die_area.y0 + (nr + 0.5) * bh;
+                    }
+                }
+
+                if (min_cong >= c) continue; // No better neighbor
+
+                // Move cells in this bin toward the target
+                double spread_factor = 0.3 * (c - HOTSPOT_THRESHOLD);
+                for (int ci = 0; ci < n; ci++) {
+                    if (fixed_cells_.count(ci)) continue;
+                    double cx = x_[ci], cy = y_[ci];
+                    if (cx >= bin_x0 && cx < bin_x1 && cy >= bin_y0 && cy < bin_y1) {
+                        x_[ci] += (target_x - cx) * spread_factor;
+                        y_[ci] += (target_y - cy) * spread_factor;
+                        // Clamp to die
+                        x_[ci] = std::clamp(x_[ci], pd_.die_area.x0,
+                                            pd_.die_area.x1 - pd_.cells[ci].width);
+                        y_[ci] = std::clamp(y_[ci], pd_.die_area.y0,
+                                            pd_.die_area.y1 - pd_.cells[ci].height);
+                        pd_.cells[ci].position.x = x_[ci];
+                        pd_.cells[ci].position.y = y_[ci];
+                    }
+                }
+            }
+        }
+    }
 }
 
 } // namespace sf

@@ -70,6 +70,9 @@ add_library(siliconforge_lib STATIC
     pnr/chip_assembler.cpp
     pnr/tsv_mgr.cpp
     pnr/ai_tuner.cpp
+    pnr/power_plan.cpp
+    pnr/metal_fill.cpp
+    pnr/cell_insert.cpp
 
     # ── Timing & Power ────────────────────────────────────────────────
     timing/sta.cpp
@@ -83,6 +86,7 @@ add_library(siliconforge_lib STATIC
     timing/electromigration.cpp
     timing/mcmm.cpp
     timing/thermal.cpp
+    timing/sdf_writer.cpp
 
     # ── Physical Verification ─────────────────────────────────────────
     verify/drc.cpp
@@ -91,6 +95,10 @@ add_library(siliconforge_lib STATIC
     verify/antenna.cpp
     verify/opc.cpp
     verify/reliability.cpp
+    verify/erc.cpp
+    verify/esd.cpp
+    verify/latchup.cpp
+    verify/rdc.cpp
 
     # ── ML Models ─────────────────────────────────────────────────────
     ml/congestion_model.cpp
