@@ -122,6 +122,47 @@ private:
             FOREACH_KW,          // foreach
             RETURN_KW,           // return
             VOID_KW,             // void
+            // SystemVerilog IEEE 1800 — Phase 6 tokens
+            UNION_KW,            // union
+            ASSERT_KW,           // assert
+            ASSUME_KW,           // assume
+            COVER_KW,            // cover
+            PROPERTY_KW,         // property
+            SEQUENCE_KW,         // sequence
+            CLOCKING_KW,         // clocking
+            ENDCLOCKING_KW,      // endclocking
+            FINAL_KW,            // final
+            ENDPROPERTY_KW,      // endproperty
+            ENDSEQUENCE_KW,      // endsequence
+            // SystemVerilog IEEE 1800 — Phase 7 tokens
+            CONST_KW,            // const
+            STATIC_KW,           // static
+            EXTERN_KW,           // extern
+            PROGRAM_KW,          // program
+            ENDPROGRAM_KW,       // endprogram
+            CLASS_KW,            // class
+            ENDCLASS_KW,         // endclass
+            BIND_KW,             // bind
+            VIRTUAL_KW,          // virtual
+            PURE_KW,             // pure
+            PROTECTED_KW,        // protected
+            LOCAL_KW,            // local (in class context)
+            TIMEUNIT_KW,         // timeunit
+            TIMEPRECISION_KW,    // timeprecision
+            COVERGROUP_KW,       // covergroup
+            ENDGROUP_KW,         // endgroup
+            CONSTRAINT_KW,       // constraint
+            RAND_KW,             // rand/randc
+            // SystemVerilog IEEE 1800 — Phase 8 tokens
+            FORK_KW,             // fork
+            JOIN_KW,             // join
+            JOIN_ANY_KW,         // join_any
+            JOIN_NONE_KW,        // join_none
+            CHECKER_KW,          // checker
+            ENDCHECKER_KW,       // endchecker
+            CONFIG_KW,           // config
+            ENDCONFIG_KW,        // endconfig
+            LET_KW,              // let
             END
         };
         Type type;
@@ -227,6 +268,7 @@ private:
         int width = 0;                      // total bit width
         bool is_enum = false;
         bool is_struct = false;
+        bool is_union = false;
         std::vector<std::string> enum_names; // enum constant names (in order)
         std::vector<std::pair<std::string,int>> struct_fields; // {name, width}
     };

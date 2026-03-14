@@ -120,11 +120,41 @@ int VerilogParser::eval_const_expr(const std::vector<Token>& t, size_t& pos) {
         }
         return left;
     };
-    int left = eval_mult();
-    while (pos < t.size()) {
-        if (t[pos].type == Token::PLUS) { pos++; left += eval_mult(); }
-        else if (t[pos].type == Token::MINUS) { pos++; left -= eval_mult(); }
-        else break;
+    // SV Phase 7: Enhanced additive + shift + bitwise + comparison + ternary
+    auto eval_add = [&]() -> int {
+        int left = eval_mult();
+        while (pos < t.size()) {
+            if (t[pos].type == Token::PLUS) { pos++; left += eval_mult(); }
+            else if (t[pos].type == Token::MINUS) { pos++; left -= eval_mult(); }
+            else if (t[pos].type == Token::LSHIFT) { pos++; left <<= eval_mult(); }
+            else if (t[pos].type == Token::RSHIFT) { pos++; left >>= eval_mult(); }
+            else if (t[pos].type == Token::AMP) { pos++; left &= eval_mult(); }
+            else if (t[pos].type == Token::PIPE) { pos++; left |= eval_mult(); }
+            else if (t[pos].type == Token::CARET) { pos++; left ^= eval_mult(); }
+            else break;
+        }
+        return left;
+    };
+    auto eval_cmp = [&]() -> int {
+        int left = eval_add();
+        while (pos < t.size()) {
+            if (t[pos].type == Token::LT) { pos++; left = left < eval_add() ? 1 : 0; }
+            else if (t[pos].type == Token::GT) { pos++; left = left > eval_add() ? 1 : 0; }
+            else if (t[pos].type == Token::GTE) { pos++; left = left >= eval_add() ? 1 : 0; }
+            else if (t[pos].type == Token::EQEQ) { pos++; left = left == eval_add() ? 1 : 0; }
+            else if (t[pos].type == Token::NEQ) { pos++; left = left != eval_add() ? 1 : 0; }
+            else break;
+        }
+        return left;
+    };
+    int left = eval_cmp();
+    // Ternary: cond ? true_val : false_val
+    if (pos < t.size() && t[pos].type == Token::QUESTION) {
+        pos++;
+        int t_val = eval_cmp();
+        if (pos < t.size() && t[pos].type == Token::COLON) pos++;
+        int f_val = eval_cmp();
+        return left ? t_val : f_val;
     }
     return left;
 }
@@ -281,6 +311,17 @@ std::vector<VerilogParser::Token> VerilogParser::tokenize(const std::string& src
         else if (c == '#') { tokens.push_back({Token::HASH, "#", line}); i++; }
         else if (c == ':') { tokens.push_back({Token::COLON, ":", line}); i++; }
         else if (c == '?') { tokens.push_back({Token::QUESTION, "?", line}); i++; }
+        // SV Phase 8: String literals — skip and tokenize as IDENT
+        else if (c == '"') {
+            i++; // skip opening "
+            std::string str_val;
+            while (i < src.size() && src[i] != '"') {
+                if (src[i] == '\\' && i+1 < src.size()) { str_val += src[i]; i++; str_val += src[i]; i++; }
+                else { if (src[i] == '\n') line++; str_val += src[i]; i++; }
+            }
+            if (i < src.size()) i++; // skip closing "
+            tokens.push_back({Token::IDENT, "\"" + str_val + "\"", line});
+        }
         else if (std::isdigit(c) || (c == '\'' && i+1 < src.size())) {
             std::string num;
             while (i < src.size() && (std::isalnum(src[i]) || src[i]=='\'' || src[i]=='_'))
@@ -352,6 +393,47 @@ std::vector<VerilogParser::Token> VerilogParser::tokenize(const std::string& src
             else if (ident == "foreach") tokens.push_back({Token::FOREACH_KW, ident, line});
             else if (ident == "return") tokens.push_back({Token::RETURN_KW, ident, line});
             else if (ident == "void") tokens.push_back({Token::VOID_KW, ident, line});
+            // SystemVerilog IEEE 1800 — Phase 6 keywords
+            else if (ident == "union") tokens.push_back({Token::UNION_KW, ident, line});
+            else if (ident == "assert") tokens.push_back({Token::ASSERT_KW, ident, line});
+            else if (ident == "assume") tokens.push_back({Token::ASSUME_KW, ident, line});
+            else if (ident == "cover") tokens.push_back({Token::COVER_KW, ident, line});
+            else if (ident == "property") tokens.push_back({Token::PROPERTY_KW, ident, line});
+            else if (ident == "sequence") tokens.push_back({Token::SEQUENCE_KW, ident, line});
+            else if (ident == "clocking") tokens.push_back({Token::CLOCKING_KW, ident, line});
+            else if (ident == "endclocking") tokens.push_back({Token::ENDCLOCKING_KW, ident, line});
+            else if (ident == "final") tokens.push_back({Token::FINAL_KW, ident, line});
+            else if (ident == "endproperty") tokens.push_back({Token::ENDPROPERTY_KW, ident, line});
+            else if (ident == "endsequence") tokens.push_back({Token::ENDSEQUENCE_KW, ident, line});
+            // SystemVerilog IEEE 1800 — Phase 7 keywords
+            else if (ident == "const") tokens.push_back({Token::CONST_KW, ident, line});
+            else if (ident == "static") tokens.push_back({Token::STATIC_KW, ident, line});
+            else if (ident == "extern") tokens.push_back({Token::EXTERN_KW, ident, line});
+            else if (ident == "program") tokens.push_back({Token::PROGRAM_KW, ident, line});
+            else if (ident == "endprogram") tokens.push_back({Token::ENDPROGRAM_KW, ident, line});
+            else if (ident == "class") tokens.push_back({Token::CLASS_KW, ident, line});
+            else if (ident == "endclass") tokens.push_back({Token::ENDCLASS_KW, ident, line});
+            else if (ident == "bind") tokens.push_back({Token::BIND_KW, ident, line});
+            else if (ident == "virtual") tokens.push_back({Token::VIRTUAL_KW, ident, line});
+            else if (ident == "pure") tokens.push_back({Token::PURE_KW, ident, line});
+            else if (ident == "protected") tokens.push_back({Token::PROTECTED_KW, ident, line});
+            else if (ident == "local") tokens.push_back({Token::LOCAL_KW, ident, line});
+            else if (ident == "timeunit") tokens.push_back({Token::TIMEUNIT_KW, ident, line});
+            else if (ident == "timeprecision") tokens.push_back({Token::TIMEPRECISION_KW, ident, line});
+            else if (ident == "covergroup") tokens.push_back({Token::COVERGROUP_KW, ident, line});
+            else if (ident == "endgroup") tokens.push_back({Token::ENDGROUP_KW, ident, line});
+            else if (ident == "constraint") tokens.push_back({Token::CONSTRAINT_KW, ident, line});
+            else if (ident == "rand" || ident == "randc") tokens.push_back({Token::RAND_KW, ident, line});
+            // SV Phase 8 keywords
+            else if (ident == "fork") tokens.push_back({Token::FORK_KW, ident, line});
+            else if (ident == "join") tokens.push_back({Token::JOIN_KW, ident, line});
+            else if (ident == "join_any") tokens.push_back({Token::JOIN_ANY_KW, ident, line});
+            else if (ident == "join_none") tokens.push_back({Token::JOIN_NONE_KW, ident, line});
+            else if (ident == "checker") tokens.push_back({Token::CHECKER_KW, ident, line});
+            else if (ident == "endchecker") tokens.push_back({Token::ENDCHECKER_KW, ident, line});
+            else if (ident == "config") tokens.push_back({Token::CONFIG_KW, ident, line});
+            else if (ident == "endconfig") tokens.push_back({Token::ENDCONFIG_KW, ident, line});
+            else if (ident == "let") tokens.push_back({Token::LET_KW, ident, line});
             else tokens.push_back({Token::IDENT, ident, line});
         }
         else i++;
@@ -639,9 +721,61 @@ std::shared_ptr<AstNode> VerilogParser::parse_primary(const std::vector<Token>& 
         return expr;
     }
 
-    // Concatenation { expr, expr, ... }
+    // Concatenation { expr, expr, ... } or streaming {<<{}} / {>>{}}
     if (t[pos].type == Token::LBRACE) {
         pos++; // skip {
+
+        // SV Phase 6: Streaming operators {<<{expr}} / {>>{expr}} / {<<N{expr}}
+        if (pos < t.size() && (t[pos].type == Token::LSHIFT || t[pos].type == Token::RSHIFT)) {
+            bool reverse = (t[pos].type == Token::LSHIFT); // << = reverse bits
+            pos++; // skip << or >>
+            int slice_width = 1; // default: bit-level
+            if (pos < t.size() && t[pos].type == Token::NUMBER) {
+                slice_width = (int)parse_verilog_number(t[pos].value);
+                if (slice_width < 1) slice_width = 1;
+                pos++;
+            }
+            if (pos < t.size() && t[pos].type == Token::LBRACE) {
+                pos++; // skip inner {
+                auto inner = parse_expression(t, pos);
+                if (pos < t.size() && t[pos].type == Token::RBRACE) pos++;
+                if (pos < t.size() && t[pos].type == Token::RBRACE) pos++;
+                if (reverse) {
+                    // {<<{expr}} — bit-reverse. For synthesis: return as CONCAT with reversed order
+                    // Determine width and build reversed concatenation
+                    int w = 1;
+                    if (inner->type == AstNodeType::WIRE_DECL) {
+                        auto it = bus_ranges_.find(inner->value);
+                        if (it != bus_ranges_.end())
+                            w = std::abs(it->second.first - it->second.second) + 1;
+                    }
+                    if (w > 1 && slice_width == 1) {
+                        // Bit-reverse: {a[0], a[1], ..., a[N-1]}
+                        auto cat = AstNode::make(AstNodeType::CONCAT, "{}");
+                        for (int b = 0; b < w; b++) {
+                            cat->add(AstNode::make(AstNodeType::WIRE_DECL,
+                                inner->value + "[" + std::to_string(b) + "]"));
+                        }
+                        return cat;
+                    } else if (w > 1 && slice_width > 1) {
+                        // Byte/word reverse: {a[7:0], a[15:8], ...}
+                        auto cat = AstNode::make(AstNodeType::CONCAT, "{}");
+                        for (int b = 0; b < w; b += slice_width) {
+                            int lo = b;
+                            int hi = std::min(b + slice_width - 1, w - 1);
+                            for (int bit = lo; bit <= hi; bit++) {
+                                cat->add(AstNode::make(AstNodeType::WIRE_DECL,
+                                    inner->value + "[" + std::to_string(bit) + "]"));
+                            }
+                        }
+                        return cat;
+                    }
+                }
+                // {>>{expr}} or unknown width — identity (pass through)
+                return inner;
+            }
+        }
+
         // Check for replication: {N{expr}}
         if (pos + 2 < t.size() && t[pos].type == Token::NUMBER && t[pos+1].type == Token::LBRACE) {
             int count = std::stoi(t[pos].value);
@@ -666,6 +800,30 @@ std::shared_ptr<AstNode> VerilogParser::parse_primary(const std::vector<Token>& 
 
     // Number literal
     if (t[pos].type == Token::NUMBER) {
+        // SV Phase 7: Fill literals '0, '1, 'x, 'z — all-zeros or all-ones
+        const std::string& nval = t[pos].value;
+        if (nval == "'0" || nval == "'1" || nval == "'x" || nval == "'z") {
+            auto node = AstNode::make(AstNodeType::NUMBER_LITERAL, nval);
+            node->int_val = (nval == "'1") ? -1 : 0; // -1 = all bits set (0xFFFFFFFF)
+            pos++;
+            return node;
+        }
+        // SV Phase 7: Width cast — N'(expr) — truncate/extend to N bits
+        if (nval.size() >= 2 && nval.back() == '\'' &&
+            pos + 1 < t.size() && t[pos + 1].type == Token::LPAREN) {
+            // Extract width from the number before the tick
+            std::string width_str = nval.substr(0, nval.size() - 1);
+            try {
+                int cast_width = std::stoi(width_str);
+                pos++; // skip N'
+                pos++; // skip (
+                auto inner = parse_expression(t, pos);
+                if (pos < t.size() && t[pos].type == Token::RPAREN) pos++;
+                // For synthesis: width cast is a pass-through (truncation handled by net widths)
+                (void)cast_width;
+                return inner;
+            } catch (...) { /* fall through to normal number */ }
+        }
         auto node = AstNode::make(AstNodeType::NUMBER_LITERAL, t[pos].value);
         node->int_val = (int)parse_verilog_number(t[pos].value);
         pos++;
@@ -676,6 +834,17 @@ std::shared_ptr<AstNode> VerilogParser::parse_primary(const std::vector<Token>& 
     if (t[pos].type == Token::IDENT) {
         std::string name = t[pos].value;
         pos++;
+
+        // SV Phase 7: Type cast — type'(expr) e.g. int'(val), logic'(x)
+        // Token sequence: IDENT("type") NUMBER("'") LPAREN expr RPAREN
+        if (pos + 1 < t.size() && t[pos].type == Token::NUMBER && t[pos].value == "'" &&
+            t[pos + 1].type == Token::LPAREN) {
+            pos++; // skip tick NUMBER
+            pos++; // skip (
+            auto inner = parse_expression(t, pos);
+            if (pos < t.size() && t[pos].type == Token::RPAREN) pos++;
+            return inner; // pass-through for synthesis
+        }
 
         // $signed(expr) / $unsigned(expr) — system functions
         if ((name == "$signed" || name == "$unsigned") && pos < t.size() && t[pos].type == Token::LPAREN) {
@@ -961,7 +1130,24 @@ size_t VerilogParser::parse_port_decl(const std::vector<Token>& t, size_t pos, N
     pos++; // skip keyword
     // skip optional signed keyword
     if (pos < t.size() && t[pos].type == Token::SIGNED_KW) pos++;
+    // SV Phase 6: Multi-dimensional packed arrays: logic [3:0][7:0] data → width = 4*8 = 32
     auto range = parse_bus_range(t, pos);
+    int total_width = -1;
+    if (range.first >= 0) {
+        total_width = std::abs(range.first - range.second) + 1;
+        // Check for additional packed dimensions
+        while (pos < t.size() && t[pos].type == Token::LBRACKET) {
+            auto extra = parse_bus_range(t, pos);
+            if (extra.first >= 0) {
+                int dim = std::abs(extra.first - extra.second) + 1;
+                total_width *= dim;
+            } else break;
+        }
+        range = {total_width - 1, 0};
+    }
+
+    // Store wire declarations that have inline assignment for deferred synthesis
+    std::vector<std::pair<std::string, size_t>> inline_assigns; // {name, assign_expr_start_pos}
 
     while (pos < t.size() && t[pos].type != Token::SEMI) {
         if (t[pos].type == Token::IDENT) {
@@ -979,6 +1165,37 @@ size_t VerilogParser::parse_port_decl(const std::vector<Token>& t, size_t pos, N
                 else if (dir == "output") { nl.mark_output(nid); r.num_outputs++; }
                 else { r.num_wires++; }
             }
+            pos++;
+            // SV Phase 7: Wire inline assignment — wire [7:0] y = expr;
+            if (pos < t.size() && t[pos].type == Token::ASSIGN) {
+                pos++; // skip '='
+                int lhs_w = bus_width(name);
+                bool lhs_is_bus = (range.first >= 0 && range.first != range.second);
+                auto rhs_expr = parse_expression(t, pos);
+                if (lhs_is_bus) {
+                    int target_w = lhs_w > 0 ? lhs_w : (std::abs(range.first - range.second) + 1);
+                    auto bits = struct_synth_.synth_expr_bus(rhs_expr, nl, net_map_, bus_ranges_, target_w);
+                    auto it = bus_ranges_.find(name);
+                    int lo = (it != bus_ranges_.end()) ? std::min(it->second.first, it->second.second) : 0;
+                    for (int i = 0; i < target_w && i < (int)bits.size(); i++) {
+                        std::string bit_name = name + "[" + std::to_string(lo + i) + "]";
+                        NetId out = get_or_create_net(nl, bit_name);
+                        if (bits[i] != out) {
+                            nl.add_gate(GateType::BUF, {bits[i]}, out, "assign_" + bit_name);
+                            r.num_gates++;
+                        }
+                    }
+                } else {
+                    NetId out = get_or_create_net(nl, name);
+                    NetId result = struct_synth_.synth_expr(rhs_expr, nl, net_map_);
+                    if (result >= 0 && result != out) {
+                        nl.add_gate(GateType::BUF, {result}, out, "assign_" + name);
+                        r.num_gates++;
+                    }
+                }
+                r.num_gates++; // count inline assign synthesis
+            }
+            continue;
         }
         pos++;
     }
@@ -1020,6 +1237,42 @@ size_t VerilogParser::parse_gate_inst(const std::vector<Token>& t, size_t pos, N
 
 size_t VerilogParser::parse_parameter(const std::vector<Token>& t, size_t pos) {
     pos++; // skip parameter/localparam
+    // SV Phase 6: parameter type T = logic; — type parameter
+    if (pos < t.size() && t[pos].type == Token::IDENT && t[pos].value == "type") {
+        pos++; // skip 'type'
+        if (pos < t.size() && t[pos].type == Token::IDENT) {
+            std::string type_param = t[pos].value;
+            pos++;
+            if (pos < t.size() && t[pos].type == Token::ASSIGN) {
+                pos++; // skip '='
+                // Resolve the default type
+                int resolved_width = 1;
+                if (pos < t.size() && t[pos].type == Token::IDENT) {
+                    std::string base_type = t[pos].value;
+                    if (is_sv_net_type(base_type)) {
+                        resolved_width = sv_type_width(base_type);
+                        if (resolved_width == 0) resolved_width = 1;
+                    } else if (sv_typedefs_.count(base_type)) {
+                        resolve_sv_type(base_type, resolved_width);
+                    }
+                    pos++;
+                    // Optional range after type
+                    if (pos < t.size() && t[pos].type == Token::LBRACKET) {
+                        auto range = parse_bus_range(t, pos);
+                        if (range.first >= 0)
+                            resolved_width = std::abs(range.first - range.second) + 1;
+                    }
+                }
+                // Store as typedef alias
+                SvTypeDef td;
+                td.width = resolved_width;
+                sv_typedefs_[type_param] = td;
+            }
+        }
+        while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+        if (pos < t.size()) pos++;
+        return pos;
+    }
     // Skip optional type/range
     if (pos < t.size() && t[pos].type == Token::SIGNED_KW) pos++;
     if (pos < t.size() && t[pos].type == Token::INTEGER_KW) pos++;
@@ -1053,6 +1306,21 @@ size_t VerilogParser::parse_parameter(const std::vector<Token>& t, size_t pos) {
 size_t VerilogParser::parse_assign(const std::vector<Token>& t, size_t pos, Netlist& nl,
                                     VerilogParseResult& r) {
     pos++; // skip 'assign'
+
+    // SV Phase 8: Skip optional delay — assign #5 y = a;
+    if (pos < t.size() && t[pos].type == Token::HASH) {
+        pos++; // skip #
+        if (pos < t.size() && t[pos].type == Token::NUMBER) pos++; // skip delay value
+        // Also handle #(expr) form
+        if (pos < t.size() && t[pos].type == Token::LPAREN) {
+            int depth = 1; pos++;
+            while (pos < t.size() && depth > 0) {
+                if (t[pos].type == Token::LPAREN) depth++;
+                if (t[pos].type == Token::RPAREN) depth--;
+                pos++;
+            }
+        }
+    }
 
     // Parse LHS name + optional bit-select
     std::string lhs;
@@ -1425,6 +1693,18 @@ size_t VerilogParser::parse_module(const std::vector<Token>& t, size_t pos, Netl
                 auto range = parse_bus_range(t, pos);
                 if (range.first < 0 && sv_tw > 0)
                     range = {sv_tw - 1, 0};
+                // SV Phase 6: Multi-dimensional packed arrays in ANSI ports
+                if (range.first >= 0) {
+                    int total_w = std::abs(range.first - range.second) + 1;
+                    while (pos < t.size() && t[pos].type == Token::LBRACKET) {
+                        auto extra = parse_bus_range(t, pos);
+                        if (extra.first >= 0) {
+                            int dim = std::abs(extra.first - extra.second) + 1;
+                            total_w *= dim;
+                        } else break;
+                    }
+                    range = {total_w - 1, 0};
+                }
                 while (pos < t.size() && t[pos].type == Token::IDENT) {
                     std::string name = t[pos].value;
                     if (range.first >= 0 && range.first != range.second) {
@@ -1494,7 +1774,19 @@ size_t VerilogParser::parse_module(const std::vector<Token>& t, size_t pos, Netl
             t[pos].type != Token::INITIAL_KW && t[pos].type != Token::SPECIFY_KW &&
             t[pos].type != Token::DEFPARAM_KW && t[pos].type != Token::DISABLE_KW &&
             t[pos].type != Token::TYPEDEF_KW && t[pos].type != Token::ENUM_KW &&
-            t[pos].type != Token::IMPORT_KW) {
+            t[pos].type != Token::IMPORT_KW &&
+            t[pos].type != Token::ASSERT_KW && t[pos].type != Token::ASSUME_KW &&
+            t[pos].type != Token::COVER_KW && t[pos].type != Token::PROPERTY_KW &&
+            t[pos].type != Token::SEQUENCE_KW && t[pos].type != Token::CLOCKING_KW &&
+            t[pos].type != Token::FINAL_KW &&
+            t[pos].type != Token::CONST_KW && t[pos].type != Token::STATIC_KW &&
+            t[pos].type != Token::EXTERN_KW && t[pos].type != Token::BIND_KW &&
+            t[pos].type != Token::TIMEUNIT_KW && t[pos].type != Token::TIMEPRECISION_KW &&
+            t[pos].type != Token::COVERGROUP_KW && t[pos].type != Token::CONSTRAINT_KW &&
+            t[pos].type != Token::VIRTUAL_KW && t[pos].type != Token::RAND_KW &&
+            // SV Phase 8 structural tokens
+            t[pos].type != Token::FORK_KW && t[pos].type != Token::CHECKER_KW &&
+            t[pos].type != Token::CONFIG_KW && t[pos].type != Token::LET_KW) {
             pos++; continue;
         }
 
@@ -1581,6 +1873,8 @@ size_t VerilogParser::parse_module(const std::vector<Token>& t, size_t pos, Netl
         // SystemVerilog: unique/priority before case/if — skip qualifier, parse normally
         else if (t[pos].type == Token::UNIQUE_KW || t[pos].type == Token::PRIORITY_KW) {
             pos++; // skip unique/priority — treated as synthesis hint, parse next token
+            // SV Phase 8: unique0 — skip the trailing '0'
+            if (pos < t.size() && t[pos].type == Token::NUMBER && t[pos].value == "0") pos++;
         }
         // SystemVerilog: logic/bit — treat like reg (support memory arrays)
         else if (kw == "logic" || kw == "bit") {
@@ -1735,10 +2029,189 @@ size_t VerilogParser::parse_module(const std::vector<Token>& t, size_t pos, Netl
         else if (t[pos].type == Token::IMPORT_KW) {
             pos = parse_import(t, pos);
         }
+        // SV Phase 6: SVA assert/assume/cover — parse and skip (not synthesizable)
+        else if (t[pos].type == Token::ASSERT_KW || t[pos].type == Token::ASSUME_KW ||
+                 t[pos].type == Token::COVER_KW) {
+            pos++; // skip assert/assume/cover
+            // Skip optional 'property' or 'final'
+            if (pos < t.size() && (t[pos].type == Token::PROPERTY_KW ||
+                t[pos].type == Token::FINAL_KW)) pos++;
+            // Skip parenthesized expression/property
+            if (pos < t.size() && t[pos].type == Token::LPAREN) {
+                int depth = 1; pos++;
+                while (pos < t.size() && depth > 0) {
+                    if (t[pos].type == Token::LPAREN) depth++;
+                    if (t[pos].type == Token::RPAREN) depth--;
+                    pos++;
+                }
+            }
+            // Skip optional action block (else clause, begin/end, etc.)
+            if (pos < t.size() && t[pos].type == Token::IDENT && t[pos].value == "else") {
+                pos++;
+                // skip to semicolon
+                while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+            }
+            if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+        }
+        // SV Phase 6: property...endproperty — parse and skip
+        else if (t[pos].type == Token::PROPERTY_KW) {
+            pos++;
+            while (pos < t.size() && t[pos].type != Token::ENDPROPERTY_KW) pos++;
+            if (pos < t.size()) pos++;
+        }
+        // SV Phase 6: sequence...endsequence — parse and skip
+        else if (t[pos].type == Token::SEQUENCE_KW) {
+            pos++;
+            while (pos < t.size() && t[pos].type != Token::ENDSEQUENCE_KW) pos++;
+            if (pos < t.size()) pos++;
+        }
+        // SV Phase 6: clocking...endclocking — parse and skip
+        else if (t[pos].type == Token::CLOCKING_KW) {
+            pos++;
+            while (pos < t.size() && t[pos].type != Token::ENDCLOCKING_KW) pos++;
+            if (pos < t.size()) pos++;
+        }
+        // SV Phase 6: final block — parse and skip (simulation only)
+        else if (t[pos].type == Token::FINAL_KW) {
+            pos++;
+            if (pos < t.size() && t[pos].type == Token::BEGIN_KW) {
+                int depth = 1; pos++;
+                while (pos < t.size() && depth > 0) {
+                    if (t[pos].type == Token::BEGIN_KW) depth++;
+                    if (t[pos].type == Token::END_KW) depth--;
+                    pos++;
+                }
+            } else {
+                while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+                if (pos < t.size()) pos++;
+            }
+        }
+        // SV Phase 7: const qualifier — skip 'const' and let next token be parsed normally
+        else if (t[pos].type == Token::CONST_KW) {
+            pos++; // skip const, continue to next iteration
+        }
+        // SV Phase 7: static qualifier — skip
+        else if (t[pos].type == Token::STATIC_KW) {
+            pos++;
+        }
+        // SV Phase 7: virtual qualifier — skip (virtual interface, virtual class)
+        else if (t[pos].type == Token::VIRTUAL_KW) {
+            pos++;
+            // Skip to semicolon or endclass
+            while (pos < t.size() && t[pos].type != Token::SEMI &&
+                   t[pos].type != Token::ENDCLASS_KW) pos++;
+            if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+        }
+        // SV Phase 7: rand/randc qualifier — skip
+        else if (t[pos].type == Token::RAND_KW) {
+            pos++;
+        }
+        // SV Phase 7: extern module — skip to semicolon
+        else if (t[pos].type == Token::EXTERN_KW) {
+            pos++;
+            while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+            if (pos < t.size()) pos++;
+        }
+        // SV Phase 7: bind — skip entire bind statement
+        else if (t[pos].type == Token::BIND_KW) {
+            pos++;
+            while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+            if (pos < t.size()) pos++;
+        }
+        // SV Phase 7: timeunit/timeprecision — skip to semicolon
+        else if (t[pos].type == Token::TIMEUNIT_KW || t[pos].type == Token::TIMEPRECISION_KW) {
+            pos++;
+            while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+            if (pos < t.size()) pos++;
+        }
+        // SV Phase 7: covergroup...endgroup — skip
+        else if (t[pos].type == Token::COVERGROUP_KW) {
+            pos++;
+            while (pos < t.size() && t[pos].type != Token::ENDGROUP_KW) pos++;
+            if (pos < t.size()) pos++;
+        }
+        // SV Phase 7: constraint block — skip to end of block
+        else if (t[pos].type == Token::CONSTRAINT_KW) {
+            pos++;
+            // Skip constraint name
+            if (pos < t.size() && t[pos].type == Token::IDENT) pos++;
+            // Skip { ... } body
+            if (pos < t.size() && t[pos].type == Token::LBRACE) {
+                int depth = 1; pos++;
+                while (pos < t.size() && depth > 0) {
+                    if (t[pos].type == Token::LBRACE) depth++;
+                    if (t[pos].type == Token::RBRACE) depth--;
+                    pos++;
+                }
+            } else {
+                while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+                if (pos < t.size()) pos++;
+            }
+        }
+        // SV Phase 8: fork...join/join_any/join_none — parse and skip (not synthesizable)
+        else if (t[pos].type == Token::FORK_KW) {
+            pos++; // skip fork
+            while (pos < t.size() && t[pos].type != Token::JOIN_KW &&
+                   t[pos].type != Token::JOIN_ANY_KW && t[pos].type != Token::JOIN_NONE_KW) {
+                // Track nested begin/end inside fork
+                if (t[pos].type == Token::BEGIN_KW) {
+                    int depth = 1; pos++;
+                    while (pos < t.size() && depth > 0) {
+                        if (t[pos].type == Token::BEGIN_KW) depth++;
+                        if (t[pos].type == Token::END_KW) depth--;
+                        pos++;
+                    }
+                } else {
+                    pos++;
+                }
+            }
+            if (pos < t.size()) pos++; // skip join/join_any/join_none
+        }
+        // SV Phase 8: checker...endchecker — parse and skip
+        else if (t[pos].type == Token::CHECKER_KW) {
+            pos++;
+            while (pos < t.size() && t[pos].type != Token::ENDCHECKER_KW) pos++;
+            if (pos < t.size()) pos++;
+        }
+        // SV Phase 8: config...endconfig — parse and skip
+        else if (t[pos].type == Token::CONFIG_KW) {
+            pos++;
+            while (pos < t.size() && t[pos].type != Token::ENDCONFIG_KW) pos++;
+            if (pos < t.size()) pos++;
+        }
+        // SV Phase 8: let declarations — parse and skip
+        else if (t[pos].type == Token::LET_KW) {
+            pos++; // skip 'let'
+            // Skip: let name(params) = expr;
+            while (pos < t.size() && t[pos].type != Token::SEMI) {
+                if (t[pos].type == Token::LPAREN) {
+                    int depth = 1; pos++;
+                    while (pos < t.size() && depth > 0) {
+                        if (t[pos].type == Token::LPAREN) depth++;
+                        if (t[pos].type == Token::RPAREN) depth--;
+                        pos++;
+                    }
+                } else {
+                    pos++;
+                }
+            }
+            if (pos < t.size()) pos++;
+        }
         else {
-            // SV Phase 2: typedef'd type used as variable declaration
-            // e.g., state_t current_state;  or  state_t current_state, next_state;
-            if (t[pos].type == Token::IDENT && sv_typedefs_.count(t[pos].value)) {
+            // SV Phase 8: export "DPI-C" — skip to semicolon
+            if (t[pos].type == Token::IDENT && t[pos].value == "export") {
+                pos++;
+                while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+                if (pos < t.size()) pos++;
+            }
+            // SV Phase 8: string/chandle types — skip variable declaration
+            else if (t[pos].type == Token::IDENT &&
+                     (t[pos].value == "string" || t[pos].value == "chandle")) {
+                pos++; // skip type
+                while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+                if (pos < t.size()) pos++;
+            }
+            else if (t[pos].type == Token::IDENT && sv_typedefs_.count(t[pos].value)) {
                 int tw = 0;
                 resolve_sv_type(t[pos].value, tw);
                 pos++; // skip type name
@@ -1868,7 +2341,50 @@ VerilogParseResult VerilogParser::parse_tokens(const std::vector<Token>& t, Netl
                 pos = parse_typedef(t, pos);
             } else if (t[pos].type == Token::INTERFACE_KW) {
                 pos = parse_interface(t, pos);
-            } else {
+            }
+            // SV Phase 7: Skip program...endprogram blocks (verification only)
+            else if (t[pos].type == Token::PROGRAM_KW) {
+                pos++;
+                while (pos < t.size() && t[pos].type != Token::ENDPROGRAM_KW) pos++;
+                if (pos < t.size()) pos++;
+            }
+            // SV Phase 7: Skip class...endclass blocks (verification only)
+            else if (t[pos].type == Token::CLASS_KW) {
+                pos++;
+                while (pos < t.size() && t[pos].type != Token::ENDCLASS_KW) pos++;
+                if (pos < t.size()) pos++;
+            }
+            // SV Phase 7: Skip bind statements
+            else if (t[pos].type == Token::BIND_KW) {
+                pos++;
+                while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+                if (pos < t.size()) pos++;
+            }
+            // SV Phase 7: Skip extern declarations
+            else if (t[pos].type == Token::EXTERN_KW) {
+                pos++;
+                while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+                if (pos < t.size()) pos++;
+            }
+            // SV Phase 7: Skip timeunit/timeprecision
+            else if (t[pos].type == Token::TIMEUNIT_KW || t[pos].type == Token::TIMEPRECISION_KW) {
+                pos++;
+                while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+                if (pos < t.size()) pos++;
+            }
+            // SV Phase 8: Skip checker...endchecker blocks
+            else if (t[pos].type == Token::CHECKER_KW) {
+                pos++;
+                while (pos < t.size() && t[pos].type != Token::ENDCHECKER_KW) pos++;
+                if (pos < t.size()) pos++;
+            }
+            // SV Phase 8: Skip config...endconfig blocks
+            else if (t[pos].type == Token::CONFIG_KW) {
+                pos++;
+                while (pos < t.size() && t[pos].type != Token::ENDCONFIG_KW) pos++;
+                if (pos < t.size()) pos++;
+            }
+            else {
                 pos++;
             }
         }
@@ -2382,6 +2898,64 @@ size_t VerilogParser::parse_typedef(const std::vector<Token>& t, size_t pos) {
         }
         if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
     }
+    // SV Phase 6: typedef union packed { ... } name_t;
+    else if (t[pos].type == Token::UNION_KW) {
+        pos++; // skip 'union'
+        if (pos < t.size() && t[pos].type == Token::PACKED_KW) pos++; // skip 'packed'
+
+        SvTypeDef td;
+        td.is_union = true;
+        td.is_struct = true; // reuse struct field storage
+        td.width = 0;
+
+        if (pos < t.size() && t[pos].type == Token::LBRACE) {
+            pos++; // skip '{'
+            while (pos < t.size() && t[pos].type != Token::RBRACE) {
+                int field_width = 1;
+                if (pos < t.size() && t[pos].type == Token::IDENT) {
+                    std::string ftype = t[pos].value;
+                    if (is_sv_net_type(ftype)) {
+                        field_width = sv_type_width(ftype);
+                        if (field_width == 0) field_width = 1;
+                        pos++;
+                    } else if (sv_typedefs_.count(ftype)) {
+                        resolve_sv_type(ftype, field_width);
+                        pos++;
+                    } else {
+                        pos++;
+                    }
+                } else if (pos < t.size() && t[pos].type == Token::SIGNED_KW) {
+                    pos++;
+                    continue;
+                } else {
+                    pos++;
+                    continue;
+                }
+                if (pos < t.size() && t[pos].type == Token::LBRACKET) {
+                    auto range = parse_bus_range(t, pos);
+                    if (range.first >= 0)
+                        field_width = std::abs(range.first - range.second) + 1;
+                }
+                if (pos < t.size() && t[pos].type == Token::SIGNED_KW) pos++;
+                if (pos < t.size() && t[pos].type == Token::IDENT) {
+                    std::string fname = t[pos].value;
+                    td.struct_fields.push_back({fname, field_width});
+                    // Union: width = max of all fields (overlay, not sum)
+                    if (field_width > td.width) td.width = field_width;
+                    pos++;
+                }
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            }
+            if (pos < t.size() && t[pos].type == Token::RBRACE) pos++;
+        }
+
+        if (pos < t.size() && t[pos].type == Token::IDENT) {
+            std::string type_name = t[pos].value;
+            sv_typedefs_[type_name] = td;
+            pos++;
+        }
+        if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+    }
     else if (pos < t.size() && t[pos].type == Token::IDENT &&
              (is_sv_net_type(t[pos].value) || t[pos].value == "integer")) {
         // typedef logic [N:0] name_t;  or  typedef reg [7:0] name_t;
@@ -2478,6 +3052,14 @@ size_t VerilogParser::parse_package(const std::vector<Token>& t, size_t pos) {
 // =============================================================================
 size_t VerilogParser::parse_import(const std::vector<Token>& t, size_t pos) {
     pos++; // skip 'import'
+
+    // SV Phase 8: DPI-C import — import "DPI-C" function ... ; — skip entirely
+    if (pos < t.size() && t[pos].type == Token::IDENT && t[pos].value.find("DPI") != std::string::npos) {
+        while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+        if (pos < t.size()) pos++;
+        return pos;
+    }
+
     std::string pkg_name;
     if (pos < t.size() && t[pos].type == Token::IDENT) {
         pkg_name = t[pos].value;
@@ -2755,9 +3337,17 @@ size_t VerilogParser::parse_statement_block(const std::vector<Token>& t, size_t 
 size_t VerilogParser::parse_statement(const std::vector<Token>& t, size_t pos, std::shared_ptr<AstNode> parent) {
     if (pos >= t.size()) return pos;
 
+    // SV Phase 7: Skip const/static qualifiers in procedural context
+    if (t[pos].type == Token::CONST_KW || t[pos].type == Token::STATIC_KW) {
+        pos++;
+        if (pos >= t.size()) return pos;
+    }
+
     // SystemVerilog: unique/priority qualifier before if/case — skip, parse next
     if (t[pos].type == Token::UNIQUE_KW || t[pos].type == Token::PRIORITY_KW) {
         pos++; // skip qualifier — synthesis treats as full_case/parallel_case hint
+        // SV Phase 8: unique0 — skip the trailing '0'
+        if (pos < t.size() && t[pos].type == Token::NUMBER && t[pos].value == "0") pos++;
     }
 
     // SV Phase 4: prefix ++ / --
@@ -2993,6 +3583,47 @@ size_t VerilogParser::parse_statement(const std::vector<Token>& t, size_t pos, s
         pos++;
         while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
         if (pos < t.size()) pos++;
+        return pos;
+    }
+    // SV Phase 6: SVA assert/assume/cover in procedural context — skip
+    else if (t[pos].type == Token::ASSERT_KW || t[pos].type == Token::ASSUME_KW ||
+             t[pos].type == Token::COVER_KW) {
+        pos++;
+        if (pos < t.size() && (t[pos].type == Token::PROPERTY_KW ||
+            t[pos].type == Token::FINAL_KW)) pos++;
+        if (pos < t.size() && t[pos].type == Token::LPAREN) {
+            int depth = 1; pos++;
+            while (pos < t.size() && depth > 0) {
+                if (t[pos].type == Token::LPAREN) depth++;
+                if (t[pos].type == Token::RPAREN) depth--;
+                pos++;
+            }
+        }
+        // Skip optional action block
+        if (pos < t.size() && t[pos].type == Token::IDENT && t[pos].value == "else") {
+            pos++;
+            while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+        }
+        if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+        return pos;
+    }
+    // SV Phase 8: fork...join/join_any/join_none — skip (not synthesizable)
+    else if (t[pos].type == Token::FORK_KW) {
+        pos++; // skip fork
+        while (pos < t.size() && t[pos].type != Token::JOIN_KW &&
+               t[pos].type != Token::JOIN_ANY_KW && t[pos].type != Token::JOIN_NONE_KW) {
+            if (t[pos].type == Token::BEGIN_KW) {
+                int depth = 1; pos++;
+                while (pos < t.size() && depth > 0) {
+                    if (t[pos].type == Token::BEGIN_KW) depth++;
+                    if (t[pos].type == Token::END_KW) depth--;
+                    pos++;
+                }
+            } else {
+                pos++;
+            }
+        }
+        if (pos < t.size()) pos++; // skip join/join_any/join_none
         return pos;
     }
     else if (t[pos].type == Token::IDENT) {
@@ -3267,7 +3898,16 @@ size_t VerilogParser::parse_case(const std::vector<Token>& t, size_t pos, std::s
             item->value = "default"; pos++;
             if (pos < t.size() && t[pos].type == Token::COLON) pos++;
         } else if (t[pos].type == Token::NUMBER || t[pos].type == Token::IDENT) {
+            // SV Phase 8: Multi-value case items — 8'h00, 8'h01, 8'h02: ...
             item->value = t[pos].value; pos++;
+            while (pos < t.size() && t[pos].type == Token::COMMA) {
+                pos++; // skip comma
+                if (pos < t.size() && (t[pos].type == Token::NUMBER || t[pos].type == Token::IDENT)) {
+                    // Store additional match values separated by '|'
+                    item->value += "|" + t[pos].value;
+                    pos++;
+                }
+            }
             if (pos < t.size() && t[pos].type == Token::COLON) pos++;
         } else {
             pos++; continue;
@@ -3562,8 +4202,9 @@ size_t VerilogParser::parse_function_def(const std::vector<Token>& t, size_t pos
     pos++; // skip function
     FuncDef func;
 
-    // Optional: 'automatic' keyword
+    // Optional: 'automatic' or 'static' keyword
     if (pos < t.size() && t[pos].type == Token::AUTOMATIC_KW) pos++;
+    if (pos < t.size() && t[pos].type == Token::STATIC_KW) pos++;
 
     // SV Phase 5: void function — skip void keyword
     bool is_void = false;
@@ -3708,8 +4349,9 @@ size_t VerilogParser::parse_function_def(const std::vector<Token>& t, size_t pos
 // ============================================================
 size_t VerilogParser::parse_task_def(const std::vector<Token>& t, size_t pos) {
     pos++; // skip task
-    // Skip optional 'automatic'
+    // Skip optional 'automatic' or 'static'
     if (pos < t.size() && t[pos].type == Token::AUTOMATIC_KW) pos++;
+    if (pos < t.size() && t[pos].type == Token::STATIC_KW) pos++;
 
     FuncDef task_def;
     std::string tname;
