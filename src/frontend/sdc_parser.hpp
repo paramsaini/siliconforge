@@ -57,6 +57,42 @@ struct SdcClockGroup {
     std::vector<std::vector<std::string>> groups; // each inner vector is a group of clock names
 };
 
+struct SdcCaseAnalysis {
+    std::string pin;
+    enum Value { ZERO, ONE, RISING, FALLING } value = ZERO;
+};
+
+struct SdcDisableTiming {
+    std::string cell_instance;
+    std::string from_pin;
+    std::string to_pin;
+};
+
+struct SdcDrivingCell {
+    std::string port;
+    std::string lib_cell;
+    std::string pin;
+    double input_transition_rise = 0.0;
+    double input_transition_fall = 0.0;
+};
+
+struct SdcLoad {
+    std::string port;
+    double capacitance = 0.0;  // pF
+};
+
+struct SdcGroupPath {
+    std::string name;
+    std::string from;
+    std::string to;
+    double weight = 1.0;
+};
+
+struct SdcWireLoad {
+    std::string model_name;
+    std::string library;
+};
+
 struct SdcConstraints {
     std::vector<SdcClock> clocks;
     std::vector<SdcInputDelay> input_delays;
@@ -66,6 +102,14 @@ struct SdcConstraints {
     std::unordered_map<std::string, double> max_fanout;
     std::unordered_map<std::string, double> max_transition;
     std::unordered_map<std::string, double> max_capacitance;
+    std::vector<SdcCaseAnalysis> case_analyses;
+    std::vector<SdcDisableTiming> disable_timings;
+    std::vector<SdcDrivingCell> driving_cells;
+    std::vector<SdcLoad> loads;
+    std::vector<SdcGroupPath> group_paths;
+    std::vector<SdcWireLoad> wire_loads;
+    std::vector<std::string> propagated_clocks;
+    std::vector<std::string> ideal_networks;
 
     const SdcClock* find_clock(const std::string& name) const;
     double get_clock_period(const std::string& name) const;

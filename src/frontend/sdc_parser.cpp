@@ -100,7 +100,13 @@ size_t SdcParser::parse_command(const std::vector<Token>& t, size_t pos,
                      t[pos].value == "set_false_path" || t[pos].value == "set_multicycle_path" ||
                      t[pos].value == "set_input_delay" || t[pos].value == "set_output_delay" ||
                      t[pos].value == "set_max_delay" || t[pos].value == "set_min_delay" ||
-                     t[pos].value == "set_clock_groups" || t[pos].value == "set_clock_latency") {
+                     t[pos].value == "set_clock_groups" || t[pos].value == "set_clock_latency" ||
+                     t[pos].value == "set_case_analysis" || t[pos].value == "set_disable_timing" ||
+                     t[pos].value == "set_driving_cell" || t[pos].value == "set_load" ||
+                     t[pos].value == "set_max_fanout" || t[pos].value == "set_max_transition" ||
+                     t[pos].value == "set_max_capacitance" || t[pos].value == "set_clock_uncertainty" ||
+                     t[pos].value == "group_path" || t[pos].value == "set_wire_load_model" ||
+                     t[pos].value == "set_propagated_clock" || t[pos].value == "set_ideal_network") {
                 break; // next command — don't consume
             }
             else { // port name
@@ -332,6 +338,179 @@ size_t SdcParser::parse_command(const std::vector<Token>& t, size_t pos,
         for (auto& c : sdc.clocks) {
             if (c.name == clk_name) c.uncertainty = val;
         }
+        r.num_constraints++;
+    }
+    else if (cmd == "set_case_analysis") {
+        pos++;
+        SdcCaseAnalysis ca;
+        // First token: value (0, 1, rising, falling)
+        if (pos < t.size()) {
+            const auto& v = t[pos].value;
+            if (v == "0") ca.value = SdcCaseAnalysis::ZERO;
+            else if (v == "1") ca.value = SdcCaseAnalysis::ONE;
+            else if (v == "rising") ca.value = SdcCaseAnalysis::RISING;
+            else if (v == "falling") ca.value = SdcCaseAnalysis::FALLING;
+            pos++;
+        }
+        // Second token: pin name (may be [get_ports/get_pins ...] or bare name)
+        if (pos < t.size() && t[pos].value == "[") {
+            pos++; // skip '['
+            if (pos < t.size() && (t[pos].value == "get_ports" || t[pos].value == "get_pins")) {
+                pos++; // skip command
+                if (pos < t.size() && t[pos].value != "]")
+                    ca.pin = t[pos].value;
+            }
+            while (pos < t.size() && t[pos].value != "]") pos++;
+            if (pos < t.size()) pos++; // skip ']'
+        } else if (pos < t.size()) {
+            ca.pin = t[pos].value;
+            pos++;
+        }
+        sdc.case_analyses.push_back(ca);
+        r.num_constraints++;
+    }
+    else if (cmd == "set_disable_timing") {
+        pos++;
+        SdcDisableTiming dt;
+        while (pos < t.size()) {
+            if (t[pos].value == "-from" && pos+1 < t.size()) { dt.from_pin = t[++pos].value; pos++; }
+            else if (t[pos].value == "-to" && pos+1 < t.size()) { dt.to_pin = t[++pos].value; pos++; }
+            else if (t[pos].value[0] == '[') {
+                pos++; // skip '['
+                if (pos < t.size() && (t[pos].value == "get_cells" || t[pos].value == "get_pins")) {
+                    pos++; // skip command
+                    if (pos < t.size() && t[pos].value != "]")
+                        dt.cell_instance = t[pos].value;
+                }
+                while (pos < t.size() && t[pos].value != "]") pos++;
+                if (pos < t.size()) pos++; // skip ']'
+            }
+            else if (t[pos].value[0] == '-') { pos += 2; }
+            else { dt.cell_instance = t[pos].value; pos++; break; }
+        }
+        sdc.disable_timings.push_back(dt);
+        r.num_constraints++;
+    }
+    else if (cmd == "set_driving_cell") {
+        pos++;
+        SdcDrivingCell dc;
+        while (pos < t.size()) {
+            if (t[pos].value == "-lib_cell" && pos+1 < t.size()) { dc.lib_cell = t[++pos].value; pos++; }
+            else if (t[pos].value == "-pin" && pos+1 < t.size()) { dc.pin = t[++pos].value; pos++; }
+            else if (t[pos].value == "-input_transition_rise" && pos+1 < t.size()) {
+                try { dc.input_transition_rise = std::stod(t[++pos].value); } catch (...) {}
+                pos++;
+            }
+            else if (t[pos].value == "-input_transition_fall" && pos+1 < t.size()) {
+                try { dc.input_transition_fall = std::stod(t[++pos].value); } catch (...) {}
+                pos++;
+            }
+            else if (t[pos].value[0] == '[') {
+                pos++; // skip '['
+                if (pos < t.size() && (t[pos].value == "get_ports" || t[pos].value == "get_pins")) {
+                    pos++; // skip command
+                    if (pos < t.size() && t[pos].value != "]")
+                        dc.port = t[pos].value;
+                }
+                while (pos < t.size() && t[pos].value != "]") pos++;
+                if (pos < t.size()) pos++; // skip ']'
+            }
+            else if (t[pos].value[0] == '-') { pos += 2; }
+            else { dc.port = t[pos].value; pos++; break; }
+        }
+        sdc.driving_cells.push_back(dc);
+        r.num_constraints++;
+    }
+    else if (cmd == "set_load") {
+        pos++;
+        SdcLoad ld;
+        while (pos < t.size()) {
+            if (t[pos].value[0] == '[') {
+                pos++; // skip '['
+                if (pos < t.size() && (t[pos].value == "get_ports" || t[pos].value == "get_nets" ||
+                    t[pos].value == "get_pins")) {
+                    pos++; // skip command
+                    if (pos < t.size() && t[pos].value != "]")
+                        ld.port = t[pos].value;
+                }
+                while (pos < t.size() && t[pos].value != "]") pos++;
+                if (pos < t.size()) pos++; // skip ']'
+            }
+            else if (t[pos].value[0] == '-') { pos += 2; }
+            else {
+                try { ld.capacitance = std::stod(t[pos].value); pos++; }
+                catch (...) { ld.port = t[pos].value; pos++; break; }
+            }
+        }
+        sdc.loads.push_back(ld);
+        r.num_constraints++;
+    }
+    else if (cmd == "group_path") {
+        pos++;
+        SdcGroupPath gp;
+        while (pos < t.size()) {
+            if (t[pos].value == "-name" && pos+1 < t.size()) { gp.name = t[++pos].value; pos++; }
+            else if (t[pos].value == "-from" && pos+1 < t.size()) { gp.from = t[++pos].value; pos++; }
+            else if (t[pos].value == "-to" && pos+1 < t.size()) { gp.to = t[++pos].value; pos++; }
+            else if (t[pos].value == "-weight" && pos+1 < t.size()) {
+                try { gp.weight = std::stod(t[++pos].value); } catch (...) {}
+                pos++;
+            }
+            else if (t[pos].value[0] == '-') { pos += 2; }
+            else { pos++; break; }
+        }
+        sdc.group_paths.push_back(gp);
+        r.num_constraints++;
+    }
+    else if (cmd == "set_wire_load_model") {
+        pos++;
+        SdcWireLoad wl;
+        while (pos < t.size()) {
+            if (t[pos].value == "-name" && pos+1 < t.size()) { wl.model_name = t[++pos].value; pos++; }
+            else if (t[pos].value == "-library" && pos+1 < t.size()) { wl.library = t[++pos].value; pos++; }
+            else if (t[pos].value[0] == '-') { pos += 2; }
+            else { pos++; break; }
+        }
+        sdc.wire_loads.push_back(wl);
+        r.num_constraints++;
+    }
+    else if (cmd == "set_propagated_clock") {
+        pos++;
+        std::string clk_name;
+        if (pos < t.size() && t[pos].value == "[") {
+            pos++; // skip '['
+            if (pos < t.size() && t[pos].value == "get_clocks") {
+                pos++; // skip command
+                if (pos < t.size() && t[pos].value != "]")
+                    clk_name = t[pos].value;
+            }
+            while (pos < t.size() && t[pos].value != "]") pos++;
+            if (pos < t.size()) pos++; // skip ']'
+        } else if (pos < t.size()) {
+            clk_name = t[pos].value;
+            pos++;
+        }
+        if (!clk_name.empty()) sdc.propagated_clocks.push_back(clk_name);
+        r.num_constraints++;
+    }
+    else if (cmd == "set_ideal_network") {
+        pos++;
+        std::string net_name;
+        if (pos < t.size() && t[pos].value == "[") {
+            pos++; // skip '['
+            if (pos < t.size() && (t[pos].value == "get_nets" || t[pos].value == "get_ports" ||
+                t[pos].value == "get_pins")) {
+                pos++; // skip command
+                if (pos < t.size() && t[pos].value != "]")
+                    net_name = t[pos].value;
+            }
+            while (pos < t.size() && t[pos].value != "]") pos++;
+            if (pos < t.size()) pos++; // skip ']'
+        } else if (pos < t.size()) {
+            net_name = t[pos].value;
+            pos++;
+        }
+        if (!net_name.empty()) sdc.ideal_networks.push_back(net_name);
         r.num_constraints++;
     }
     else { pos++; } // skip unknown commands
