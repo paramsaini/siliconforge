@@ -94,6 +94,29 @@ std::string SdfWriter::cell_delays(const SdfConfig& cfg) {
 
         ss << "        )\n";  // ABSOLUTE
         ss << "      )\n";    // DELAY
+
+        // Conditional delays
+        if (!cfg.cond_delays.empty()) {
+            for (auto& cd : cfg.cond_delays) {
+                ss << "      (DELAY\n";
+                ss << "        (ABSOLUTE\n";
+                for (size_t pi = 0; pi < g.inputs.size(); ++pi) {
+                    std::string in_pin = "IN" + std::to_string(pi);
+                    std::string out_pin = "OUT";
+                    if (g.type == GateType::DFF) {
+                        if (pi == 0) in_pin = "D";
+                        out_pin = "Q";
+                    }
+                    ss << "          (COND " << cd.condition
+                       << " (IOPATH " << in_pin << " " << out_pin
+                       << " " << fmt_delay(cd.delay_rise / ts, cfg)
+                       << " " << fmt_delay(cd.delay_fall / ts, cfg) << "))\n";
+                }
+                ss << "        )\n";  // ABSOLUTE
+                ss << "      )\n";    // DELAY
+            }
+        }
+
         ss << "    )\n";      // CELL
     }
 

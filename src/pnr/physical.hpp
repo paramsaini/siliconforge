@@ -87,6 +87,12 @@ struct RoutingBlockage {
     std::string type; // "ROUTING", "PLACEMENT", "FILL"
 };
 
+// Fill shape (from DEF FILLS section)
+struct FillShape {
+    std::string layer;
+    double x0, y0, x1, y1; // fill rectangle
+};
+
 // Routing track definition
 struct TrackDef {
     std::string direction; // "X" (vertical) or "Y" (horizontal)
@@ -206,6 +212,8 @@ public:
     std::vector<Region> regions;
     std::vector<Group> groups;
     std::vector<PlacementRow> placement_rows;
+    std::vector<FillShape> fills;
+    std::vector<Point> die_area_polygon; // multi-point polygon die area
 
     // Cell name → index lookup
     std::unordered_map<std::string, int> cell_name_map;

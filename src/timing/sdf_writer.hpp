@@ -8,8 +8,15 @@
 #include "timing/sta.hpp"
 #include "core/liberty_parser.hpp"
 #include <string>
+#include <vector>
 
 namespace sf {
+
+struct SdfCondDelay {
+    std::string condition;   // boolean expression
+    double delay_rise = 0.0;
+    double delay_fall = 0.0;
+};
 
 struct SdfConfig {
     std::string design_name = "top";
@@ -22,6 +29,7 @@ struct SdfConfig {
     const PhysicalDesign* pd = nullptr;  // optional: for wire delays
     double input_slew = 0.05;           // default input slew for NLDM lookup (ns)
     double load_cap = 0.01;             // default load cap for NLDM lookup (pF)
+    std::vector<SdfCondDelay> cond_delays; // conditional delays
 };
 
 class SdfWriter {

@@ -154,6 +154,7 @@ VhdlParseResult VhdlParser::parse_string(const std::string& src, Netlist& nl) {
     VhdlParseResult r;
     ports_.clear();
     signals_.clear();
+    generics_.clear();
     name_map_.clear();
     gate_counter_ = 0;
     dff_counter_ = 0;
@@ -214,7 +215,73 @@ void VhdlParser::parse_entity(const std::vector<Token>& t, size_t& pos,
     // expect 'is'
     if (pos < t.size() && is_keyword(t[pos], "is")) ++pos;
 
-    // Look for 'port'
+    // Look for 'generic' or 'port'
+    while (pos < t.size() && !is_keyword(t[pos], "generic") &&
+           !is_keyword(t[pos], "port") && !is_keyword(t[pos], "end")) {
+        ++pos;
+    }
+
+    // Parse generic clause: generic ( name : type [:= default] ; ... )
+    if (pos < t.size() && is_keyword(t[pos], "generic")) {
+        ++pos; // skip 'generic'
+        if (pos < t.size() && t[pos].type == Token::LPAREN) ++pos;
+
+        while (pos < t.size() && t[pos].type != Token::RPAREN &&
+               t[pos].type != Token::EOF_TOK) {
+
+            // Collect generic names (name {, name} : type [:= default])
+            std::vector<std::string> names;
+            while (pos < t.size() && t[pos].type == Token::IDENT &&
+                   !is_keyword(t[pos], "in") && !is_keyword(t[pos], "out")) {
+                names.push_back(t[pos].text);
+                ++pos;
+                if (pos < t.size() && t[pos].type == Token::COMMA) ++pos;
+                if (pos < t.size() && t[pos].type == Token::COLON) { ++pos; break; }
+            }
+
+            if (names.empty()) { ++pos; continue; }
+
+            // Type
+            std::string gtype;
+            if (pos < t.size() && t[pos].type == Token::IDENT) {
+                gtype = to_lower(t[pos].text);
+                ++pos;
+                // Handle range spec like (N downto 0)
+                if (pos < t.size() && t[pos].type == Token::LPAREN) {
+                    ++pos;
+                    while (pos < t.size() && t[pos].type != Token::RPAREN) ++pos;
+                    if (pos < t.size()) ++pos; // skip ')'
+                }
+            }
+
+            // Default value
+            std::string default_val;
+            if (pos < t.size() && t[pos].type == Token::ASSIGN_VAR) {
+                ++pos; // skip ':='
+                // Collect tokens until ';' or ')' or ','
+                while (pos < t.size() && t[pos].type != Token::SEMI &&
+                       t[pos].type != Token::RPAREN && t[pos].type != Token::COMMA) {
+                    if (!default_val.empty()) default_val += " ";
+                    default_val += t[pos].text;
+                    ++pos;
+                }
+            }
+
+            for (auto& name : names) {
+                VhdlGeneric gen{name, gtype, default_val};
+                generics_.push_back(gen);
+                r.num_generics++;
+            }
+
+            if (pos < t.size() && t[pos].type == Token::SEMI) ++pos;
+        }
+
+        // Skip closing ) ;
+        if (pos < t.size() && t[pos].type == Token::RPAREN) ++pos;
+        if (pos < t.size() && t[pos].type == Token::SEMI) ++pos;
+    }
+
+    // Skip to 'port' or 'end'
     while (pos < t.size() && !is_keyword(t[pos], "port") &&
            !is_keyword(t[pos], "end")) {
         ++pos;

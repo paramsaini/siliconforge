@@ -53,18 +53,38 @@ bool DefParser::parse_tokens(const std::vector<std::string>& t, PhysicalDesign& 
         }
         else if (t[pos] == "DIEAREA") {
             pos++;
-            // ( x0 y0 ) ( x1 y1 ) ;
-            if (pos < t.size() && t[pos] == "(") pos++;
-            double x0 = 0, y0 = 0, x1 = 0, y1 = 0;
-            if (pos < t.size()) { x0 = to_um(t[pos]); pos++; }
-            if (pos < t.size()) { y0 = to_um(t[pos]); pos++; }
-            if (pos < t.size() && t[pos] == ")") pos++;
-            if (pos < t.size() && t[pos] == "(") pos++;
-            if (pos < t.size()) { x1 = to_um(t[pos]); pos++; }
-            if (pos < t.size()) { y1 = to_um(t[pos]); pos++; }
-            if (pos < t.size() && t[pos] == ")") pos++;
+            // Collect all points: ( x y ) ( x y ) ... ;
+            std::vector<Point> pts;
+            while (pos < t.size() && t[pos] != ";") {
+                if (t[pos] == "(") {
+                    pos++;
+                    double px_val = 0, py_val = 0;
+                    if (pos < t.size()) { px_val = to_um(t[pos]); pos++; }
+                    if (pos < t.size()) { py_val = to_um(t[pos]); pos++; }
+                    if (pos < t.size() && t[pos] == ")") pos++;
+                    pts.push_back(Point(px_val, py_val));
+                } else {
+                    pos++;
+                }
+            }
             if (pos < t.size() && t[pos] == ";") pos++;
-            pd.die_area = Rect(x0, y0, x1, y1);
+            if (pts.size() == 2) {
+                // Rectangle: two corners
+                pd.die_area = Rect(pts[0].x, pts[0].y, pts[1].x, pts[1].y);
+            } else if (pts.size() > 2) {
+                // Polygon die area
+                pd.die_area_polygon = pts;
+                // Also compute bounding box for die_area
+                double minx = pts[0].x, miny = pts[0].y;
+                double maxx = pts[0].x, maxy = pts[0].y;
+                for (auto& p : pts) {
+                    if (p.x < minx) minx = p.x;
+                    if (p.y < miny) miny = p.y;
+                    if (p.x > maxx) maxx = p.x;
+                    if (p.y > maxy) maxy = p.y;
+                }
+                pd.die_area = Rect(minx, miny, maxx, maxy);
+            }
         }
         else if (t[pos] == "TRACKS") {
             pos++;
@@ -400,6 +420,44 @@ bool DefParser::parse_tokens(const std::vector<std::string>& t, PhysicalDesign& 
                 else pos++;
             }
             if (pos < t.size() && t[pos] == "END") { pos++; pos++; }
+        }
+        else if (t[pos] == "FILLS") {
+            pos++;
+            if (pos < t.size()) pos++; // count
+            if (pos < t.size() && t[pos] == ";") pos++;
+            while (pos < t.size() && t[pos] != "END") {
+                if (t[pos] == "-") {
+                    pos++;
+                    FillShape fs;
+                    // LAYER layerName
+                    if (pos < t.size() && t[pos] == "LAYER") {
+                        pos++;
+                        if (pos < t.size()) { fs.layer = t[pos]; pos++; }
+                    }
+                    // Parse rectangles until ';'
+                    while (pos < t.size() && t[pos] != ";") {
+                        if (t[pos] == "RECT") {
+                            pos++;
+                            if (pos < t.size() && t[pos] == "(") pos++;
+                            if (pos < t.size()) { fs.x0 = to_um(t[pos]); pos++; }
+                            if (pos < t.size()) { fs.y0 = to_um(t[pos]); pos++; }
+                            if (pos < t.size() && t[pos] == ")") pos++;
+                            if (pos < t.size() && t[pos] == "(") pos++;
+                            if (pos < t.size()) { fs.x1 = to_um(t[pos]); pos++; }
+                            if (pos < t.size()) { fs.y1 = to_um(t[pos]); pos++; }
+                            if (pos < t.size() && t[pos] == ")") pos++;
+                            pd.fills.push_back(fs);
+                        }
+                        else if (t[pos] == "+" && pos + 1 < t.size() && t[pos+1] == "LAYER") {
+                            pos += 2;
+                            if (pos < t.size()) { fs.layer = t[pos]; pos++; }
+                        }
+                        else pos++;
+                    }
+                    if (pos < t.size() && t[pos] == ";") pos++;
+                } else pos++;
+            }
+            if (pos < t.size() && t[pos] == "END") { pos++; if (pos < t.size()) pos++; }
         }
         else pos++;
     }

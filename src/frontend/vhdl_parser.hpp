@@ -18,6 +18,7 @@ struct VhdlParseResult {
     int num_signals = 0;
     int num_gates = 0;
     int num_processes = 0;
+    int num_generics = 0;
     std::string error;
 };
 
@@ -34,6 +35,12 @@ struct VhdlSignal {
     std::string type_name;
 };
 
+struct VhdlGeneric {
+    std::string name;
+    std::string type;          // "integer", "natural", "std_logic_vector", etc.
+    std::string default_value;
+};
+
 class VhdlParser {
 public:
     VhdlParseResult parse_string(const std::string& src, Netlist& nl);
@@ -43,6 +50,7 @@ public:
 
     const std::vector<VhdlPort>& ports() const { return ports_; }
     const std::vector<VhdlSignal>& signals() const { return signals_; }
+    const std::vector<VhdlGeneric>& generics() const { return generics_; }
 
 private:
     struct Token {
@@ -83,6 +91,7 @@ private:
     // State
     std::vector<VhdlPort> ports_;
     std::vector<VhdlSignal> signals_;
+    std::vector<VhdlGeneric> generics_;
     Netlist* nl_ = nullptr;
     std::unordered_map<std::string, NetId> name_map_;
     int gate_counter_ = 0;
