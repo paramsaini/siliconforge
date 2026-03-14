@@ -27,7 +27,7 @@ void DetailedPlacer::build_rows() {
 
     double y = pd_.die_area.y0;
     while (y + rh <= pd_.die_area.y1 + 1e-9) {
-        PlacementRow row;
+        LegalizationRow row;
         row.y       = y;
         row.x_start = pd_.die_area.x0;
         row.x_end   = pd_.die_area.x1;

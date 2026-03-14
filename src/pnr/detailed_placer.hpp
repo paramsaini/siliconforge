@@ -45,8 +45,8 @@ struct CellSlot {
     int    cell_idx = -1; // -1 = empty
 };
 
-// Row computed from die area and row height parameters
-struct PlacementRow {
+// Row computed from die area and row height parameters (internal to legalization)
+struct LegalizationRow {
     double y       = 0;
     double x_start = 0;
     double x_end   = 0;
@@ -75,7 +75,7 @@ private:
     const Netlist&  nl_;
     DetailedPlaceConfig cfg_;
 
-    std::vector<PlacementRow> rows_;
+    std::vector<LegalizationRow> rows_;
 
     void build_rows();
     int  find_nearest_row(double y) const;

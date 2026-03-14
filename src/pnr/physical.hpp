@@ -129,6 +129,19 @@ struct SpecialNet {
     std::vector<SpecialWire> wires;
 };
 
+// Placement row definition (from DEF ROW statements)
+struct PlacementRow {
+    std::string name;           // row name
+    std::string site_name;      // site type
+    double origin_x = 0.0;     // starting X coordinate
+    double origin_y = 0.0;     // starting Y coordinate
+    std::string orient = "N";  // orientation (N, S, FN, FS)
+    int num_x = 1;             // number of sites in X
+    int num_y = 1;             // number of sites in Y
+    double step_x = 0.0;       // site pitch X
+    double step_y = 0.0;       // site pitch Y
+};
+
 // Region definition
 struct Region {
     std::string name;
@@ -192,6 +205,7 @@ public:
     std::vector<SpecialNet> special_nets;
     std::vector<Region> regions;
     std::vector<Group> groups;
+    std::vector<PlacementRow> placement_rows;
 
     // Cell name → index lookup
     std::unordered_map<std::string, int> cell_name_map;

@@ -83,6 +83,28 @@ bool DefParser::parse_tokens(const std::vector<std::string>& t, PhysicalDesign& 
             if (pos < t.size() && t[pos] == ";") pos++;
             pd.tracks.push_back(td);
         }
+        else if (t[pos] == "ROW") {
+            pos++;
+            // ROW rowName siteName origX origY siteOrient
+            //   DO numX BY numY STEP stepX stepY ;
+            PlacementRow row;
+            if (pos < t.size()) { row.name = t[pos]; pos++; }
+            if (pos < t.size()) { row.site_name = t[pos]; pos++; }
+            if (pos < t.size()) { row.origin_x = to_um(t[pos]); pos++; }
+            if (pos < t.size()) { row.origin_y = to_um(t[pos]); pos++; }
+            if (pos < t.size()) { row.orient = t[pos]; pos++; }
+            if (pos < t.size() && t[pos] == "DO") {
+                pos++;
+                if (pos < t.size()) { try { row.num_x = std::stoi(t[pos]); } catch (...) {} pos++; }
+                if (pos < t.size() && t[pos] == "BY") pos++;
+                if (pos < t.size()) { try { row.num_y = std::stoi(t[pos]); } catch (...) {} pos++; }
+                if (pos < t.size() && t[pos] == "STEP") pos++;
+                if (pos < t.size()) { row.step_x = to_um(t[pos]); pos++; }
+                if (pos < t.size()) { row.step_y = to_um(t[pos]); pos++; }
+            }
+            if (pos < t.size() && t[pos] == ";") pos++;
+            pd.placement_rows.push_back(row);
+        }
         else if (t[pos] == "VIAS") {
             pos++;
             if (pos < t.size()) pos++; // count
@@ -405,6 +427,17 @@ std::string DefParser::export_def(const PhysicalDesign& pd) {
         << (int)(pd.die_area.y0*1000) << " ) ( "
         << (int)(pd.die_area.x1*1000) << " "
         << (int)(pd.die_area.y1*1000) << " ) ;\n\n";
+
+    if (!pd.placement_rows.empty()) {
+        for (auto& r : pd.placement_rows) {
+            def << "ROW " << r.name << " " << r.site_name
+                << " " << (int)(r.origin_x*1000) << " " << (int)(r.origin_y*1000)
+                << " " << r.orient
+                << " DO " << r.num_x << " BY " << r.num_y
+                << " STEP " << (int)(r.step_x*1000) << " " << (int)(r.step_y*1000) << " ;\n";
+        }
+        def << "\n";
+    }
 
     def << "COMPONENTS " << pd.cells.size() << " ;\n";
     for (auto& c : pd.cells) {
