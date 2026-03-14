@@ -829,16 +829,24 @@ std::vector<CurrentDensity> EmAnalyzer::extract_current_density() const {
         double width = rule.width_um;
         double thickness = rule.thickness_um;
 
-        // Estimate current from wire length and resistance
+        // I = VDD * freq * activity * Cload  (capacitive switching model)
         double dx = wire.end.x - wire.start.x;
         double dy = wire.end.y - wire.start.y;
-        double length = std::sqrt(dx * dx + dy * dy);
+        double length = std::hypot(dx, dy);
         if (length <= 0) continue;
 
-        double r_wire = rule.resistivity_ohm_um * length / (width * thickness);
-        // Estimate current from switching activity
-        double avg_current = stored_cfg_.supply_voltage * stored_cfg_.activity_factor /
-                            (r_wire > 0 ? r_wire : 1.0);
+        // Cload: wire cap ~0.2 fF/μm + gate load estimate
+        constexpr double cap_per_um_fF = 0.2;
+        double c_load_pf = length * cap_per_um_fF * 1e-3;  // fF → pF
+        int fanout = (wire.net_id >= 0 &&
+                      wire.net_id < static_cast<int>(nl_->num_nets()))
+                     ? static_cast<int>(nl_->net(wire.net_id).fanout.size()) : 1;
+        c_load_pf += fanout * 0.002;  // ~2 fF per gate input
+
+        // I = C · V · f · α   (pF · V · GHz → mA)
+        double avg_current = c_load_pf * stored_cfg_.supply_voltage
+                             * stored_cfg_.clock_freq_ghz
+                             * stored_cfg_.activity_factor;
         double peak_current = avg_current * 3.0;
         double j = current_density(avg_current, width, thickness);
         double j_limit = rule.jdc_limit_ma_per_um * stored_cfg_.jdc_margin;
@@ -867,9 +875,10 @@ std::vector<BlechResult> EmAnalyzer::check_blech_effect() const {
     auto rules = stored_cfg_.layer_rules.empty() ?
                  default_rules_sky130() : stored_cfg_.layer_rules;
 
-    // Blech product threshold (Ω·B) / (Z·e·ρ) ~ empirical constant
-    // For Cu: Blech_length ≈ threshold / J  where threshold ~ 10 mA·μm/μm²
-    double blech_threshold = 10.0;  // mA·μm / μm²
+    // Critical jL product for Cu: 3000 A/cm = 300 mA/μm in (mA/μm²)·μm units.
+    // Blech length = critical_jL / J.  Wire is EM-immune when length < blech_length
+    // because the back-stress gradient counters atom migration.
+    constexpr double critical_jL = 300.0;  // mA/μm  (≡ 3000 A/cm)
 
     for (int w = 0; w < (int)pd_->wires.size(); ++w) {
         auto& wire = pd_->wires[w];
@@ -883,15 +892,22 @@ std::vector<BlechResult> EmAnalyzer::check_blech_effect() const {
 
         double dx = wire.end.x - wire.start.x;
         double dy = wire.end.y - wire.start.y;
-        double length = std::sqrt(dx * dx + dy * dy);
+        double length = std::hypot(dx, dy);
         if (length <= 0) continue;
 
-        double r_wire = rule.resistivity_ohm_um * length / (width * thickness);
-        double avg_current = stored_cfg_.supply_voltage * stored_cfg_.activity_factor /
-                            (r_wire > 0 ? r_wire : 1.0);
+        // Capacitive current model (consistent with extract_current_density)
+        constexpr double cap_per_um_fF = 0.2;
+        double c_load_pf = length * cap_per_um_fF * 1e-3;
+        int fanout = (wire.net_id >= 0 &&
+                      wire.net_id < static_cast<int>(nl_->num_nets()))
+                     ? static_cast<int>(nl_->net(wire.net_id).fanout.size()) : 1;
+        c_load_pf += fanout * 0.002;
+        double avg_current = c_load_pf * stored_cfg_.supply_voltage
+                             * stored_cfg_.clock_freq_ghz
+                             * stored_cfg_.activity_factor;
         double j = current_density(avg_current, width, thickness);
 
-        double blech_length = (j > 0) ? blech_threshold / j : 1e6;
+        double blech_length = (j > 0) ? critical_jL / j : 1e6;
 
         BlechResult br;
         br.wire_idx = w;
@@ -919,28 +935,35 @@ std::vector<EmFix> EmAnalyzer::suggest_em_fixes() const {
         if (!cd.exceeds_limit) continue;
 
         auto& rule = rules[std::min(cd.layer, (int)rules.size() - 1)];
+        double ratio = (cd.limit_ma_per_um2 > 0)
+                       ? cd.current_density_ma_per_um2 / cd.limit_ma_per_um2
+                       : 1e6;
 
-        // Primary fix: widen wire (J ∝ 1/width)
         EmFix fix;
         fix.wire_idx = cd.wire_idx;
-        fix.type = EmFix::WIDEN_WIRE;
         fix.current_width = rule.width_um;
-        // Need to reduce J to limit: new_width = current * width / (limit * thickness)
-        double needed_width = (cd.limit_ma_per_um2 > 0 && rule.thickness_um > 0) ?
-            cd.avg_current_ma / (cd.limit_ma_per_um2 * rule.thickness_um) : rule.width_um * 2;
-        fix.suggested_width = std::max(needed_width, rule.width_um * 1.5);
-        fix.improvement_pct = (fix.suggested_width > fix.current_width) ?
-            (1.0 - fix.current_width / fix.suggested_width) * 100.0 : 0;
+
+        if (ratio < 2.0) {
+            // Moderate violation — widen wire so J drops to the limit
+            fix.type = EmFix::WIDEN_WIRE;
+            fix.suggested_width = rule.width_um * ratio;
+            fix.improvement_pct = (1.0 - 1.0 / ratio) * 100.0;
+        } else {
+            // Severe violation — widening alone is impractical; split the net
+            fix.type = EmFix::SPLIT_NET;
+            fix.suggested_width = rule.width_um;
+            fix.improvement_pct = (1.0 - 1.0 / ratio) * 100.0;
+        }
         result.push_back(fix);
 
-        // Secondary fix: add via for current distribution
-        if (cd.current_density_ma_per_um2 > cd.limit_ma_per_um2 * 1.5) {
+        // Additionally recommend redundant via for current distribution
+        if (ratio > 1.0) {
             EmFix via_fix;
             via_fix.wire_idx = cd.wire_idx;
             via_fix.type = EmFix::ADD_VIA;
             via_fix.current_width = rule.width_um;
             via_fix.suggested_width = rule.width_um;
-            via_fix.improvement_pct = 50.0;  // adding via splits current
+            via_fix.improvement_pct = 50.0;
             result.push_back(via_fix);
         }
     }
@@ -955,33 +978,20 @@ ViaEmResult EmAnalyzer::add_redundant_vias() const {
     ViaEmResult result{};
     if (!pd_) return result;
 
-    auto rules = stored_cfg_.layer_rules.empty() ?
-                 default_rules_sky130() : stored_cfg_.layer_rules;
-
+    // Every via in the design is initially a single-cut via and therefore
+    // a potential EM reliability concern.  Flag each as at-risk and plan
+    // one redundant via per location.
     for (int v = 0; v < (int)pd_->vias.size(); ++v) {
-        auto& via = pd_->vias[v];
         result.total_vias++;
-
-        // Find via rule
-        double via_limit = 0.5;  // default
-        for (auto& r : rules) {
-            if (r.is_via && r.via_current_limit_ma > 0) {
-                via_limit = r.via_current_limit_ma;
-                break;
-            }
-        }
-
-        // Estimate via current from nearby wire activity
-        double via_current = stored_cfg_.supply_voltage * stored_cfg_.activity_factor * 0.1;
-
-        if (via_current > via_limit * 0.7) {
-            result.single_vias_at_risk++;
-            result.redundant_vias_added++;
-        }
+        result.single_vias_at_risk++;
+        result.redundant_vias_added++;   // add 1 redundant via per location
     }
 
-    result.reliability_improvement_pct = result.total_vias > 0 ?
-        (double)result.redundant_vias_added / result.total_vias * 100.0 : 0;
+    // Reliability improvement for N vias per location vs. 1:
+    //   improvement = (1 − 1/N²) × 100 %
+    // After doubling each via, N = 2 → 75 % improvement.
+    int N = (result.redundant_vias_added > 0) ? 2 : 1;
+    result.reliability_improvement_pct = (1.0 - 1.0 / ((double)N * N)) * 100.0;
     return result;
 }
 
