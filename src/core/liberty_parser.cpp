@@ -5,6 +5,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 
 namespace sf {
 
@@ -513,6 +514,60 @@ size_t sf::LibertyLibrary::parse_timing(const std::vector<Token>& t, size_t pos,
             } else if (t[pos].value == "fall_transition") {
                 pos++;
                 pos = parse_nldm_table(t, pos, timing.nldm_fall_tr);
+            } else if (t[pos].value == "output_current_rise") {
+                pos++;
+                pos = parse_ccs_table(t, pos, timing.ccs_rise);
+            } else if (t[pos].value == "output_current_fall") {
+                pos++;
+                pos = parse_ccs_table(t, pos, timing.ccs_fall);
+            } else if (t[pos].value == "dc_current") {
+                // dc_current() { ... rise/fall sub-groups }
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::LPAREN) {
+                    while (pos < t.size() && t[pos].type != Token::RPAREN) pos++;
+                    pos++;
+                }
+                if (pos < t.size() && t[pos].type == Token::LBRACE) {
+                    pos++;
+                    while (pos < t.size() && t[pos].type != Token::RBRACE) {
+                        if (t[pos].value == "rise_current") {
+                            pos++;
+                            pos = parse_ecsm_table(t, pos, timing.ecsm_rise);
+                        } else if (t[pos].value == "fall_current") {
+                            pos++;
+                            pos = parse_ecsm_table(t, pos, timing.ecsm_fall);
+                        } else {
+                            if (t[pos].type == Token::IDENT) {
+                                pos++;
+                                if (pos < t.size() && t[pos].type == Token::LPAREN) {
+                                    while (pos < t.size() && t[pos].type != Token::RPAREN) pos++;
+                                    pos++;
+                                    if (pos < t.size() && t[pos].type == Token::LBRACE)
+                                        pos = skip_group(t, pos);
+                                } else if (pos < t.size() && t[pos].type == Token::COLON) {
+                                    pos++;
+                                    if (pos < t.size()) pos++;
+                                    if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+                                } else if (pos < t.size() && t[pos].type == Token::LBRACE) {
+                                    pos = skip_group(t, pos);
+                                }
+                            } else pos++;
+                        }
+                    }
+                    if (pos < t.size() && t[pos].type == Token::RBRACE) pos++;
+                }
+            } else if (t[pos].value == "receiver_capacitance1_rise") {
+                pos++;
+                pos = parse_nldm_table(t, pos, timing.receiver_cap1_rise);
+            } else if (t[pos].value == "receiver_capacitance1_fall") {
+                pos++;
+                pos = parse_nldm_table(t, pos, timing.receiver_cap1_fall);
+            } else if (t[pos].value == "receiver_capacitance2_rise") {
+                pos++;
+                pos = parse_nldm_table(t, pos, timing.receiver_cap2_rise);
+            } else if (t[pos].value == "receiver_capacitance2_fall") {
+                pos++;
+                pos = parse_nldm_table(t, pos, timing.receiver_cap2_fall);
             } else if ((t[pos].value == "intrinsic_rise" || t[pos].value == "cell_rise") &&
                        pos + 2 < t.size() && t[pos+1].type == Token::COLON) {
                 // Scalar form: cell_rise : 0.05 ;
@@ -644,4 +699,363 @@ double sf::LibertyTiming::NldmTable::interpolate(double slew, double load) const
     double v0 = v00 + (v01 - v00) * t_l;
     double v1 = v10 + (v11 - v10) * t_l;
     return v0 + (v1 - v0) * t_s;
+}
+
+// Helper: find bracketing indices and interpolation fraction in a sorted vector
+namespace {
+struct BracketResult {
+    int lo, hi;
+    double frac;
+};
+
+BracketResult find_bracket(const std::vector<double>& v, double x) {
+    if (v.size() < 2 || x <= v.front()) return {0, 0, 0.0};
+    if (x >= v.back()) {
+        int last = static_cast<int>(v.size()) - 1;
+        return {last, last, 0.0};
+    }
+    for (int i = 0; i + 1 < static_cast<int>(v.size()); i++) {
+        if (x >= v[i] && x <= v[i + 1]) {
+            double span = v[i + 1] - v[i];
+            double f = (span > 0) ? (x - v[i]) / span : 0.0;
+            return {i, i + 1, f};
+        }
+    }
+    return {0, 0, 0.0};
+}
+} // anonymous namespace
+
+// CCS trilinear interpolation (slew × load × time)
+double sf::CcsTable::interpolate(double slew, double load, double time) const {
+    if (!valid()) return 0.0;
+
+    auto bs = find_bracket(index_1, slew);
+    auto bl = find_bracket(index_2, load);
+    auto bt = find_bracket(index_3, time);
+
+    auto sample = [&](int si, int li, int ti) -> double {
+        if (si < 0 || si >= static_cast<int>(values.size())) return 0.0;
+        if (li < 0 || li >= static_cast<int>(values[si].size())) return 0.0;
+        if (ti < 0 || ti >= static_cast<int>(values[si][li].size())) return 0.0;
+        return values[si][li][ti];
+    };
+
+    // Interpolate along time axis first, then load, then slew
+    auto lerp = [](double a, double b, double t) { return a + (b - a) * t; };
+
+    double c000 = sample(bs.lo, bl.lo, bt.lo), c001 = sample(bs.lo, bl.lo, bt.hi);
+    double c010 = sample(bs.lo, bl.hi, bt.lo), c011 = sample(bs.lo, bl.hi, bt.hi);
+    double c100 = sample(bs.hi, bl.lo, bt.lo), c101 = sample(bs.hi, bl.lo, bt.hi);
+    double c110 = sample(bs.hi, bl.hi, bt.lo), c111 = sample(bs.hi, bl.hi, bt.hi);
+
+    double c00 = lerp(c000, c001, bt.frac);
+    double c01 = lerp(c010, c011, bt.frac);
+    double c10 = lerp(c100, c101, bt.frac);
+    double c11 = lerp(c110, c111, bt.frac);
+
+    double c0 = lerp(c00, c01, bl.frac);
+    double c1 = lerp(c10, c11, bl.frac);
+
+    return lerp(c0, c1, bs.frac);
+}
+
+// CCS delay: integrate I(t) to accumulate charge, voltage = charge / C_load
+double sf::CcsTable::compute_delay(double slew, double load, double threshold_pct) const {
+    if (!valid() || load <= 0.0) return 0.0;
+
+    double charge = 0.0;
+    double threshold_v = threshold_pct; // normalized: V/VDD
+    for (size_t k = 1; k < index_3.size(); k++) {
+        double dt = index_3[k] - index_3[k - 1];
+        double i_prev = interpolate(slew, load, index_3[k - 1]);
+        double i_curr = interpolate(slew, load, index_3[k]);
+        charge += 0.5 * (i_prev + i_curr) * dt; // trapezoidal integration
+        double voltage = charge / load;
+        if (voltage >= threshold_v) {
+            // Linear interpolation within this time step for precise crossing
+            double v_prev = (charge - 0.5 * (i_prev + i_curr) * dt) / load;
+            if (std::abs(voltage - v_prev) > 1e-15) {
+                double frac = (threshold_v - v_prev) / (voltage - v_prev);
+                return index_3[k - 1] + frac * dt;
+            }
+            return index_3[k];
+        }
+    }
+    return index_3.empty() ? 0.0 : index_3.back();
+}
+
+// CCS slew: find time points where voltage crosses low_pct and high_pct
+double sf::CcsTable::compute_slew(double slew, double load, double low_pct, double high_pct) const {
+    if (!valid() || load <= 0.0) return 0.0;
+
+    double charge = 0.0;
+    double t_low = -1.0, t_high = -1.0;
+
+    for (size_t k = 1; k < index_3.size(); k++) {
+        double dt = index_3[k] - index_3[k - 1];
+        double i_prev = interpolate(slew, load, index_3[k - 1]);
+        double i_curr = interpolate(slew, load, index_3[k]);
+        double prev_charge = charge;
+        charge += 0.5 * (i_prev + i_curr) * dt;
+        double v_prev = prev_charge / load;
+        double v_curr = charge / load;
+
+        auto crossing_time = [&](double thr) -> double {
+            if (std::abs(v_curr - v_prev) > 1e-15) {
+                double frac = (thr - v_prev) / (v_curr - v_prev);
+                return index_3[k - 1] + frac * dt;
+            }
+            return index_3[k];
+        };
+
+        if (t_low < 0.0 && v_curr >= low_pct)
+            t_low = crossing_time(low_pct);
+        if (t_high < 0.0 && v_curr >= high_pct) {
+            t_high = crossing_time(high_pct);
+            break;
+        }
+    }
+    if (t_low < 0.0 || t_high < 0.0) return 0.0;
+    return t_high - t_low;
+}
+
+// ECSM trilinear interpolation (slew × load × voltage)
+double sf::EcsmTable::interpolate(double slew, double load, double voltage) const {
+    if (!valid()) return 0.0;
+
+    auto bs = find_bracket(index_1, slew);
+    auto bl = find_bracket(index_2, load);
+    auto bv = find_bracket(index_3, voltage);
+
+    auto sample = [&](int si, int li, int vi) -> double {
+        if (si < 0 || si >= static_cast<int>(values.size())) return 0.0;
+        if (li < 0 || li >= static_cast<int>(values[si].size())) return 0.0;
+        if (vi < 0 || vi >= static_cast<int>(values[si][li].size())) return 0.0;
+        return values[si][li][vi];
+    };
+
+    auto lerp = [](double a, double b, double t) { return a + (b - a) * t; };
+
+    double c000 = sample(bs.lo, bl.lo, bv.lo), c001 = sample(bs.lo, bl.lo, bv.hi);
+    double c010 = sample(bs.lo, bl.hi, bv.lo), c011 = sample(bs.lo, bl.hi, bv.hi);
+    double c100 = sample(bs.hi, bl.lo, bv.lo), c101 = sample(bs.hi, bl.lo, bv.hi);
+    double c110 = sample(bs.hi, bl.hi, bv.lo), c111 = sample(bs.hi, bl.hi, bv.hi);
+
+    double c00 = lerp(c000, c001, bv.frac);
+    double c01 = lerp(c010, c011, bv.frac);
+    double c10 = lerp(c100, c101, bv.frac);
+    double c11 = lerp(c110, c111, bv.frac);
+
+    double c0 = lerp(c00, c01, bl.frac);
+    double c1 = lerp(c10, c11, bl.frac);
+
+    return lerp(c0, c1, bs.frac);
+}
+
+// ECSM delay: Euler integration of dV/dt = I(V) / C_load
+double sf::EcsmTable::compute_delay(double slew, double load, double vdd,
+                                     double threshold_pct) const {
+    if (!valid() || load <= 0.0 || vdd <= 0.0) return 0.0;
+
+    double threshold_v = threshold_pct * vdd;
+    double v = 0.0;
+    double t = 0.0;
+    // Use a fine time step relative to voltage range
+    double dt = (index_3.back() - index_3.front()) / (static_cast<double>(index_3.size()) * 100.0);
+    if (dt <= 0.0) dt = 1e-12;
+    int max_steps = 10000000;
+
+    for (int step = 0; step < max_steps && v < threshold_v; step++) {
+        double i = interpolate(slew, load, v);
+        if (std::abs(i) < 1e-30) { t += dt; continue; }
+        double dv = i * dt / load;
+        v += dv;
+        t += dt;
+    }
+    return t;
+}
+
+// Parse a 3D CCS table: group(template) { index_1(...); index_2(...); index_3(...); values(...); }
+size_t sf::LibertyLibrary::parse_ccs_table(const std::vector<Token>& t, size_t pos,
+                                            CcsTable& table) {
+    // Skip optional template name in parentheses
+    if (pos < t.size() && t[pos].type == Token::LPAREN) {
+        pos++;
+        while (pos < t.size() && t[pos].type != Token::RPAREN) pos++;
+        if (pos < t.size()) pos++;
+    }
+
+    if (pos < t.size() && t[pos].type == Token::LBRACE) {
+        pos++;
+        while (pos < t.size() && t[pos].type != Token::RBRACE) {
+            if (t[pos].value == "index_1" || t[pos].value == "index_2" ||
+                t[pos].value == "index_3") {
+                int idx_num = t[pos].value.back() - '0'; // 1, 2, or 3
+                pos++;
+                std::string vals_str;
+                if (pos < t.size() && t[pos].type == Token::LPAREN) {
+                    pos++;
+                    while (pos < t.size() && t[pos].type != Token::RPAREN) {
+                        if (!vals_str.empty()) vals_str += ",";
+                        vals_str += t[pos].value;
+                        pos++;
+                    }
+                    if (pos < t.size()) pos++;
+                } else if (pos < t.size() && t[pos].type == Token::COLON) {
+                    pos++;
+                    if (pos < t.size()) { vals_str = t[pos].value; pos++; }
+                }
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+                auto nums = parse_number_list(vals_str);
+                if (idx_num == 1) table.index_1 = nums;
+                else if (idx_num == 2) table.index_2 = nums;
+                else table.index_3 = nums;
+            } else if (t[pos].value == "values") {
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::LPAREN) {
+                    pos++;
+                    // For 3D tables, values are organized as rows; we reshape after parsing
+                    std::vector<std::vector<double>> flat_rows;
+                    while (pos < t.size() && t[pos].type != Token::RPAREN) {
+                        if (t[pos].type == Token::STRING || t[pos].type == Token::NUMBER ||
+                            t[pos].type == Token::IDENT) {
+                            auto row = parse_number_list(t[pos].value);
+                            if (!row.empty()) flat_rows.push_back(row);
+                        }
+                        pos++;
+                        if (pos < t.size() && t[pos].type == Token::COMMA) pos++;
+                    }
+                    if (pos < t.size()) pos++;
+
+                    // Reshape flat_rows into 3D: [slew][load][time]
+                    // Expected: index_1.size() * index_2.size() rows, each of index_3.size() cols
+                    size_t n1 = table.index_1.size();
+                    size_t n2 = table.index_2.size();
+                    if (n1 > 0 && n2 > 0 && flat_rows.size() >= n1 * n2) {
+                        table.values.resize(n1);
+                        for (size_t s = 0; s < n1; s++) {
+                            table.values[s].resize(n2);
+                            for (size_t l = 0; l < n2; l++) {
+                                size_t row_idx = s * n2 + l;
+                                if (row_idx < flat_rows.size())
+                                    table.values[s][l] = flat_rows[row_idx];
+                            }
+                        }
+                    } else if (!flat_rows.empty()) {
+                        // Fallback: store whatever we got
+                        table.values.resize(1);
+                        table.values[0] = flat_rows;
+                    }
+                }
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            } else {
+                // Skip unknown sub-attributes
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::COLON) {
+                    pos++;
+                    if (pos < t.size()) pos++;
+                    if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+                } else if (pos < t.size() && t[pos].type == Token::LPAREN) {
+                    while (pos < t.size() && t[pos].type != Token::RPAREN) pos++;
+                    if (pos < t.size()) pos++;
+                    if (pos < t.size() && t[pos].type == Token::LBRACE)
+                        pos = skip_group(t, pos);
+                } else if (pos < t.size() && t[pos].type == Token::LBRACE) {
+                    pos = skip_group(t, pos);
+                }
+            }
+        }
+        if (pos < t.size() && t[pos].type == Token::RBRACE) pos++;
+    }
+    return pos;
+}
+
+// Parse a 3D ECSM table: group(template) { index_1; index_2; index_3; values; }
+size_t sf::LibertyLibrary::parse_ecsm_table(const std::vector<Token>& t, size_t pos,
+                                              EcsmTable& table) {
+    // Skip optional template name
+    if (pos < t.size() && t[pos].type == Token::LPAREN) {
+        pos++;
+        while (pos < t.size() && t[pos].type != Token::RPAREN) pos++;
+        if (pos < t.size()) pos++;
+    }
+
+    if (pos < t.size() && t[pos].type == Token::LBRACE) {
+        pos++;
+        while (pos < t.size() && t[pos].type != Token::RBRACE) {
+            if (t[pos].value == "index_1" || t[pos].value == "index_2" ||
+                t[pos].value == "index_3") {
+                int idx_num = t[pos].value.back() - '0';
+                pos++;
+                std::string vals_str;
+                if (pos < t.size() && t[pos].type == Token::LPAREN) {
+                    pos++;
+                    while (pos < t.size() && t[pos].type != Token::RPAREN) {
+                        if (!vals_str.empty()) vals_str += ",";
+                        vals_str += t[pos].value;
+                        pos++;
+                    }
+                    if (pos < t.size()) pos++;
+                } else if (pos < t.size() && t[pos].type == Token::COLON) {
+                    pos++;
+                    if (pos < t.size()) { vals_str = t[pos].value; pos++; }
+                }
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+                auto nums = parse_number_list(vals_str);
+                if (idx_num == 1) table.index_1 = nums;
+                else if (idx_num == 2) table.index_2 = nums;
+                else table.index_3 = nums;
+            } else if (t[pos].value == "values") {
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::LPAREN) {
+                    pos++;
+                    std::vector<std::vector<double>> flat_rows;
+                    while (pos < t.size() && t[pos].type != Token::RPAREN) {
+                        if (t[pos].type == Token::STRING || t[pos].type == Token::NUMBER ||
+                            t[pos].type == Token::IDENT) {
+                            auto row = parse_number_list(t[pos].value);
+                            if (!row.empty()) flat_rows.push_back(row);
+                        }
+                        pos++;
+                        if (pos < t.size() && t[pos].type == Token::COMMA) pos++;
+                    }
+                    if (pos < t.size()) pos++;
+
+                    size_t n1 = table.index_1.size();
+                    size_t n2 = table.index_2.size();
+                    if (n1 > 0 && n2 > 0 && flat_rows.size() >= n1 * n2) {
+                        table.values.resize(n1);
+                        for (size_t s = 0; s < n1; s++) {
+                            table.values[s].resize(n2);
+                            for (size_t l = 0; l < n2; l++) {
+                                size_t row_idx = s * n2 + l;
+                                if (row_idx < flat_rows.size())
+                                    table.values[s][l] = flat_rows[row_idx];
+                            }
+                        }
+                    } else if (!flat_rows.empty()) {
+                        table.values.resize(1);
+                        table.values[0] = flat_rows;
+                    }
+                }
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            } else {
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::COLON) {
+                    pos++;
+                    if (pos < t.size()) pos++;
+                    if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+                } else if (pos < t.size() && t[pos].type == Token::LPAREN) {
+                    while (pos < t.size() && t[pos].type != Token::RPAREN) pos++;
+                    if (pos < t.size()) pos++;
+                    if (pos < t.size() && t[pos].type == Token::LBRACE)
+                        pos = skip_group(t, pos);
+                } else if (pos < t.size() && t[pos].type == Token::LBRACE) {
+                    pos = skip_group(t, pos);
+                }
+            }
+        }
+        if (pos < t.size() && t[pos].type == Token::RBRACE) pos++;
+    }
+    return pos;
 }

@@ -158,9 +158,9 @@ BlockModel HierarchyManager::generate_block_model(const std::string& module_name
     // (simplified: estimate from gate count)
     if (model.timing_arcs.empty() && !it->second.ports.empty()) {
         for (auto& ip : model.ports) {
-            if (ip.direction != ModulePort::IN) continue;
+            if (ip.direction != ModulePort::INPUT) continue;
             for (auto& op : model.ports) {
-                if (op.direction != ModulePort::OUT) continue;
+                if (op.direction != ModulePort::OUTPUT) continue;
                 HierTimingArc arc;
                 arc.from_port = ip.name;
                 arc.to_port = op.name;

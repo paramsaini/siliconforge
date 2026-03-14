@@ -535,13 +535,38 @@ DynamicIrResult IrDropAnalyzer::analyze_dynamic(double time_step_ps, int num_ste
     double decap_per_cell_ff = cfg_.decap_density_ff_per_um2 * cell_w * cell_h;
     double decap_per_cell_f = decap_per_cell_ff * 1e-15;
 
+    // ESR per decap cell (convert mΩ → Ω)
+    double decap_esr_ohm = cfg_.decap_esr_mohm * 1e-3;
+
+    // Per-cell inductance from PDN mesh layers
+    // Total inductance per cell = per_layer_inductance × mesh_pitch / num_mesh_segments
+    double mesh_segments = std::max(1.0, cell_w / cfg_.mesh_pitch_um);
+    double cell_inductance_h = cfg_.per_layer_inductance_ph_per_um * cell_w / mesh_segments;
+
+    // Package-level inductance and resistance (shared across pad nodes)
+    double pkg_l_h = cfg_.pkg_inductance_nh * 1e-9;
+    double pkg_r_ohm = cfg_.pkg_resistance_mohm * 1e-3;
+
+    // Compute LC resonance frequency: f = 1/(2π√(LC))
+    double total_decap_f = decap_per_cell_f * N * N;
+    double effective_l_h = pkg_l_h + cell_inductance_h;
+    if (total_decap_f > 0 && effective_l_h > 0) {
+        double f_hz = 1.0 / (2.0 * M_PI * std::sqrt(effective_l_h * total_decap_f));
+        result.resonance_freq_ghz = f_hz * 1e-9;
+    }
+
     // Voltage state per node (starts at VDD)
     std::vector<std::vector<double>> node_voltage(N, std::vector<double>(N, cfg_.vdd));
+
+    // Track previous-step current for L*di/dt computation
+    std::vector<std::vector<double>> prev_current(N, std::vector<double>(N, 0));
 
     double peak_drop = 0.0;
     double total_drop_sum = 0.0;
     int total_measurements = 0;
     int worst_x = 0, worst_y = 0;
+    double peak_ldi_dt_mv = 0.0;
+    double peak_resistive_mv = 0.0;
 
     double time_step_s = time_step_ps * 1e-12;
 
@@ -570,6 +595,9 @@ DynamicIrResult IrDropAnalyzer::analyze_dynamic(double time_step_ps, int num_ste
                     delta_v = total_current_a * time_step_s / decap_per_cell_f;
                 }
 
+                // ESR voltage drop across decap: V_esr = I × ESR
+                double v_esr = total_current_a * decap_esr_ohm;
+
                 // Static IR drop component from base analysis
                 double static_drop = 0.0;
                 if (has_result_ && y < (int)last_result_.drop_map.size() &&
@@ -577,10 +605,31 @@ DynamicIrResult IrDropAnalyzer::analyze_dynamic(double time_step_ps, int num_ste
                     static_drop = last_result_.drop_map[y][x];
                 }
 
-                // Dynamic drop = static × current_ratio + decap_discharge
+                // Resistive drop = static × current_ratio + ESR
                 double i_ratio = (i_static > 1e-15) ? (i_static + i_switching) / i_static : 1.0;
-                double dynamic_drop = static_drop * i_ratio + delta_v * 1000.0; // mV
+                double resistive_drop_mv = static_drop * i_ratio + v_esr * 1000.0;
+
+                // Package-level resistive contribution
+                double pkg_resistive_mv = total_current_a * pkg_r_ohm * 1000.0;
+                resistive_drop_mv += pkg_resistive_mv;
+
+                // L*di/dt inductive noise
+                double di_dt = 0.0;
+                if (time_step_s > 0) {
+                    di_dt = (total_current_a - prev_current[y][x] * 1e-3) / time_step_s;
+                }
+                double ldi_dt_v = effective_l_h * std::abs(di_dt);
+                double ldi_dt_mv = ldi_dt_v * 1000.0;
+
+                // Combined dynamic drop
+                double dynamic_drop = resistive_drop_mv + delta_v * 1000.0 + ldi_dt_mv;
                 dynamic_drop = std::min(dynamic_drop, cfg_.vdd * 1000.0);
+
+                // Track peak contributions
+                peak_ldi_dt_mv = std::max(peak_ldi_dt_mv, ldi_dt_mv);
+                peak_resistive_mv = std::max(peak_resistive_mv, resistive_drop_mv);
+
+                prev_current[y][x] = total_current_ma;
 
                 if (dynamic_drop > step_worst_drop) {
                     step_worst_drop = dynamic_drop;
@@ -603,6 +652,8 @@ DynamicIrResult IrDropAnalyzer::analyze_dynamic(double time_step_ps, int num_ste
     result.peak_drop_mv = peak_drop;
     result.avg_drop_mv = (num_steps > 0) ? total_drop_sum / num_steps : 0.0;
     result.worst_region = "grid(" + std::to_string(worst_x) + "," + std::to_string(worst_y) + ")";
+    result.ldi_dt_peak_mv = peak_ldi_dt_mv;
+    result.resistive_peak_mv = peak_resistive_mv;
 
     return result;
 }
@@ -815,6 +866,43 @@ std::vector<IrHotspot> IrDropAnalyzer::find_hotspots(double threshold_mv) {
               [](auto& a, auto& b) { return a.avg_drop_mv > b.avg_drop_mv; });
 
     return hotspots;
+}
+
+// ── EM-aware current density check ───────────────────────────────────
+// Checks each grid node's current density against EM limits.
+// Current density = current / wire_width, where wire_width ≈ mesh_pitch.
+
+std::vector<IrEmHotspot> IrDropAnalyzer::check_em_limits(double max_current_density_ma_per_um) {
+    if (!has_result_) analyze();
+
+    std::vector<IrEmHotspot> violations;
+
+    int N = last_grid_n_ > 0 ? last_grid_n_ : cfg_.grid_resolution;
+    if (N <= 0 || !has_result_ || last_current_map_.empty()) return violations;
+
+    double wire_width_um = cfg_.mesh_pitch_um;
+    if (wire_width_um <= 0) wire_width_um = 50.0;
+
+    double worst_density = 0.0;
+
+    for (int y = 0; y < N; ++y) {
+        for (int x = 0; x < N; ++x) {
+            double current_ma = last_current_map_[y][x];
+            double density = current_ma / wire_width_um;
+
+            worst_density = std::max(worst_density, density);
+
+            if (density > max_current_density_ma_per_um) {
+                violations.push_back({x, y, density, max_current_density_ma_per_um});
+            }
+        }
+    }
+
+    // Update cached result with EM info
+    last_result_.em_violations = static_cast<int>(violations.size());
+    last_result_.worst_current_density = worst_density;
+
+    return violations;
 }
 
 // ── Enhanced IR drop run ─────────────────────────────────────────────

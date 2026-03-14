@@ -9,6 +9,8 @@ add_library(siliconforge_lib STATIC
     core/def_parser.cpp
     core/lef_parser.cpp
     core/lef_writer.cpp
+    core/spef_parser.cpp
+    core/parasitic_extract.cpp
     core/report_gen.cpp
 
     # ── Frontend Parsers ──────────────────────────────────────────────

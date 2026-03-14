@@ -108,4 +108,105 @@ private:
     std::vector<GateId> dffs_;
 };
 
+// ============================================================================
+// Hierarchical Netlist Support
+// Enables block-level design with module definitions and instantiation.
+// Reference: IEEE 1364/1800 module hierarchy semantics
+// ============================================================================
+
+// A port on a module boundary
+struct ModulePort {
+    std::string name;
+    enum Direction { INPUT, OUTPUT, INOUT } direction = INPUT;
+    int width = 1;  // bus width (1 = scalar)
+    NetId net_id = -1; // internal net connected to this port
+};
+
+// A hierarchical module definition
+struct ModuleDef {
+    std::string name;
+    std::vector<ModulePort> ports;
+    Netlist internal_netlist;  // flat netlist inside this module
+
+    // Sub-instances within this module
+    struct Instance {
+        std::string inst_name;
+        std::string module_name;  // references another ModuleDef
+        // Port connections: module_port_name → parent_net_name
+        std::unordered_map<std::string, std::string> connections;
+    };
+    std::vector<Instance> instances;
+
+    // Port lookup
+    const ModulePort* find_port(const std::string& name) const;
+    int port_index(const std::string& name) const;
+};
+
+// Hierarchical design database
+class HierarchicalNetlist {
+public:
+    // Module management
+    ModuleDef& add_module(const std::string& name);
+    const ModuleDef* find_module(const std::string& name) const;
+    ModuleDef* find_module_mut(const std::string& name);
+
+    // Set top-level module
+    void set_top(const std::string& name);
+    const std::string& top_module() const { return top_module_; }
+
+    // Add an instance of module_name inside parent_module
+    void add_instance(const std::string& parent_module,
+                      const std::string& inst_name,
+                      const std::string& module_name,
+                      const std::unordered_map<std::string, std::string>& connections);
+
+    // Flatten hierarchy into a single Netlist
+    // Prefixes all internal names with hierarchy path (e.g., "top/u_core/g0")
+    Netlist flatten() const;
+
+    // Elaborate: resolve parameters, generate blocks (future)
+    bool elaborate();
+
+    // Hierarchy queries
+    int depth() const;  // maximum instantiation depth
+    int total_instances() const;
+    std::vector<std::string> module_names() const;
+
+    // Hierarchy path for a net (given flat net name, return hierarchy path)
+    std::string net_hierarchy_path(const std::string& flat_name) const;
+
+    // Block abstraction: create a timing model for a module
+    struct BlockAbstract {
+        std::string module_name;
+        std::vector<ModulePort> ports;
+        // Port-to-port delay arcs
+        struct DelayArc {
+            std::string from_port;
+            std::string to_port;
+            double delay_rise = 0;
+            double delay_fall = 0;
+        };
+        std::vector<DelayArc> arcs;
+        double area = 0;
+        double leakage_power = 0;
+    };
+    BlockAbstract create_abstract(const std::string& module_name) const;
+
+    void print_stats() const;
+
+private:
+    std::vector<ModuleDef> modules_;
+    std::unordered_map<std::string, int> module_map_;  // name → index
+    std::string top_module_;
+
+    // Recursive flatten helper
+    void flatten_recursive(const std::string& prefix,
+                          const ModuleDef& mod,
+                          Netlist& result,
+                          std::unordered_map<std::string, NetId>& net_map) const;
+
+    int depth_recursive(const ModuleDef& mod, int current) const;
+    int count_instances_recursive(const ModuleDef& mod) const;
+};
+
 } // namespace sf

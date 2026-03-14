@@ -627,17 +627,17 @@ void test_hier_ports() {
     hm.add_module("alu", nl);
 
     std::vector<sf::ModulePort> ports = {
-        {"clk", sf::ModulePort::IN, 1, -1},
-        {"a", sf::ModulePort::IN, 8, -1},
-        {"b", sf::ModulePort::IN, 8, -1},
-        {"result", sf::ModulePort::OUT, 8, -1}
+        {"clk", sf::ModulePort::INPUT, 1, -1},
+        {"a", sf::ModulePort::INPUT, 8, -1},
+        {"b", sf::ModulePort::INPUT, 8, -1},
+        {"result", sf::ModulePort::OUTPUT, 8, -1}
     };
     hm.define_ports("alu", ports);
 
     auto* mod = hm.get_module("alu");
     CHECK(mod->ports.size() == 4);
     CHECK(mod->ports[0].name == "clk");
-    CHECK(mod->ports[0].direction == sf::ModulePort::IN);
+    CHECK(mod->ports[0].direction == sf::ModulePort::INPUT);
     CHECK(mod->ports[3].name == "result");
     CHECK(mod->ports[3].width == 8);
     PASS();
@@ -650,9 +650,9 @@ void test_hier_block_model() {
     hm.add_module("mac", nl);
 
     std::vector<sf::ModulePort> ports = {
-        {"a", sf::ModulePort::IN, 16, -1},
-        {"b", sf::ModulePort::IN, 16, -1},
-        {"out", sf::ModulePort::OUT, 32, -1}
+        {"a", sf::ModulePort::INPUT, 16, -1},
+        {"b", sf::ModulePort::INPUT, 16, -1},
+        {"out", sf::ModulePort::OUTPUT, 32, -1}
     };
     hm.define_ports("mac", ports);
     hm.add_timing_arc("mac", "a", "out", 500.0, 50.0);

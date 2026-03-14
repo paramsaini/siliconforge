@@ -16,13 +16,7 @@
 
 namespace sf {
 
-// ── Module port definition ──
-struct ModulePort {
-    std::string name;
-    enum Direction { IN, OUT, INOUT } direction = IN;
-    int width = 1;
-    NetId net_id = -1; // internal net connected to this port
-};
+// ModulePort is now defined in netlist.hpp (shared with HierarchicalNetlist)
 
 // ── Timing arc between ports (for block abstraction) ──
 struct HierTimingArc {

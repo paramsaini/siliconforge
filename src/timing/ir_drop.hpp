@@ -54,6 +54,13 @@ struct IrDropConfig {
     double clock_period_ns = 1.0;
     double decap_density_ff_per_um2 = 0.1;  // on-die decoupling cap
 
+    // RLC PDN mesh model
+    double per_layer_inductance_ph_per_um = 0.5e-12; // typical PDN inductance
+    double mesh_pitch_um = 50.0;
+    double pkg_inductance_nh = 0.5;
+    double pkg_resistance_mohm = 5.0;
+    double decap_esr_mohm = 10.0;  // ESR of decoupling caps
+
     // Per-cell current (optional — overrides area-proportional model)
     std::vector<double> cell_currents_ma;  // indexed by cell index
 
@@ -128,6 +135,10 @@ struct IrDropResult {
     // Signoff pass/fail
     bool signoff_pass = false;
     std::string signoff_summary;
+
+    // EM violations
+    int em_violations = 0;
+    double worst_current_density = 0;  // mA/um
 };
 
 // ── Analyzer ─────────────────────────────────────────────────────────────
@@ -140,6 +151,11 @@ struct DynamicIrResult {
     std::vector<std::pair<double,double>> waveform;  // time, voltage_drop
     std::string worst_region;
     int time_steps;
+
+    // RLC decomposition
+    double ldi_dt_peak_mv = 0;      // peak inductive (L*di/dt) noise
+    double resistive_peak_mv = 0;   // peak resistive IR drop
+    double resonance_freq_ghz = 0;  // LC resonance frequency
 };
 
 // ── VCD-driven vectored analysis ─────────────────────────────────────
@@ -167,6 +183,14 @@ struct IrHotspot {
     double radius;
     double avg_drop_mv;
     int cells_affected;
+};
+
+// ── IR drop EM hotspot detail ─────────────────────────────────────────
+
+struct IrEmHotspot {
+    int grid_x, grid_y;
+    double current_density_ma_per_um;  // actual current density
+    double limit_ma_per_um;            // EM limit
 };
 
 class IrDropAnalyzer {
@@ -202,6 +226,8 @@ public:
     VoltageAwareTimingResult analyze_voltage_timing();
 
     std::vector<IrHotspot> find_hotspots(double threshold_mv = 50.0);
+
+    std::vector<IrEmHotspot> check_em_limits(double max_current_density_ma_per_um);
 
     IrDropResult run_enhanced();
 

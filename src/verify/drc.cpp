@@ -2218,6 +2218,131 @@ int DrcEngine::load_rule_deck_string(const std::string& deck) {
             if (layer < 0) continue;
             min_area_rules_.push_back({layer, area});
             loaded++;
+
+        } else if (kw == "EOL" || kw == "ENDOFLINE") {
+            // EOL M1 0.09 WITHIN 0.05
+            std::string layer_name;
+            double eol_space;
+            if (!(ls >> layer_name >> eol_space)) continue;
+            int layer = resolve_layer_name(layer_name);
+            if (layer < 0) continue;
+            double within = 0;
+            std::string kw2;
+            if (ls >> kw2 >> within) {} // optional WITHIN
+            DrcRule rule;
+            rule.layer = layer;
+            rule.value = eol_space;
+            rule.aux_value = within;
+            rule.type = DrcRule::END_OF_LINE_SPACING;
+            rule.name = to_upper(layer_name) + ".EOL.DECK";
+            rule.description = layer_name + " end-of-line spacing from rule deck";
+            rule.enabled = true;
+            rules_.push_back(rule);
+            loaded++;
+
+        } else if (kw == "WIDESPACING") {
+            // WIDESPACING M1 0.5 0.15 (width_threshold spacing)
+            std::string layer_name;
+            double width_thresh, wide_space;
+            if (!(ls >> layer_name >> width_thresh >> wide_space)) continue;
+            int layer = resolve_layer_name(layer_name);
+            if (layer < 0) continue;
+            DrcRule rule;
+            rule.layer = layer;
+            rule.value = wide_space;
+            rule.aux_value = width_thresh;
+            rule.type = DrcRule::WIDE_WIRE_SPACING;
+            rule.name = to_upper(layer_name) + ".WS.DECK";
+            rule.description = layer_name + " wide wire spacing from rule deck";
+            rule.enabled = true;
+            rules_.push_back(rule);
+            loaded++;
+
+        } else if (kw == "PRL" || kw == "PARALLELRUNLENGTH") {
+            // PRL M1 0.5 0.1 (parallel_run_length spacing)
+            std::string layer_name;
+            double prl, prl_space;
+            if (!(ls >> layer_name >> prl >> prl_space)) continue;
+            int layer = resolve_layer_name(layer_name);
+            if (layer < 0) continue;
+            DrcRule rule;
+            rule.layer = layer;
+            rule.value = prl_space;
+            rule.aux_value = prl;
+            rule.type = DrcRule::PARALLEL_RUN_LENGTH_SPACING;
+            rule.name = to_upper(layer_name) + ".PRL.DECK";
+            rule.description = layer_name + " PRL spacing from rule deck";
+            rule.enabled = true;
+            rules_.push_back(rule);
+            loaded++;
+
+        } else if (kw == "MINSTEP") {
+            // MINSTEP M1 0.04
+            std::string layer_name;
+            double step_val;
+            if (!(ls >> layer_name >> step_val)) continue;
+            int layer = resolve_layer_name(layer_name);
+            if (layer < 0) continue;
+            DrcRule rule;
+            rule.layer = layer;
+            rule.value = step_val;
+            rule.type = DrcRule::MIN_STEP;
+            rule.name = to_upper(layer_name) + ".STEP.DECK";
+            rule.description = layer_name + " min step from rule deck";
+            rule.enabled = true;
+            rules_.push_back(rule);
+            loaded++;
+
+        } else if (kw == "CUTSPACING") {
+            // CUTSPACING VIA1 0.07
+            std::string layer_name;
+            double cut_space;
+            if (!(ls >> layer_name >> cut_space)) continue;
+            int layer = resolve_layer_name(layer_name);
+            if (layer < 0) continue;
+            DrcRule rule;
+            rule.layer = layer;
+            rule.value = cut_space;
+            rule.type = DrcRule::CUT_SPACING;
+            rule.name = to_upper(layer_name) + ".CS.DECK";
+            rule.description = layer_name + " cut spacing from rule deck";
+            rule.enabled = true;
+            rules_.push_back(rule);
+            loaded++;
+
+        } else if (kw == "MAXWIDTH") {
+            // MAXWIDTH M1 10.0
+            std::string layer_name;
+            double max_w;
+            if (!(ls >> layer_name >> max_w)) continue;
+            int layer = resolve_layer_name(layer_name);
+            if (layer < 0) continue;
+            DrcRule rule;
+            rule.layer = layer;
+            rule.value = max_w;
+            rule.type = DrcRule::MAX_WIDTH;
+            rule.name = to_upper(layer_name) + ".MW.DECK";
+            rule.description = layer_name + " max width from rule deck";
+            rule.enabled = true;
+            rules_.push_back(rule);
+            loaded++;
+
+        } else if (kw == "SAMENET") {
+            // SAMENET M1 0.04
+            std::string layer_name;
+            double sn_space;
+            if (!(ls >> layer_name >> sn_space)) continue;
+            int layer = resolve_layer_name(layer_name);
+            if (layer < 0) continue;
+            DrcRule rule;
+            rule.layer = layer;
+            rule.value = sn_space;
+            rule.type = DrcRule::SAME_NET_SPACING;
+            rule.name = to_upper(layer_name) + ".SN.DECK";
+            rule.description = layer_name + " same net spacing from rule deck";
+            rule.enabled = true;
+            rules_.push_back(rule);
+            loaded++;
         }
     }
 
