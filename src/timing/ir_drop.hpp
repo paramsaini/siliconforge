@@ -214,6 +214,20 @@ struct FreqDomainPdnResult {
     double peak_impedance = 0.0;
 };
 
+// ── Substrate Noise (SSN) ─────────────────────────────────────────────────
+
+struct SsnConfig {
+    double substrate_resistance = 100.0;   // ohms
+    double substrate_capacitance = 1e-12;  // farads
+    double switching_noise_factor = 0.1;   // fraction of Vdd
+};
+
+struct SubstrateSsnResult {
+    double peak_noise_mv = 0.0;
+    double rms_noise_mv = 0.0;
+    std::vector<std::pair<std::string, double>> noisy_cells; // cell -> noise contribution (mV)
+};
+
 class IrDropAnalyzer {
 public:
     IrDropAnalyzer(const PhysicalDesign& pd, double vdd = 1.8, double total_current_ma = 100)
@@ -257,6 +271,9 @@ public:
 
     // ── Adaptive grid refinement for hotspot regions ─────────────────
     void set_adaptive_refinement(bool enable, int max_refinement_level = 3);
+
+    // ── Substrate Noise (SSN) Analysis ───────────────────────────────
+    SubstrateSsnResult analyze_ssn(const SsnConfig& cfg = {});
 
 private:
     const PhysicalDesign& pd_;

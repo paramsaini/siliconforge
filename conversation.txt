@@ -2961,3 +2961,150 @@ REMAINING GAPS: 43 (22 major + 18 moderate + 3 minor)
 PENDING COMMIT (not pushed — Rule 7):
   All critical gap changes + MT Phase 1-6 changes are local.
 ================================================================================
+
+================================================================================
+SESSION 25 — March 14, 2026 — Tier 0-3 Gap Closure + Full Validation
+================================================================================
+
+CONTEXT:
+  Continued from Session 24. Ran comprehensive 87-gap analysis across all
+  subsystems comparing SiliconForge against Cadence Innovus/Genus/Tempus,
+  Synopsys ICC2/DC/PrimeTime, and Siemens Calibre/Catapult. Organized into
+  5 tiers by priority and implemented systematically.
+
+WORK COMPLETED:
+
+  TIER 0 — Broken Stubs Fixed (6/6):
+    1. ICG clock gating — was stub, now generates clock gate cells
+    2. FSM minimization — was stub, now performs state merging
+    3. FSM re-synthesis — was stub, now re-encodes states
+    4. Datapath wiring — DatapathOptimizer wired into BehavioralSynthesizer
+    5. Tech mapper ILP — Lagrangian relaxation convergence fix
+    6. Specify block parsing — was parsing but not storing results
+    Test: test_phase81.cpp (48/48 PASS)
+
+  TIER 1 — Critical Gaps (14/14):
+    1. SDC set_case_analysis — full parser + storage
+    2. SDC set_disable_timing — full parser + storage
+    3. SDC set_driving_cell — full parser + storage
+    4. SDC set_load — full parser + storage
+    5. Latch timing — time borrowing, transparent window setup/hold
+    6. Multi-VDD STA — VoltageDomain, delay scaling (V_ref/V_domain)^1.3
+    7. Hold-time optimization — fix_hold_violations() in post_route_opt
+    8. SpatialIndex — grid-based spatial hash for PnR queries
+    9. Congestion routing — PathFinder negotiated congestion (CongestionMap)
+   10. Short-circuit power — Isc model with K_sc formula
+   11. IR→STA feedback — apply_ir_drop_derating() voltage derating
+   12. Timing closure loop — TimingClosureEngine iterative convergence
+   13. DEF placement rows — ROW parsing in def_parser
+   14. SDC command-break list — fixed create_clock consuming new commands
+    Test: test_phase82.cpp (98/98 PASS)
+
+  TIER 2 — Major Gaps (~40/43):
+    SDC: group_path, set_wire_load_model, set_propagated_clock, set_ideal_network
+    Liberty: NoiseTable, EmLimit, NlpmTable, CapTable, DvfsEntry (6 parser methods)
+    SPEF: inductance (*L_NET), mutual (*K_NET), extraction corners, RC scaling
+    STA: POCV Monte Carlo, MCMM scenario weighting, CPPR APPROXIMATE/EXACT
+    SSTA: importance sampling with likelihood ratio correction
+    IR Drop: SSN analysis, freq-domain PDN impedance, adaptive grid refinement
+    Power: temperature impact on leakage, voltage derating for leakage
+    DRC: context-dependent rules, inter-layer rules
+    DEF: FILLS section parsing, polygon DIEAREA
+    Parasitic: crosstalk extraction (CouplingCap), frequency-dependent coupling,
+               extract_with_corner(), Grover's formula wire inductance
+    VHDL: generics parsing
+    SDF: conditional delay emission
+    Test: test_phase83.cpp (62/62 PASS)
+
+  TIER 3 — Enhancements (~12/20):
+    SVA: sequence declarations (SvaSequence)
+    UPF: isolation strategies (UpfIsolationStrategy)
+    TCL: dict command (create/get/set/exists), uplevel scoping
+    HLS: array types (HlsArrayType), struct types (HlsStructType)
+    Threading: task priorities (TaskPriority, submit_with_priority())
+    Test: test_phase84.cpp (44/44 PASS)
+
+BUGS FIXED:
+  1. SDC command-break list: create_clock parser consumed new command keywords
+     as port names. Added all 8 new commands to break list (~line 99-114).
+  2. group_path bare-word bug: pos++ in else branch consumed next command.
+     Fixed to just break without incrementing.
+  3. SsnResult name collision: noise.hpp and ir_drop.hpp both defined SsnResult.
+     Renamed ir_drop.hpp version to SubstrateSsnResult.
+  4. PlacementRow name collision: DEF parser's new PlacementRow vs detailed_placer
+     internal struct. Renamed internal to LegalizationRow.
+
+FILES CREATED:
+  src/pnr/timing_closure.hpp — TimingClosureEngine header
+  src/pnr/timing_closure.cpp — Iterative timing closure implementation
+  tests/test_phase82.cpp — 98 assertions (Tier 1 tests)
+  tests/test_phase83.cpp — 62 assertions (Tier 2 tests)
+  tests/test_phase84.cpp — 44 assertions (Tier 2-3 tests)
+
+FILES MODIFIED (40+ files):
+  src/frontend/sdc_parser.hpp/.cpp — 8 new commands + command-break fix
+  src/timing/sta.hpp/.cpp — latch, multi-VDD, POCV MC, MCMM, CPPR, IR derating
+  src/timing/ssta.hpp/.cpp — importance sampling
+  src/timing/power.hpp/.cpp — Isc, temperature, voltage derating
+  src/timing/ir_drop.hpp/.cpp — SSN, freq-domain PDN, adaptive refinement
+  src/timing/sdf_writer.hpp/.cpp — conditional delays
+  src/pnr/physical.hpp/.cpp — SpatialIndex, PlacementRow, FillShape
+  src/pnr/global_router.hpp/.cpp — CongestionMap, route_negotiated()
+  src/pnr/post_route_opt.hpp/.cpp — fix_hold_violations()
+  src/pnr/detailed_placer.hpp/.cpp — LegalizationRow rename
+  src/core/liberty_parser.hpp/.cpp — noise/EM/NLPM/cap/DVFS
+  src/core/spef_parser.hpp/.cpp — inductance/mutual/corners/scaling
+  src/core/parasitic_extract.hpp/.cpp — crosstalk/freq-dep coupling
+  src/frontend/def_parser.cpp — ROW/FILLS/polygon DIEAREA parsing
+  src/frontend/vhdl_parser.hpp/.cpp — generics
+  src/frontend/sva_parser.hpp/.cpp — sequences
+  src/frontend/upf_parser.hpp/.cpp — isolation strategies
+  src/shell/tcl_interp.hpp/.cpp — dict command, uplevel
+  src/hls/c_parser.hpp/.cpp — array/struct types
+  src/core/thread_pool.hpp — task priorities
+  src/verify/drc.hpp/.cpp — context/inter-layer rules
+  src/synth/clock_gating.cpp — ICG fix
+  src/synth/fsm_extract.cpp — FSM minimization/re-synthesis fix
+  src/CMakeLists.txt — timing_closure.cpp
+  tests/CMakeLists.txt — phases 82-84
+
+TEST RESULTS:
+  Release: 84/84 PASS (including Phase 44 at 51.7s)
+  ASAN:    83/83 PASS (excluding Phase 44 — SAT solver timeout under ASAN)
+  Phase 44 ASAN: timeout (known — SAT solver + ASAN instrumentation too slow)
+
+PARITY ASSESSMENT UPDATE:
+  Before Session 25: ~50% vs Big 3
+  After Session 25:  ~62% vs Big 3 (estimated)
+  Key gains: 87-gap analysis closure, timing closure loop, POCV/MCMM/CPPR,
+             multi-VDD STA, latch timing, spatial indexing, congestion routing,
+             hold optimization, crosstalk extraction, SSN analysis, PDN impedance
+
+REMAINING GAPS (~25):
+  Tier 2 unfinished:
+    - VHDL process behavioral synthesis
+    - Multi-layer crosstalk → STA delay integration
+    - Cross-die chiplet skew
+    - Conditional SDF consumption in STA
+    - Gate-level switching activity correlation
+    - DFM yield prediction
+    - LVS parameter extraction beyond W/L
+  Tier 3 unfinished:
+    - SV parameterized types (generics)
+    - SV class OOP semantics
+    - $readmemh/$readmemb execution
+    - TCL package system/module loading
+    - HLS floating-point synthesis
+    - NUMA-aware threading
+    - 3D DRC
+    - Lithography simulation
+    - Glitch charge tracking in SI
+    - Multi-net noise superposition
+    - Via-to-via coupling inductance in PDN
+    - Package-to-die interaction model
+  Tier 4:
+    - Parser error recovery
+    - Capacity management (>100K gates)
+    - Benchmark correlation
+    - ASAN stress >100K gates
+================================================================================

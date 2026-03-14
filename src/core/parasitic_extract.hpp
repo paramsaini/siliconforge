@@ -79,6 +79,22 @@ struct ParasiticExtractConfig {
     }
 };
 
+// ── Multi-Layer Crosstalk Extraction ─────────────────────────────────────
+
+struct CouplingCap {
+    std::string aggressor_net;
+    std::string victim_net;
+    std::string layer;
+    double coupling_cap = 0.0;   // fF
+    double parallel_length = 0.0; // um
+};
+
+struct CrosstalkExtractionResult {
+    std::vector<CouplingCap> coupling_caps;
+    int num_aggressors = 0;
+    double total_coupling_cap = 0.0; // fF
+};
+
 // ── SPEF Parasitic Extractor ─────────────────────────────────────────────
 
 class SpefExtractor {
@@ -99,6 +115,14 @@ public:
     double compute_wire_cap_to_ground(const WireSegment& seg) const;
     double compute_coupling_cap(const WireSegment& a, const WireSegment& b) const;
     double compute_wire_inductance(const WireSegment& seg) const;
+
+    // Multi-layer crosstalk extraction for a victim net
+    CrosstalkExtractionResult extract_crosstalk(const std::string& victim_net);
+
+    // Frequency-dependent coupling capacitance model
+    // C(f) = C_dc * (1 + alpha * sqrt(f / f_ref))
+    static double frequency_dependent_cap(double coupling_cap_dc, double freq_ghz,
+                                          double skin_depth_um = 0.5);
 
 private:
     const PhysicalDesign& pd_;
@@ -129,6 +153,13 @@ private:
     // Compute overlap length between two wires on the same layer
     static double parallel_overlap_um(const WireSegment& a, const WireSegment& b);
     static double perpendicular_distance(const WireSegment& a, const WireSegment& b);
+
+    // Cross-layer coupling cap between wires on adjacent layers
+    double compute_coupling_cap_cross_layer(const WireSegment& a,
+                                            const WireSegment& b) const;
+
+    // Resolve layer id to name
+    std::string layer_name(int layer_id) const;
 };
 
 } // namespace sf

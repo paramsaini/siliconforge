@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <sstream>
 #include <unordered_set>
+#include <unordered_map>
 
 namespace sf {
 
@@ -491,6 +492,149 @@ SpefData SpefExtractor::extract_with_corner(const ExtractionCorner& corner) {
     SpefData spef = extract();
     spef.apply_corner(corner);
     return spef;
+}
+
+// ── Helper: resolve layer id to name ─────────────────────────────────────
+
+std::string SpefExtractor::layer_name(int layer_id) const {
+    for (const auto& l : pd_.layers)
+        if (l.id == layer_id) return l.name;
+    return "M" + std::to_string(layer_id);
+}
+
+// ── Cross-layer coupling capacitance ─────────────────────────────────────
+// Models overlap-area-based coupling between wires on adjacent metal layers.
+// C_cross = ε · overlap_area / ILD_thickness
+
+double SpefExtractor::compute_coupling_cap_cross_layer(const WireSegment& a,
+                                                       const WireSegment& b) const {
+    int layer_diff = std::abs(a.layer - b.layer);
+    if (layer_diff != 1) return 0.0; // only adjacent layers
+
+    // Compute bounding-box overlap area
+    double ax0 = std::min(a.start.x, a.end.x);
+    double ax1 = std::max(a.start.x, a.end.x);
+    double ay0 = std::min(a.start.y, a.end.y);
+    double ay1 = std::max(a.start.y, a.end.y);
+
+    double bx0 = std::min(b.start.x, b.end.x);
+    double bx1 = std::max(b.start.x, b.end.x);
+    double by0 = std::min(b.start.y, b.end.y);
+    double by1 = std::max(b.start.y, b.end.y);
+
+    // Add half-widths to create wire area envelopes
+    double wa = (a.width > 0 ? a.width : 0.1) * 0.5;
+    double wb = (b.width > 0 ? b.width : 0.1) * 0.5;
+
+    double ox = std::max(0.0, std::min(ax1 + wa, bx1 + wb) - std::max(ax0 - wa, bx0 - wb));
+    double oy = std::max(0.0, std::min(ay1 + wa, by1 + wb) - std::max(ay0 - wa, by0 - wb));
+    double area_um2 = ox * oy;
+    if (area_um2 < 1e-9) return 0.0;
+
+    int upper_layer = std::max(a.layer, b.layer);
+    double ild_um = ild_height(upper_layer);
+    if (ild_um < 1e-6) ild_um = 0.5;
+
+    double eps = EPSILON_0 * cfg_.epsilon_r;
+    double area_m2 = area_um2 * 1e-12;
+    double ild_m = ild_um * 1e-6;
+
+    double C = eps * area_m2 / ild_m; // Farads
+    return C * 1e15; // fF
+}
+
+// ── Multi-layer crosstalk extraction ─────────────────────────────────────
+
+CrosstalkExtractionResult SpefExtractor::extract_crosstalk(const std::string& victim_net) {
+    CrosstalkExtractionResult result;
+
+    // Find victim net index
+    int victim_idx = -1;
+    for (int i = 0; i < static_cast<int>(pd_.nets.size()); ++i) {
+        if (pd_.nets[i].name == victim_net) { victim_idx = i; break; }
+    }
+    if (victim_idx < 0) return result;
+
+    WireIndex wire_idx = build_wire_index();
+    const auto& victim_wires = wire_idx[victim_idx];
+    if (victim_wires.empty()) return result;
+
+    std::unordered_set<std::string> aggressor_names;
+
+    for (int ni = 0; ni < static_cast<int>(pd_.nets.size()); ++ni) {
+        if (ni == victim_idx) continue;
+        const auto& agg_wires = wire_idx[ni];
+        if (agg_wires.empty()) continue;
+
+        // Per-layer accumulation
+        std::unordered_map<int, double> layer_cc;       // layer -> coupling fF
+        std::unordered_map<int, double> layer_overlap;   // layer -> parallel length um
+
+        for (int vi : victim_wires) {
+            for (int ai : agg_wires) {
+                const auto& vw = pd_.wires[vi];
+                const auto& aw = pd_.wires[ai];
+
+                // Same-layer lateral coupling
+                if (vw.layer == aw.layer) {
+                    double cc = compute_coupling_cap(vw, aw);
+                    if (cc > 0.0) {
+                        double cc_ff = cc * 1e3; // pF → fF
+                        layer_cc[vw.layer] += cc_ff;
+                        layer_overlap[vw.layer] += parallel_overlap_um(vw, aw);
+                    }
+                }
+
+                // Cross-layer vertical coupling
+                if (std::abs(vw.layer - aw.layer) == 1) {
+                    double cc_ff = compute_coupling_cap_cross_layer(vw, aw);
+                    if (cc_ff > 0.0) {
+                        int report_layer = std::max(vw.layer, aw.layer);
+                        layer_cc[report_layer] += cc_ff;
+                        // No meaningful parallel_length for cross-layer
+                    }
+                }
+            }
+        }
+
+        // Emit one CouplingCap per layer with non-trivial coupling
+        for (auto& [lid, cc_ff] : layer_cc) {
+            double thresh_ff = cfg_.coupling_threshold * 1e3; // pF → fF
+            if (cc_ff < thresh_ff) continue;
+
+            CouplingCap cap;
+            cap.aggressor_net = pd_.nets[ni].name;
+            cap.victim_net = victim_net;
+            cap.layer = layer_name(lid);
+            cap.coupling_cap = cc_ff;
+            cap.parallel_length = layer_overlap.count(lid) ? layer_overlap[lid] : 0.0;
+            result.coupling_caps.push_back(cap);
+            result.total_coupling_cap += cc_ff;
+            aggressor_names.insert(pd_.nets[ni].name);
+        }
+    }
+
+    result.num_aggressors = static_cast<int>(aggressor_names.size());
+    return result;
+}
+
+// ── Frequency-dependent coupling capacitance ─────────────────────────────
+// C(f) = C_dc * (1 + alpha * sqrt(f / f_ref))
+// alpha ≈ 0.1, f_ref = 1 GHz
+
+double SpefExtractor::frequency_dependent_cap(double coupling_cap_dc,
+                                              double freq_ghz,
+                                              double skin_depth_um) {
+    if (freq_ghz <= 0.0) return coupling_cap_dc;
+
+    constexpr double alpha = 0.1;
+    constexpr double f_ref_ghz = 1.0;
+
+    // Skin-depth scaling: thinner skin depth → stronger effect
+    double skin_factor = 0.5 / std::max(skin_depth_um, 0.01);
+
+    double correction = alpha * skin_factor * std::sqrt(freq_ghz / f_ref_ghz);
+    return coupling_cap_dc * (1.0 + correction);
 }
 
 } // namespace sf

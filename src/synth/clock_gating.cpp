@@ -78,13 +78,26 @@ ClockGatingResult ClockGatingEngine::insert() {
             nl_.mark_input(enable_net); // external enable control
         }
 
-        // ICG = AND(CLK, EN) — latch-based in real impl, AND gate for model
-        nl_.add_gate(GateType::AND, {grp.clock, enable_net}, gated_clk, icg_name);
+        // ICG = latch-based clock gating cell:
+        //   inv_clk      = NOT(CLK)
+        //   latched_en   = DLATCH(EN, inv_clk)  — latch enable on falling clock edge
+        //   gated_clk    = AND(CLK, latched_en)
+        NetId inv_clk = nl_.add_net(icg_name + "_inv_clk");
+        nl_.add_gate(GateType::NOT, {grp.clock}, inv_clk, icg_name + "_inv");
+        NetId latched_en = nl_.add_net(icg_name + "_latched_en");
+        nl_.add_gate(GateType::DLATCH, {enable_net, inv_clk}, latched_en, icg_name + "_latch");
+        nl_.add_gate(GateType::AND, {grp.clock, latched_en}, gated_clk, icg_name);
 
         // Reconnect all FFs in the group to use gated clock
         for (auto fid : grp.ffs) {
             auto& ff = nl_.gate(fid);
-            ff.clk = gated_clk; // reconnect clock
+            // Remove FF from old clock's fanout, add to new gated clock's fanout
+            if (ff.clk >= 0 && ff.clk < static_cast<NetId>(nl_.num_nets())) {
+                auto& old_fo = nl_.net(ff.clk).fanout;
+                old_fo.erase(std::remove(old_fo.begin(), old_fo.end(), fid), old_fo.end());
+            }
+            ff.clk = gated_clk;
+            nl_.net(gated_clk).fanout.push_back(fid);
             r.gated_ffs++;
         }
 
@@ -427,15 +440,27 @@ ClockGatingResult ClockGatingEngine::insert_hierarchical() {
                 nl_.mark_input(enable_net);
             }
 
-            // Insert ICG cell (AND-gate model, named after library cell)
-            nl_.add_gate(GateType::AND, {clk, enable_net}, gated_clk,
+            // ICG = latch-based clock gating cell:
+            //   inv_clk      = NOT(CLK)
+            //   latched_en   = DLATCH(EN, inv_clk)  — latch enable on falling clock edge
+            //   gated_clk    = AND(CLK, latched_en)
+            NetId inv_clk = nl_.add_net(icg_name + "_inv_clk");
+            nl_.add_gate(GateType::NOT, {clk}, inv_clk, icg_name + "_inv");
+            NetId latched_en = nl_.add_net(icg_name + "_latched_en");
+            nl_.add_gate(GateType::DLATCH, {enable_net, inv_clk}, latched_en, icg_name + "_latch");
+            nl_.add_gate(GateType::AND, {clk, latched_en}, gated_clk,
                          icg_name + "_" + icg_type.name);
 
             // Reconnect FFs (only leaf levels directly reconnect FFs)
             if (level.children.empty()) {
                 for (auto fid : level.ffs) {
                     auto& ff = nl_.gate(fid);
+                    if (ff.clk >= 0 && ff.clk < static_cast<NetId>(nl_.num_nets())) {
+                        auto& old_fo = nl_.net(ff.clk).fanout;
+                        old_fo.erase(std::remove(old_fo.begin(), old_fo.end(), fid), old_fo.end());
+                    }
                     ff.clk = gated_clk;
+                    nl_.net(gated_clk).fanout.push_back(fid);
                     r.gated_ffs++;
                 }
             }

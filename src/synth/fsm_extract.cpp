@@ -199,18 +199,18 @@ bool FsmExtractor::states_equivalent(const StateMachine& fsm, const std::string&
     // Must have same number of outgoing transitions
     if (trans1.size() != trans2.size()) return false;
     
-    // Collect the set of destination partitions for each state
-    std::set<int> dest_partitions_1, dest_partitions_2;
+    // Build map: destination_partition -> count for each state
+    std::map<int, int> dest_count_1, dest_count_2;
     for (auto& [to, cond] : trans1) {
         auto pit = partition.find(to);
-        if (pit != partition.end()) dest_partitions_1.insert(pit->second);
+        if (pit != partition.end()) dest_count_1[pit->second]++;
     }
     for (auto& [to, cond] : trans2) {
         auto pit = partition.find(to);
-        if (pit != partition.end()) dest_partitions_2.insert(pit->second);
+        if (pit != partition.end()) dest_count_2[pit->second]++;
     }
     
-    return dest_partitions_1 == dest_partitions_2;
+    return dest_count_1 == dest_count_2;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -617,6 +617,15 @@ FsmExtractor::FsmOptResult FsmExtractor::optimize_all(std::shared_ptr<AstNode> r
         StateMachine final_fsm = minimized.minimized;
         apply_encoding(final_fsm, enc.recommended);
         rewrite_ast(root, final_fsm);
+        
+        // If FSM has actual transitions, generate optimized case-statement AST
+        if (!final_fsm.transitions.empty()) {
+            auto resynth_block = resynthesize_fsm(final_fsm, enc.recommended);
+            if (resynth_block) {
+                // Append resynthesized block as additional always block in module
+                root->add(resynth_block);
+            }
+        }
         
         std::cout << "[FSM] Pipeline complete for '" << final_fsm.state_var_name
                   << "': " << pre_prune << " → " << final_fsm.num_states << " states.\n";

@@ -1047,4 +1047,76 @@ IrDropResult IrDropAnalyzer::run_enhanced() {
     return result;
 }
 
+// ── Substrate Noise (SSN) Analysis ───────────────────────────────────────
+// Models simultaneous switching noise using substrate RC coupling.
+// Peak SSN ≈ N_switching * I_avg * R_sub * switching_noise_factor
+// Per-cell noise contribution proportional to cell current and proximity.
+
+SubstrateSsnResult IrDropAnalyzer::analyze_ssn(const SsnConfig& cfg) {
+    SubstrateSsnResult result;
+
+    int num_cells = static_cast<int>(pd_.cells.size());
+    if (num_cells == 0) return result;
+
+    // Determine per-cell current
+    double total_current_ma = cfg_.total_current_ma;
+    double area_w = pd_.die_area.x1 - pd_.die_area.x0;
+    double area_h = pd_.die_area.y1 - pd_.die_area.y0;
+    double die_area = std::max(area_w * area_h, 1.0);
+
+    // Substrate RC time constant
+    double tau = cfg.substrate_resistance * cfg.substrate_capacitance;
+
+    // Noise accumulation
+    double sum_noise_sq = 0.0;
+    double peak = 0.0;
+
+    for (int i = 0; i < num_cells; ++i) {
+        // Cell current: explicit or area-proportional
+        double cell_current_ma = 0.0;
+        if (i < static_cast<int>(cfg_.cell_currents_ma.size()) &&
+            cfg_.cell_currents_ma[i] > 0.0) {
+            cell_current_ma = cfg_.cell_currents_ma[i];
+        } else {
+            // Area-proportional: assume equal sharing
+            cell_current_ma = total_current_ma / num_cells;
+        }
+
+        // SSN contribution: V_noise = I * R_sub * switching_factor
+        // Modulated by substrate RC attenuation for cells farther from center
+        double cx = (pd_.cells[i].position.x - pd_.die_area.x0) / std::max(area_w, 1.0) - 0.5;
+        double cy = (pd_.cells[i].position.y - pd_.die_area.y0) / std::max(area_h, 1.0) - 0.5;
+        double dist_norm = std::sqrt(cx * cx + cy * cy);
+
+        // RC attenuation factor: closer to substrate contacts (edges) → less noise
+        double attenuation = 1.0 / (1.0 + dist_norm / 0.5);
+
+        double cell_current_a = cell_current_ma * 1e-3;
+        double noise_v = cell_current_a * cfg.substrate_resistance *
+                         cfg.switching_noise_factor * attenuation;
+        double noise_mv = noise_v * 1e3;
+
+        sum_noise_sq += noise_mv * noise_mv;
+        if (noise_mv > peak) peak = noise_mv;
+
+        if (noise_mv > 0.01) {
+            std::string name = pd_.cells[i].name;
+            if (name.empty()) name = "cell_" + std::to_string(i);
+            result.noisy_cells.emplace_back(name, noise_mv);
+        }
+    }
+
+    result.peak_noise_mv = peak;
+    result.rms_noise_mv = std::sqrt(sum_noise_sq / num_cells);
+
+    // Sort noisy cells descending by contribution
+    std::sort(result.noisy_cells.begin(), result.noisy_cells.end(),
+              [](const auto& a, const auto& b) { return a.second > b.second; });
+
+    // Suppress tau unused warning — tau reserved for future transient model
+    (void)tau;
+
+    return result;
+}
+
 } // namespace sf

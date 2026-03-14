@@ -74,6 +74,7 @@ add_library(siliconforge_lib STATIC
     pnr/detailed_router_v2.cpp
     pnr/cts.cpp
     pnr/post_route_opt.cpp
+    pnr/timing_closure.cpp
     pnr/gdsii_writer.cpp
     pnr/oasis_writer.cpp
     pnr/chip_assembler.cpp

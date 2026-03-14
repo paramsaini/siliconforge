@@ -456,8 +456,12 @@ size_t SdcParser::parse_command(const std::vector<Token>& t, size_t pos,
                 try { gp.weight = std::stod(t[++pos].value); } catch (...) {}
                 pos++;
             }
+            else if (t[pos].value[0] == '[') {
+                while (pos < t.size() && t[pos].value != "]") pos++;
+                if (pos < t.size()) pos++;
+            }
             else if (t[pos].value[0] == '-') { pos += 2; }
-            else { pos++; break; }
+            else { break; }
         }
         sdc.group_paths.push_back(gp);
         r.num_constraints++;
