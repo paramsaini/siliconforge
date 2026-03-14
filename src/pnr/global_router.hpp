@@ -20,6 +20,21 @@
 
 namespace sf {
 
+// Standalone congestion map for negotiated congestion routing.
+// Tracks per-gcell usage, capacity, and historical congestion penalties.
+struct CongestionMap {
+    int grid_x = 0, grid_y = 0;
+    std::vector<std::vector<int>> usage;      // current usage per gcell
+    std::vector<std::vector<int>> capacity;    // capacity per gcell
+    std::vector<std::vector<double>> history;  // historical congestion penalty
+
+    void init(int gx, int gy, int default_cap);
+    double congestion_cost(int x, int y) const;
+    void update_history(double alpha = 0.5);
+    bool is_overflowed(int x, int y) const;
+    int total_overflow() const;
+};
+
 // Industrial routing configuration
 struct RouterConfig {
     // Timing-driven
@@ -162,6 +177,11 @@ public:
     // Enhanced routing with rip-up reroute
     RouteResult route_with_rr();
 
+    // Negotiated congestion routing (PathFinder-style)
+    // Iteratively routes all nets, rips up overflowed nets, and re-routes
+    // with increasing historical penalties until overflow reaches zero.
+    RouteResult route_negotiated(int max_iterations = 50);
+
     // Via minimization
     int minimize_vias(std::vector<LayerAssignment>& la);
 
@@ -221,6 +241,10 @@ private:
 
     // Lagrangian update
     void update_lagrangian_multipliers(double step_size);
+
+    // Negotiated congestion routing state
+    sf::CongestionMap neg_cmap_;
+    void apply_cmap_to_grid();  // transfer neg_cmap_ penalties into grid_ history
 };
 
 } // namespace sf

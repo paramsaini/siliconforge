@@ -13,6 +13,50 @@
 
 namespace sf {
 
+// ── CongestionMap implementation ─────────────────────────────────────
+
+void CongestionMap::init(int gx, int gy, int default_cap) {
+    grid_x = gx;
+    grid_y = gy;
+    usage.assign(gy, std::vector<int>(gx, 0));
+    capacity.assign(gy, std::vector<int>(gx, default_cap));
+    history.assign(gy, std::vector<double>(gx, 0.0));
+}
+
+double CongestionMap::congestion_cost(int x, int y) const {
+    if (y < 0 || y >= grid_y || x < 0 || x >= grid_x) return 1e18;
+    double base = 1.0;
+    int cap = capacity[y][x];
+    int use = usage[y][x];
+    if (cap > 0 && use < cap)
+        base += 0.5 * (double)use / cap;
+    else if (use >= cap)
+        base += 10.0 * (use - cap + 1);
+    return base + history[y][x];
+}
+
+void CongestionMap::update_history(double alpha) {
+    for (int y = 0; y < grid_y; y++)
+        for (int x = 0; x < grid_x; x++) {
+            int overflow = std::max(0, usage[y][x] - capacity[y][x]);
+            if (overflow > 0)
+                history[y][x] += alpha * overflow;
+        }
+}
+
+bool CongestionMap::is_overflowed(int x, int y) const {
+    if (y < 0 || y >= grid_y || x < 0 || x >= grid_x) return false;
+    return usage[y][x] > capacity[y][x];
+}
+
+int CongestionMap::total_overflow() const {
+    int total = 0;
+    for (int y = 0; y < grid_y; y++)
+        for (int x = 0; x < grid_x; x++)
+            total += std::max(0, usage[y][x] - capacity[y][x]);
+    return total;
+}
+
 void GlobalRouter::build_grid() {
     grid_.clear();
     grid_.resize(grid_y_);
@@ -1098,6 +1142,181 @@ GlobalRouter::PatternRoute GlobalRouter::route_pattern(
             return astar_pr;
     }
     return best;
+}
+
+// ── Transfer standalone CongestionMap penalties into the routing grid ─
+void GlobalRouter::apply_cmap_to_grid() {
+    for (int y = 0; y < grid_y_ && y < neg_cmap_.grid_y; y++)
+        for (int x = 0; x < grid_x_ && x < neg_cmap_.grid_x; x++)
+            grid_[y][x].history_cost = 1.0 + neg_cmap_.history[y][x];
+}
+
+// ============================================================================
+// Negotiated congestion routing (PathFinder-style)
+// 1. Initial routing pass for all nets
+// 2. For each iteration:
+//    a. Identify overflowed nets
+//    b. Rip up overflowed nets
+//    c. Update history penalties in CongestionMap
+//    d. Apply penalties to grid
+//    e. Re-route ripped nets with increased congestion cost
+// 3. Stop when overflow reaches zero or max_iterations exhausted
+// Reference: McMurchie & Ebeling, "PathFinder", FPGA 1995
+// ============================================================================
+RouteResult GlobalRouter::route_negotiated(int max_iterations) {
+    auto t0 = std::chrono::high_resolution_clock::now();
+
+    // ── Step 0: Build grid and initialise ────────────────────────────
+    build_grid();
+    net_wire_ranges_.clear();
+    successfully_routed_.clear();
+    history_cost_.assign(grid_y_, std::vector<double>(grid_x_, 0.0));
+
+    // Initialise standalone CongestionMap
+    int default_cap = grid_.empty() ? 1 :
+        (grid_[0].empty() ? 1 : grid_[0][0].capacity);
+    neg_cmap_.init(grid_x_, grid_y_, default_cap);
+
+    RouteResult result;
+
+    // Net ordering: timing-driven or size-based (smallest first)
+    std::vector<int> net_order(pd_.nets.size());
+    std::iota(net_order.begin(), net_order.end(), 0);
+
+    if (config_.enable_timing_driven && !net_timing_.empty()) {
+        std::sort(net_order.begin(), net_order.end(), [&](int a, int b) {
+            double ca = get_criticality(a), cb = get_criticality(b);
+            if (std::abs(ca - cb) > 0.01) return ca > cb;
+            return pd_.nets[a].cell_ids.size() < pd_.nets[b].cell_ids.size();
+        });
+    } else {
+        std::sort(net_order.begin(), net_order.end(), [&](int a, int b) {
+            return pd_.nets[a].cell_ids.size() < pd_.nets[b].cell_ids.size();
+        });
+    }
+
+    // ── Step 1: Initial routing pass ─────────────────────────────────
+    for (int ni : net_order) {
+        if (route_net_astar(ni)) {
+            result.routed_nets++;
+            successfully_routed_.insert(ni);
+        } else {
+            result.failed_nets++;
+        }
+    }
+
+    // Sync grid usage into CongestionMap
+    for (int y = 0; y < grid_y_; y++)
+        for (int x = 0; x < grid_x_; x++)
+            neg_cmap_.usage[y][x] = grid_[y][x].usage;
+
+    // ── Step 2: Negotiated rip-up and reroute iterations ─────────────
+    double alpha = 0.5;  // history accumulation rate
+    for (int iter = 0; iter < max_iterations; iter++) {
+        int overflow = neg_cmap_.total_overflow();
+        if (overflow == 0) break;
+        result.reroute_iterations++;
+
+        // Update historical congestion penalties (PathFinder-style)
+        neg_cmap_.update_history(alpha);
+        apply_cmap_to_grid();
+
+        // Also update the internal Lagrangian history
+        double step = 1.0 / (1.0 + iter);
+        update_lagrangian_multipliers(step);
+
+        // Find nets passing through overflowed gcells
+        auto overflow_nets = find_overflowed_nets();
+        if (overflow_nets.empty()) break;
+
+        // Rip up all overflowed nets
+        for (int ni : overflow_nets)
+            rip_up_net(ni);
+
+        // Sync usage after rip-up
+        for (int y = 0; y < grid_y_; y++)
+            for (int x = 0; x < grid_x_; x++)
+                neg_cmap_.usage[y][x] = grid_[y][x].usage;
+
+        // Re-route with increased penalty
+        double penalty = rr_cfg_.congestion_penalty * (1.0 + iter * 0.5);
+        for (int ni : overflow_nets) {
+            if (reroute_net(ni, penalty))
+                successfully_routed_.insert(ni);
+            else
+                successfully_routed_.erase(ni);
+        }
+
+        // Sync usage after re-routing
+        for (int y = 0; y < grid_y_; y++)
+            for (int x = 0; x < grid_x_; x++)
+                neg_cmap_.usage[y][x] = grid_[y][x].usage;
+
+        // Increase alpha over iterations to converge faster
+        alpha = std::min(2.0, alpha + 0.1);
+    }
+
+    // ── Step 3: Cleanup ──────────────────────────────────────────────
+    pd_.wires.erase(
+        std::remove_if(pd_.wires.begin(), pd_.wires.end(),
+                       [](const WireSegment& w) { return w.width < 0; }),
+        pd_.wires.end());
+
+    // ── Compute metrics ──────────────────────────────────────────────
+    result.total_wirelength = 0;
+    for (auto& w : pd_.wires)
+        result.total_wirelength += w.start.dist(w.end);
+
+    result.max_congestion = 0;
+    for (auto& row : grid_)
+        for (auto& gc : row)
+            result.max_congestion = std::max(result.max_congestion,
+                gc.capacity > 0 ? (double)gc.usage / gc.capacity : 0.0);
+
+    result.overflow = compute_overflow();
+
+    result.routed_nets = 0;
+    result.failed_nets = 0;
+    for (int ni : net_order) {
+        if (successfully_routed_.count(ni) || pd_.nets[ni].cell_ids.size() < 2)
+            result.routed_nets++;
+        else
+            result.failed_nets++;
+    }
+
+    result.total_wires = (int)pd_.wires.size();
+    result.total_vias = (int)pd_.vias.size();
+
+    if (config_.enable_timing_driven) {
+        for (auto& w : pd_.wires) {
+            if (w.net_id >= 0 && get_criticality(w.net_id) > 0.5)
+                result.critical_net_wirelength += w.start.dist(w.end);
+        }
+    }
+
+    if (config_.enable_antenna_check) {
+        for (int ni : net_order) {
+            auto av = check_antenna(ni);
+            if (av.ratio > config_.max_antenna_ratio) {
+                result.antenna_violations++;
+                result.antenna_details.push_back(av);
+            }
+        }
+    }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    result.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    result.message = std::to_string(result.routed_nets) + "/" +
+                     std::to_string(result.routed_nets + result.failed_nets) +
+                     " nets routed (negotiated congestion), overflow: " +
+                     std::to_string(result.overflow) +
+                     ", " + std::to_string(result.reroute_iterations) + " iterations";
+    if (config_.enable_timing_driven)
+        result.message += ", timing-driven";
+    if (result.antenna_violations > 0)
+        result.message += ", " + std::to_string(result.antenna_violations) + " antenna violations";
+
+    return result;
 }
 
 } // namespace sf

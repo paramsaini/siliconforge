@@ -143,6 +143,35 @@ struct Group {
     std::vector<std::string> members; // cell names or patterns
 };
 
+// Uniform-grid spatial hash for fast 2D region queries.
+// Supports insert / remove / query in O(1) amortised for bounded-size queries,
+// and handles 1M+ entries efficiently.
+class SpatialIndex {
+public:
+    void insert(int id, const Rect& bbox);
+    void remove(int id);
+    std::vector<int> query(const Rect& region) const;
+    std::vector<int> query_point(double x, double y) const;
+    void clear();
+    size_t size() const;
+    void rebuild();  // rebuild grid after bulk insertions
+
+private:
+    struct Entry { int id; Rect bbox; };
+    std::vector<Entry> entries_;
+    std::unordered_map<int, size_t> id_to_index_;  // id -> index in entries_
+
+    double cell_w_ = 100.0, cell_h_ = 100.0;
+    int grid_cols_ = 0, grid_rows_ = 0;
+    double min_x_ = 0, min_y_ = 0;
+    std::unordered_map<int, std::vector<size_t>> grid_;  // grid_cell_key -> entry indices
+
+    int grid_key(int col, int row) const;
+    std::pair<int,int> to_cell(double x, double y) const;
+    void compute_grid_params();
+    void insert_into_grid(size_t entry_idx);
+};
+
 // Complete physical design
 class PhysicalDesign {
 public:

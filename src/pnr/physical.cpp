@@ -66,6 +66,140 @@ bool PhysicalDesign::has_overlaps() const {
     return false;
 }
 
+// ── SpatialIndex implementation ──────────────────────────────────────
+
+int SpatialIndex::grid_key(int col, int row) const {
+    return row * grid_cols_ + col;
+}
+
+std::pair<int,int> SpatialIndex::to_cell(double x, double y) const {
+    int col = (cell_w_ > 0) ? (int)((x - min_x_) / cell_w_) : 0;
+    int row = (cell_h_ > 0) ? (int)((y - min_y_) / cell_h_) : 0;
+    col = std::clamp(col, 0, std::max(0, grid_cols_ - 1));
+    row = std::clamp(row, 0, std::max(0, grid_rows_ - 1));
+    return {col, row};
+}
+
+void SpatialIndex::compute_grid_params() {
+    if (entries_.empty()) {
+        grid_cols_ = grid_rows_ = 0;
+        min_x_ = min_y_ = 0;
+        cell_w_ = cell_h_ = 100.0;
+        return;
+    }
+    double mx0 = 1e18, my0 = 1e18, mx1 = -1e18, my1 = -1e18;
+    for (auto& e : entries_) {
+        mx0 = std::min(mx0, e.bbox.x0);
+        my0 = std::min(my0, e.bbox.y0);
+        mx1 = std::max(mx1, e.bbox.x1);
+        my1 = std::max(my1, e.bbox.y1);
+    }
+    min_x_ = mx0;
+    min_y_ = my0;
+    // Target ~sqrt(N) cells per side for O(sqrt(N)) query cost
+    int side = std::max(1, (int)std::sqrt((double)entries_.size()));
+    side = std::min(side, 4096);  // cap to avoid excessive memory
+    double span_x = mx1 - mx0, span_y = my1 - my0;
+    if (span_x <= 0) span_x = 1.0;
+    if (span_y <= 0) span_y = 1.0;
+    grid_cols_ = side;
+    grid_rows_ = side;
+    cell_w_ = span_x / grid_cols_;
+    cell_h_ = span_y / grid_rows_;
+    if (cell_w_ <= 0) cell_w_ = 1.0;
+    if (cell_h_ <= 0) cell_h_ = 1.0;
+}
+
+void SpatialIndex::insert_into_grid(size_t entry_idx) {
+    if (grid_cols_ <= 0 || grid_rows_ <= 0) return;
+    auto& e = entries_[entry_idx];
+    auto [c0, r0] = to_cell(e.bbox.x0, e.bbox.y0);
+    auto [c1, r1] = to_cell(e.bbox.x1, e.bbox.y1);
+    for (int r = r0; r <= r1; r++)
+        for (int c = c0; c <= c1; c++)
+            grid_[grid_key(c, r)].push_back(entry_idx);
+}
+
+void SpatialIndex::insert(int id, const Rect& bbox) {
+    // If grid hasn't been built yet, just accumulate and let rebuild() handle it
+    size_t idx = entries_.size();
+    entries_.push_back({id, bbox});
+    id_to_index_[id] = idx;
+    if (grid_cols_ > 0 && grid_rows_ > 0) {
+        insert_into_grid(idx);
+    }
+}
+
+void SpatialIndex::remove(int id) {
+    auto it = id_to_index_.find(id);
+    if (it == id_to_index_.end()) return;
+    size_t idx = it->second;
+    // Swap-and-pop in entries_
+    size_t last = entries_.size() - 1;
+    if (idx != last) {
+        entries_[idx] = entries_[last];
+        id_to_index_[entries_[idx].id] = idx;
+    }
+    entries_.pop_back();
+    id_to_index_.erase(it);
+    // Full grid rebuild is simplest; for hot-path remove, a lazy-deletion
+    // scheme would be better, but rebuild() is fine for typical EDA usage.
+    rebuild();
+}
+
+std::vector<int> SpatialIndex::query(const Rect& region) const {
+    std::vector<int> result;
+    if (grid_cols_ <= 0 || grid_rows_ <= 0) {
+        // Fallback linear scan (grid not built yet)
+        for (auto& e : entries_)
+            if (e.bbox.overlaps(region))
+                result.push_back(e.id);
+        return result;
+    }
+    auto [c0, r0] = to_cell(region.x0, region.y0);
+    auto [c1, r1] = to_cell(region.x1, region.y1);
+    // Use a seen-set to avoid duplicates from entries spanning multiple cells
+    std::unordered_map<int, bool> seen;
+    for (int r = r0; r <= r1; r++) {
+        for (int c = c0; c <= c1; c++) {
+            int key = grid_key(c, r);
+            auto git = grid_.find(key);
+            if (git == grid_.end()) continue;
+            for (size_t idx : git->second) {
+                if (idx >= entries_.size()) continue;
+                auto& e = entries_[idx];
+                if (!seen[e.id] && e.bbox.overlaps(region)) {
+                    seen[e.id] = true;
+                    result.push_back(e.id);
+                }
+            }
+        }
+    }
+    return result;
+}
+
+std::vector<int> SpatialIndex::query_point(double x, double y) const {
+    return query(Rect(x, y, x, y));
+}
+
+void SpatialIndex::clear() {
+    entries_.clear();
+    id_to_index_.clear();
+    grid_.clear();
+    grid_cols_ = grid_rows_ = 0;
+}
+
+size_t SpatialIndex::size() const {
+    return entries_.size();
+}
+
+void SpatialIndex::rebuild() {
+    grid_.clear();
+    compute_grid_params();
+    for (size_t i = 0; i < entries_.size(); i++)
+        insert_into_grid(i);
+}
+
 void PhysicalDesign::print_stats() const {
     std::cout << "Physical Design:\n"
               << "  Die: " << die_area.width() << " x " << die_area.height() << "\n"
