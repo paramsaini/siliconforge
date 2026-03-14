@@ -2343,6 +2343,68 @@ int DrcEngine::load_rule_deck_string(const std::string& deck) {
             rule.enabled = true;
             rules_.push_back(rule);
             loaded++;
+
+        } else if (kw == "OFFGRID") {
+            // OFFGRID M1 0.005 0.005 — edge alignment to manufacturing grid
+            std::string layer_name;
+            double gx, gy;
+            if (!(ls >> layer_name >> gx >> gy)) continue;
+            int layer = resolve_layer_name(layer_name);
+            if (layer < 0) continue;
+            grid_rules_.push_back({layer, gx, gy});
+            loaded++;
+
+        } else if (kw == "ANTENNAAREA") {
+            // ANTENNAAREA M1 500.0 [cumulative_ratio] — antenna area ratio
+            std::string layer_name;
+            double max_ratio;
+            if (!(ls >> layer_name >> max_ratio)) continue;
+            int layer = resolve_layer_name(layer_name);
+            if (layer < 0) continue;
+            double cum_ratio = 0;
+            ls >> cum_ratio;
+            DrcRule rule;
+            rule.layer = layer;
+            rule.value = max_ratio;
+            rule.aux_value = cum_ratio;
+            rule.type = DrcRule::ANTENNA_AREA;
+            rule.name = to_upper(layer_name) + ".AA.DECK";
+            rule.description = layer_name + " antenna area from rule deck";
+            rule.enabled = true;
+            rules_.push_back(rule);
+            antenna_rules_.push_back({layer, max_ratio, cum_ratio});
+            loaded++;
+
+        } else if (kw == "RULECHECK") {
+            // RULECHECK rule_group_name — named rule check grouping
+            std::string group_name;
+            if (!(ls >> group_name)) continue;
+            DrcRule rule;
+            rule.layer = DrcLayer::ANY;
+            rule.value = 0;
+            rule.type = DrcRule::MIN_WIDTH;
+            rule.name = "RULECHECK." + to_upper(group_name);
+            rule.description = "Rule check group: " + group_name;
+            rule.severity = DrcRule::INFO;
+            rule.enabled = true;
+            rules_.push_back(rule);
+            loaded++;
+
+        } else if (kw == "VARIABLE") {
+            // VARIABLE name value — define named variable for parameterized rules
+            std::string var_name;
+            double var_value;
+            if (!(ls >> var_name >> var_value)) continue;
+            DrcRule rule;
+            rule.layer = DrcLayer::ANY;
+            rule.value = var_value;
+            rule.type = DrcRule::MIN_WIDTH;
+            rule.name = "VAR." + to_upper(var_name);
+            rule.description = "Variable " + var_name + " = " + std::to_string(var_value);
+            rule.severity = DrcRule::INFO;
+            rule.enabled = false;
+            rules_.push_back(rule);
+            loaded++;
         }
     }
 

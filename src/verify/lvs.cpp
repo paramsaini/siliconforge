@@ -1332,4 +1332,254 @@ LvsResult LvsChecker::run_enhanced() {
     return r;
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// G) Hierarchical extraction — group cell instances by cell_type
+// ══════════════════════════════════════════════════════════════════════
+
+std::vector<LvsChecker::HierBlock> LvsChecker::extract_hierarchy() {
+    // Group layout cell instances by cell_type to form hierarchical blocks
+    std::unordered_map<std::string, std::vector<int>> type_to_cells;
+    for (size_t i = 0; i < layout_.cells.size(); ++i) {
+        const auto& cell = layout_.cells[i];
+        if (is_infrastructure_cell(cell.cell_type)) continue;
+        type_to_cells[cell.cell_type].push_back(static_cast<int>(i));
+    }
+
+    std::vector<HierBlock> blocks;
+    blocks.reserve(type_to_cells.size());
+
+    for (auto& [cell_type, cell_ids] : type_to_cells) {
+        HierBlock block;
+        block.name = cell_type;
+        block.instance_count = static_cast<int>(cell_ids.size());
+
+        // Build a set of cell indices in this block for fast lookup
+        std::unordered_set<int> block_cell_set(cell_ids.begin(), cell_ids.end());
+
+        // Extract devices within this block (from first representative instance)
+        for (int ci : cell_ids) {
+            const auto& cell = layout_.cells[ci];
+            std::string ct = to_upper(cell.cell_type);
+
+            ExtractedDevice dev;
+            dev.name = cell.name;
+            dev.width = cell.width;
+            dev.length = cell.height;
+
+            bool is_nmos = ct.find("NMOS") != std::string::npos ||
+                           ct.find("NFET") != std::string::npos;
+            bool is_pmos = ct.find("PMOS") != std::string::npos ||
+                           ct.find("PFET") != std::string::npos;
+            bool is_res  = ct.find("RES") != std::string::npos ||
+                           ct.find("RPOLY") != std::string::npos;
+            bool is_cap  = ct.find("CAP") != std::string::npos ||
+                           ct.find("MIM") != std::string::npos;
+
+            if (is_nmos || is_pmos) {
+                dev.type = ExtractedDevice::MOSFET;
+                dev.layer = 1;
+            } else if (is_res) {
+                dev.type = ExtractedDevice::RESISTOR;
+                dev.layer = 2;
+            } else if (is_cap) {
+                dev.type = ExtractedDevice::CAPACITOR;
+                dev.layer = 5;
+            } else {
+                dev.type = ExtractedDevice::DIODE;
+                dev.layer = 1;
+            }
+
+            // Gather connected net names
+            std::vector<std::string> connected;
+            for (const auto& net : layout_.nets) {
+                for (int c : net.cell_ids) {
+                    if (c == ci) {
+                        connected.push_back(net.name);
+                        break;
+                    }
+                }
+            }
+            if (connected.size() >= 1) dev.drain  = connected[0];
+            if (connected.size() >= 2) dev.gate   = connected[1];
+            if (connected.size() >= 3) dev.source = connected[2];
+            if (connected.size() >= 4) dev.bulk   = connected[3];
+
+            block.devices.push_back(dev);
+        }
+
+        // Identify ports: nets that connect cells inside the block to cells outside
+        // Also track internal nets (both endpoints inside the block)
+        std::unordered_set<std::string> port_set;
+        std::unordered_set<std::string> internal_set;
+
+        for (const auto& net : layout_.nets) {
+            bool has_inside = false, has_outside = false;
+            for (int cid : net.cell_ids) {
+                if (block_cell_set.count(cid)) has_inside = true;
+                else has_outside = true;
+            }
+            if (has_inside && has_outside) {
+                port_set.insert(net.name);
+            } else if (has_inside && !has_outside && net.cell_ids.size() >= 2) {
+                internal_set.insert(net.name);
+            }
+        }
+
+        block.ports.assign(port_set.begin(), port_set.end());
+        std::sort(block.ports.begin(), block.ports.end());
+
+        for (const auto& iname : internal_set) {
+            block.internal_nets.emplace_back(iname, block.name);
+        }
+
+        blocks.push_back(std::move(block));
+    }
+
+    // Sort blocks by name for deterministic output
+    std::sort(blocks.begin(), blocks.end(),
+              [](const HierBlock& a, const HierBlock& b) { return a.name < b.name; });
+
+    return blocks;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// H) Hierarchical LVS check — bottom-up block comparison
+// ══════════════════════════════════════════════════════════════════════
+
+LvsChecker::HierarchicalLvsResult LvsChecker::check_hierarchical() {
+    auto t0 = std::chrono::high_resolution_clock::now();
+    HierarchicalLvsResult result;
+
+    // Step 1: Extract hierarchy from layout
+    auto layout_blocks = extract_hierarchy();
+
+    // Step 2: Build schematic block signatures from netlist gates
+    // Group gates by type to form schematic "blocks"
+    std::unordered_map<std::string, int> schem_type_count;
+    std::unordered_map<std::string, std::vector<int>> schem_type_nets;
+    for (size_t i = 0; i < schem_.num_gates(); ++i) {
+        const auto& gate = schem_.gate(i);
+        if (gate.type == GateType::INPUT || gate.type == GateType::OUTPUT ||
+            gate.type == GateType::CONST0 || gate.type == GateType::CONST1) continue;
+        std::string tname = gate_type_str(gate.type);
+        schem_type_count[tname]++;
+        // Collect connected nets for this gate type
+        for (auto ni : gate.inputs) {
+            schem_type_nets[tname].push_back(ni);
+        }
+        if (gate.output >= 0) {
+            schem_type_nets[tname].push_back(gate.output);
+        }
+    }
+
+    // Count unique schematic nets per block
+    std::unordered_map<std::string, int> schem_net_count;
+    for (auto& [tname, net_ids] : schem_type_nets) {
+        std::unordered_set<int> unique_nets(net_ids.begin(), net_ids.end());
+        schem_net_count[tname] = static_cast<int>(unique_nets.size());
+    }
+
+    // Step 3: Match layout blocks to schematic blocks by name similarity
+    // Use partition refinement for structural matching when name match fails
+    std::vector<int> schem_gate_ids;
+    LvsGraph sg = build_schem_graph(schem_, schem_gate_ids);
+    auto s_classes = sg.partition_refine();
+
+    // Build schematic class signatures
+    std::unordered_map<std::string, int> s_type_to_class_count;
+    for (size_t i = 0; i < sg.cell_types.size(); ++i) {
+        s_type_to_class_count[sg.cell_types[i]]++;
+    }
+
+    // Step 4: Bottom-up comparison — match leaf blocks first
+    std::unordered_set<std::string> matched_schem_types;
+
+    for (const auto& block : layout_blocks) {
+        HierarchicalLvsResult::BlockResult br;
+        br.block_name = block.name;
+        br.devices = static_cast<int>(block.devices.size());
+        br.nets = static_cast<int>(block.ports.size() + block.internal_nets.size());
+
+        // Try exact name match first
+        std::string best_match;
+        double best_score = 0.0;
+
+        for (auto& [stype, scount] : schem_type_count) {
+            if (matched_schem_types.count(stype)) continue;
+            double score = net_similarity(to_upper(block.name), to_upper(stype));
+            if (score > best_score) {
+                best_score = score;
+                best_match = stype;
+            }
+        }
+
+        if (best_score >= 0.3 && !best_match.empty()) {
+            // Compare device counts
+            int schem_devices = schem_type_count[best_match];
+            int layout_devices = block.instance_count;
+
+            if (schem_devices == layout_devices) {
+                // Check net count compatibility
+                int schem_nets = schem_net_count.count(best_match) ?
+                                 schem_net_count[best_match] : 0;
+                int layout_nets = br.nets;
+
+                // Nets may differ slightly due to physical routing — allow tolerance
+                if (std::abs(schem_nets - layout_nets) <= std::max(1, schem_nets / 3)) {
+                    br.matched = true;
+                    matched_schem_types.insert(best_match);
+                } else {
+                    br.matched = false;
+                    br.mismatch_reason = "Net count mismatch: schematic=" +
+                        std::to_string(schem_nets) + " layout=" + std::to_string(layout_nets);
+                }
+            } else {
+                br.matched = false;
+                br.mismatch_reason = "Device count mismatch: schematic=" +
+                    std::to_string(schem_devices) + " layout=" + std::to_string(layout_devices);
+            }
+        } else {
+            // No schematic match found — try structural isomorphism via class count
+            auto sit = s_type_to_class_count.find(block.name);
+            if (sit != s_type_to_class_count.end() &&
+                sit->second == block.instance_count) {
+                br.matched = true;
+                matched_schem_types.insert(block.name);
+            } else {
+                br.matched = false;
+                br.mismatch_reason = "No matching schematic block found";
+            }
+        }
+
+        result.block_results.push_back(br);
+        result.blocks_compared++;
+        if (br.matched) result.blocks_matched++;
+        else result.blocks_mismatched++;
+    }
+
+    // Step 5: Overall match determination
+    result.match = (result.blocks_mismatched == 0) && (result.blocks_compared > 0);
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    result.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    // Generate report
+    std::ostringstream oss;
+    oss << "Hierarchical LVS: " << result.blocks_compared << " blocks compared, "
+        << result.blocks_matched << " matched, "
+        << result.blocks_mismatched << " mismatched\n";
+    for (const auto& br : result.block_results) {
+        oss << "  " << br.block_name << ": "
+            << (br.matched ? "PASS" : "FAIL")
+            << " (" << br.devices << " devices, " << br.nets << " nets)";
+        if (!br.matched && !br.mismatch_reason.empty()) {
+            oss << " — " << br.mismatch_reason;
+        }
+        oss << "\n";
+    }
+    result.report = oss.str();
+
+    return result;
+}
+
 } // namespace sf

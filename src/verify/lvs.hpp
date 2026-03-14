@@ -79,6 +79,35 @@ public:
     };
     void add_pin_swap_group(const PinSwapGroup& group);
 
+    // Hierarchical LVS result
+    struct HierarchicalLvsResult {
+        bool match = false;
+        int blocks_compared = 0;
+        int blocks_matched = 0;
+        int blocks_mismatched = 0;
+        double time_ms = 0;
+        struct BlockResult {
+            std::string block_name;
+            bool matched = false;
+            int devices = 0;
+            int nets = 0;
+            std::string mismatch_reason;
+        };
+        std::vector<BlockResult> block_results;
+        std::string report;
+    };
+    HierarchicalLvsResult check_hierarchical();
+
+    // Hierarchical extraction: extract subcircuits as blocks
+    struct HierBlock {
+        std::string name;
+        std::vector<ExtractedDevice> devices;
+        std::vector<std::string> ports;
+        std::vector<std::pair<std::string,std::string>> internal_nets;
+        int instance_count = 0;
+    };
+    std::vector<HierBlock> extract_hierarchy();
+
     // Cross-hierarchy comparison
     struct HierarchyLevel {
         std::string instance_name;
