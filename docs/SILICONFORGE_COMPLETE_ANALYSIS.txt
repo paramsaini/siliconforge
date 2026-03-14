@@ -1,0 +1,452 @@
+================================================================================
+SILICONFORGE C++ EDA PROJECT - COMPLETE CODEBASE ANALYSIS
+================================================================================
+
+PROJECT LOCATION: /home/paramsaini/Desktop/siliconforge/
+
+================================================================================
+PART 1: FULL DIRECTORY STRUCTURE (ALL .HPP AND .CPP FILES)
+================================================================================
+
+src/
+├── core/
+│   ├── aig.cpp / aig.hpp
+│   ├── design_db.cpp / design_db.hpp
+│   ├── netlist.cpp / netlist.hpp
+│   ├── hierarchy.cpp / hierarchy.hpp
+│   ├── die_to_die.cpp / die_to_die.hpp
+│   ├── liberty_parser.cpp / liberty_parser.hpp
+│   ├── def_parser.cpp / def_parser.hpp
+│   ├── lef_parser.cpp / lef_parser.hpp
+│   ├── report_gen.cpp / report_gen.hpp
+│   └── types.hpp
+│
+├── frontend/
+│   ├── verilog_parser.cpp / verilog_parser.hpp
+│   ├── sdc_parser.cpp / sdc_parser.hpp
+│   ├── sva_parser.cpp / sva_parser.hpp
+│   └── upf_parser.cpp / upf_parser.hpp
+│
+├── synth/
+│   ├── aig_opt.cpp / aig_opt.hpp
+│   ├── behavioral_synth.cpp / behavioral_synth.hpp
+│   ├── clock_gating.cpp / clock_gating.hpp
+│   ├── eco.cpp / eco.hpp
+│   ├── fsm_extract.cpp / fsm_extract.hpp
+│   ├── multi_vt.cpp / multi_vt.hpp
+│   ├── resource_share.cpp / resource_share.hpp
+│   ├── retiming.cpp / retiming.hpp
+│   └── tech_mapper.cpp / tech_mapper.hpp
+│
+├── sat/
+│   ├── cdcl_solver.cpp / cdcl_solver.hpp
+│   ├── cnf.hpp
+│   └── solver.hpp
+│
+├── formal/
+│   ├── tseitin.cpp / tseitin.hpp
+│   ├── equiv_checker.cpp / equiv_checker.hpp
+│   ├── bmc.cpp / bmc.hpp
+│   ├── k_induction.cpp / k_induction.hpp
+│   ├── lec.cpp / lec.hpp
+│   ├── sva_engine.cpp / sva_engine.hpp
+│   └── advanced_formal.cpp / advanced_formal.hpp
+│
+├── sim/
+│   └── simulator.cpp / simulator.hpp
+│
+├── lint/
+│   └── lint_engine.cpp / lint_engine.hpp
+│
+├── dft/
+│   ├── podem.cpp / podem.hpp
+│   ├── fault_sim.cpp / fault_sim.hpp
+│   ├── scan_insert.cpp / scan_insert.hpp
+│   └── jtag_bist.cpp / jtag_bist.hpp
+│
+├── hls/
+│   └── c_parser.cpp / c_parser.hpp
+│
+├── macro/
+│   └── memory_compiler.cpp / memory_compiler.hpp
+│
+├── pnr/
+│   ├── physical.cpp / physical.hpp
+│   ├── floorplan.cpp / floorplan.hpp
+│   ├── placer.cpp / placer.hpp
+│   ├── global_router.cpp / global_router.hpp
+│   ├── detailed_router.cpp / detailed_router.hpp
+│   ├── detailed_router_v2.cpp / detailed_router_v2.hpp
+│   ├── cts.cpp / cts.hpp
+│   ├── post_route_opt.cpp / post_route_opt.hpp
+│   ├── gdsii_writer.cpp / gdsii_writer.hpp
+│   ├── chip_assembler.cpp / chip_assembler.hpp
+│   ├── tsv_mgr.cpp / tsv_mgr.hpp
+│   ├── ai_tuner.cpp / ai_tuner.hpp
+│   ├── power_plan.cpp / power_plan.hpp
+│   ├── metal_fill.cpp / metal_fill.hpp
+│   └── cell_insert.cpp / cell_insert.hpp
+│
+├── timing/
+│   ├── sta.cpp / sta.hpp
+│   ├── ssta.cpp / ssta.hpp
+│   ├── power.cpp / power.hpp
+│   ├── parasitics.cpp / parasitics.hpp
+│   ├── ir_drop.cpp / ir_drop.hpp
+│   ├── pdn.cpp / pdn.hpp
+│   ├── noise.cpp / noise.hpp
+│   ├── signal_integrity.cpp / signal_integrity.hpp
+│   ├── electromigration.cpp / electromigration.hpp
+│   ├── mcmm.cpp / mcmm.hpp
+│   └── thermal.cpp / thermal.hpp
+│
+├── verify/
+│   ├── drc.cpp / drc.hpp
+│   ├── lvs.cpp / lvs.hpp
+│   ├── cdc.cpp / cdc.hpp
+│   ├── antenna.cpp / antenna.hpp
+│   ├── opc.cpp / opc.hpp
+│   ├── reliability.cpp / reliability.hpp
+│   └── erc.cpp / erc.hpp
+│
+├── ml/
+│   ├── congestion_model.cpp / congestion_model.hpp
+│   ├── timing_model.cpp / timing_model.hpp
+│   └── ml_opt.cpp / ml_opt.hpp
+│
+├── viz/
+│   ├── dashboard.cpp / dashboard.hpp
+│   ├── html_export.cpp / html_export.hpp
+│   ├── logic_viz.cpp / logic_viz.hpp
+│   ├── rtl_viz.cpp / rtl_viz.hpp
+│   └── sim_viz.cpp / sim_viz.hpp
+│
+├── flow/
+│   ├── engine.cpp / engine.hpp
+│
+├── shell/
+│   ├── sf_shell.cpp / sf_shell.hpp
+│   └── tcl_interp.cpp / tcl_interp.hpp
+│
+├── CMakeLists.txt
+└── main.cpp
+
+tests/ (44 test files for phases 1-44)
+
+ROOT:
+├── CMakeLists.txt
+└── [various design/output files]
+
+================================================================================
+PART 2: KEY FILES - COMPLETE CONTENT PROVIDED
+================================================================================
+
+All requested files have been fully extracted and provided:
+
+✓ CMakeLists.txt (root)
+✓ src/CMakeLists.txt
+✓ src/flow/engine.hpp (complete - main integration point)
+✓ src/flow/engine.cpp (2181 lines - complete)
+✓ src/timing/sta.hpp (complete - all OCV/AOCV/POCV configs)
+✓ src/timing/sta.cpp (1014 lines - complete)
+✓ src/pnr/placer.hpp (complete - timing/congestion-driven)
+✓ src/pnr/placer.cpp (944 lines - complete SimPL + Abacus)
+✓ src/pnr/floorplan.hpp (complete)
+✓ src/pnr/floorplan.cpp (complete - simulated annealing)
+✓ src/pnr/cell_insert.hpp (complete)
+✓ src/pnr/cell_insert.cpp (complete - filler/endcap/tap)
+✓ src/ml/congestion_model.hpp (complete - RUDY model)
+✓ src/core/netlist.hpp (complete - gate/net structures)
+✓ src/pnr/physical.hpp (complete - die area, cells, routing)
+✓ src/verify/cdc.hpp (complete)
+✓ src/verify/cdc.cpp (complete - domain crossing analysis)
+
+================================================================================
+PART 3: ARCHITECTURE & DESIGN PATTERNS
+================================================================================
+
+### Core Data Structures:
+
+1. **Netlist** (gate-level circuit)
+   - Nets: signals with driver gate, fanout gates, 4-state logic
+   - Gates: type, inputs, output, clock/reset (for DFFs)
+   - Primary I/O: inputs, outputs
+   - Storage: flip-flops, topological order
+   
+2. **PhysicalDesign** (layout representation)
+   - Die area (Rect)
+   - Cells (CellInstance): position, size, type, orientation
+   - Nets (PhysNet): connected cells with pin offsets
+   - Routing: layers, wires (with layer/start/end), vias
+   - Metrics: HPWL, utilization
+
+3. **STA Engine** (timing analysis)
+   - Pin timing: arrival (rise/fall), required, slack, slew
+   - Timing paths: gates, nets, delay, slack, depth
+   - Results: WNS, TNS, violations, critical paths
+   - Advanced: OCV/AOCV/POCV, CPPR, PBA, crosstalk
+
+4. **Placement Structures**
+   - Density bins: for look-ahead legalization spreading
+   - Congestion bins: RUDY-based routing demand estimation
+   - Constraints: fence, blockage, guide regions
+
+### Data Flow:
+   Verilog → Netlist → [Behavioral] → AIG → Tech Mapping → Gate Netlist
+     ↓
+   Floorplan → Cells + Routing Layers
+     ↓
+   Place (SimPL CG + Density Spread + Abacus)
+     ↓
+   Route (Multi-threaded detailed router)
+     ↓
+   Timing (STA with OCV/AOCV)  ← Feedback to placement
+     ↓
+   Verify (DRC, LVS, CDC, ERC)
+     ↓
+   [CTS, Power planning, Cell insertion, Metal fill]
+     ↓
+   GDS-II + JSON export
+
+================================================================================
+PART 4: KEY METHODS & FUNCTIONS
+================================================================================
+
+SiliconForge (engine.hpp/cpp) - Main Flow Orchestrator:
+  ✓ read_verilog()              Phase 1
+  ✓ read_sva()                  Phase 2
+  ✓ run_formal_bmc()            Phase 4-6
+  ✓ run_simulation()            Phase 7
+  ✓ synthesize()                Phase 8-10
+  ✓ run_dft()                   Phase 11
+  ✓ initialize_floorplan()      Phase 12
+  ✓ place()                     Phase 13 (timing-driven)
+  ✓ route()                     Phase 14
+  ✓ run_drc()                   Phase 15
+  ✓ run_lvs()                   Phase 16
+  ✓ run_cdc()                   Phase 17
+  ✓ run_erc()                   Phase 18
+  ✓ run_sta()                   Phase 19
+  ✓ run_power()                 Phase 20
+  ✓ run_mcmm()                  Phase 21
+  ✓ run_ssta()                  Phase 22
+  ✓ run_ir_drop()               Phase 23
+  ✓ run_pdn()                   Phase 24
+  ✓ run_signal_integrity()      Phase 25
+  ✓ run_thermal()               Phase 26
+  ✓ run_em()                    Phase 27
+  ✓ run_noise()                 Phase 28
+  ✓ run_cts()                   Phase 29
+  ✓ run_post_route_opt()        Phase 30
+  ✓ run_chip_assemble()         Phase 31-32
+  ✓ run_power_plan()            Phase 33
+  ✓ run_cell_insert()           Phase 34
+  ✓ run_metal_fill()            Phase 35
+  ✓ run_adv_formal()            Phase 36
+  ✓ optimize_pnr_with_ai()      Phase 37
+  ✓ run_lec()                   Post-synth verification
+  ✓ run_all()                   Full RTL-to-GDSII
+  ✓ write_gds()                 Export
+  ✓ write_json()                Legacy export
+  ✓ write_full_json()           Comprehensive JSON export
+
+StaEngine (sta.hpp/cpp) - Static Timing Analysis:
+  ✓ analyze()                   Single-corner STA
+  ✓ analyze_multicorner()       Multi-corner analysis
+  ✓ analyze_corner()            Per-corner with specific derating
+  ✓ set_clock_insertion()       CTS clock delay integration
+  ✓ set_sdc_constraints()       Constraint application
+  ✓ enable_ocv()                Flat OCV derating
+  ✓ enable_aocv()               Depth-dependent AOCV
+  ✓ enable_pocv()               Parametric POCV
+  ✓ enable_cppr()               Common path pessimism removal
+  ✓ enable_pba()                Path-based analysis
+  ✓ enable_crosstalk()          Coupling capacitance analysis
+  
+  Internal:
+  ✓ build_timing_graph()        Create timing arcs
+  ✓ forward_propagation()       Compute arrivals (LATE/setup)
+  ✓ hold_forward_propagation()  Compute arrivals (EARLY/hold)
+  ✓ backward_propagation()      Compute required times (setup)
+  ✓ hold_backward_propagation() Compute required times (hold)
+  ✓ compute_slacks()            Setup + hold slack
+  ✓ extract_paths()             Critical path extraction
+  ✓ compute_cppr_credits()      CPPR analysis
+  ✓ pba_reanalyze()             Path-based re-analysis
+  ✓ compute_crosstalk_delta()   Coupling-induced delay
+
+AnalyticalPlacer (placer.hpp/cpp) - Placement Engine:
+  ✓ place()                     Main placement loop
+  ✓ solve_quadratic_cg()        Conjugate gradient solver
+  ✓ density_spread()            Look-ahead legalization
+  ✓ legalize_abacus()           Optimal row assignment
+  ✓ update_timing_weights()     Timing-driven criticality
+  ✓ timing_aware_detail_placement() Post-legalization swaps
+  ✓ build_congestion_grid()     RUDY estimation
+  ✓ update_congestion_demand()  Net demand distribution
+  ✓ apply_congestion_penalty()  Congestion-based pushing
+  ✓ enforce_constraints()       Fence/blockage enforcement
+  ✓ compute_slack_histogram()   Timing distribution
+
+Floorplanner (floorplan.hpp/cpp) - Macro Placement:
+  ✓ solve()                     Simulated annealing main loop
+  ✓ add_macro()                 Add macro definition
+  ✓ add_connection()            Add inter-macro net
+  ✓ to_physical_design()        Convert to PhysicalDesign
+
+CellInserter (cell_insert.hpp/cpp) - Infrastructure Cells:
+  ✓ insert()                    Full insertion pass
+  ✓ insert_endcaps()            Left/right row endcaps
+  ✓ insert_well_taps()          P/N well tap cells
+  ✓ insert_fillers()            Greedy filler cell bin-packing
+
+CdcAnalyzer (cdc.hpp/cpp) - Clock Domain Crossing:
+  ✓ analyze()                   Main CDC analysis
+  ✓ set_clock_domain()          Manual domain assignment
+  ✓ auto_detect_domains()       Automatic domain detection
+  ✓ check_synchronizer()        2-FF synchronizer detection
+
+MlCongestionPredictor (congestion_model.hpp) - ML Prediction:
+  ✓ predict()                   RUDY-based congestion prediction
+
+================================================================================
+PART 5: KEY CONFIGURATION STRUCTURES
+================================================================================
+
+STA Configurations:
+  • OcvMode: NONE, OCV, AOCV, POCV
+  • AocvTable: late_variation, early_variation, depth-dependent derate functions
+  • PocvTable: n_sigma, default_sigma_pct, per-cell sigma mapping
+  • CpprConfig: enabled flag + clock insertion tracking
+  • CrosstalkConfig: coupling_cap_per_um, miller_factor, aggressor_slew, spacing
+  • CornerDerate: name, cell/wire derate (late and early), clock path derating
+
+Placement Configurations:
+  • ConstraintType: FENCE (hard), GUIDE (soft), BLOCKAGE (prohibited)
+  • PlacementConstraint: type, area, cell_ids
+  • CellPadding: left, right spacing (um)
+  • CongestionBin: demand, supply, overflow(), ratio()
+  • PlaceResult: HPWL, timing metrics, congestion, displacement, slack histogram
+
+Cell Insertion Configuration:
+  • CellInsertConfig: tap_spacing, filler_widths[], endcap_width, tap_width
+
+================================================================================
+PART 6: ADVANCED FEATURES SUMMARY
+================================================================================
+
+TIMING ANALYSIS:
+  ✓ Slew-aware gate delays (NLDM lookup with slew×load interpolation)
+  ✓ OCV: flat cell/wire derating (e.g., 1.15× late, 0.85× early)
+  ✓ AOCV: depth-dependent derating via √N statistical averaging
+  ✓ POCV: path-level sigma computation (RSS), N-sigma margin
+  ✓ CPPR: common path pessimism removal credit calculation
+  ✓ PBA: path-based re-analysis with actual path slews and crosstalk
+  ✓ Crosstalk: coupling cap × miller factor × wire spacing
+  ✓ Multi-corner: best/typical/worst PVT corners
+  ✓ Hold checks: separate early-path arrivals
+  ✓ Clock insertion delays: per-DFF from CTS
+
+PLACEMENT:
+  ✓ SimPL algorithm: CG solver + density spreading + Abacus legalization
+  ✓ Timing-driven: slack-based net weighting, criticality exponential
+  ✓ Congestion-driven: RUDY-based demand, anchor pushing
+  ✓ Macro placement: corner/edge positioning with halos
+  ✓ Constraints: fences (hard), blockages (prohibited), guides (soft)
+  ✓ Cell padding: DRC-aware spacing
+  ✓ Incremental/ECO: selective cell movement with max displacement
+  ✓ Slack histogram: 10-bucket distribution analysis
+  ✓ Displacement metrics: average and worst-case
+
+VERIFICATION:
+  ✓ CDC: multi-domain crossing detection with 2-FF synchronizer validation
+  ✓ DRC/LVS: physical and schematic verification
+  ✓ ERC: electrical rule checking
+  ✓ CTS: clock tree synthesis with insertion delay computation
+  ✓ Power: dynamic, leakage, switching, internal, clock power
+  ✓ IR-drop: resistive mesh analysis
+  ✓ PDN: impedance profile across frequency spectrum
+  ✓ Signal Integrity: victim/aggressor analysis
+  ✓ Thermal: steady-state temperature distribution
+  ✓ EM: electromigration MTTF computation
+
+FORMAL VERIFICATION:
+  ✓ BMC: bounded model checking with SAT solver
+  ✓ K-induction: unbounded sequential reasoning
+  ✓ LEC: logic equivalence checking
+  ✓ Advanced: IC3, LTL, CEGAR
+
+SYNTHESIS:
+  ✓ Verilog parsing with behavioral AST handling
+  ✓ AIG optimization: rewrite, refactor, balance
+  ✓ Technology mapping with Liberty library
+  ✓ Behavioral synthesis: always blocks → structural gates
+  ✓ FSM extraction: state machine detection & optimization
+  ✓ Resource sharing: CDFG mutually-exclusive operations
+  ✓ Retiming: register movement (Leiserson-Saxe)
+
+DFT:
+  ✓ PODEM ATPG: test pattern generation
+  ✓ Fault simulation: stuck-at fault coverage analysis
+  ✓ Scan insertion: SCANIN/SCANOUT
+  ✓ JTAG/BIST: built-in self-test
+
+================================================================================
+PART 7: INTEGRATION POINTS FOR 8 NEW FEATURES
+================================================================================
+
+Based on the codebase analysis, here are integration points for 8 new features:
+
+1. **Advanced Placement**: Extend AnalyticalPlacer
+   - Hook into: solve_quadratic_cg(), density_spread(), legalize_abacus()
+   - Modify: net weight computation, anchor updates
+
+2. **Enhanced Routing**: Extend DetailedRouterV2
+   - Hook into: route() in engine.cpp
+   - Add: new routing algorithms, via/layer optimization
+
+3. **Power Optimization**: Extend PowerAnalyzer
+   - Hook into: run_power() in engine.cpp
+   - Add: new power reduction techniques
+
+4. **Custom Verification**: Extend verify/* classes
+   - Hook into: run_drc(), run_erc() methods
+   - Add: domain-specific rule checking
+
+5. **ML-Enhanced Timing**: Extend timing/ml integration
+   - Hook into: StaEngine::analyze() or update_timing_weights()
+   - Add: ML-predicted delay correction factors
+
+6. **Reliability Analysis**: Extend ReliabilityAnalyzer
+   - Hook into: run_reliability() in engine.cpp
+   - Add: new aging models, voltage stability
+
+7. **Custom Cell Library**: Extend LibertyLibrary
+   - Hook into: build_default_liberty() in engine.cpp
+   - Add: custom cell characterization, process-specific data
+
+8. **Visualization Extensions**: Extend DashboardVisualizer
+   - Hook into: generate_dashboard() in engine.cpp
+   - Add: new HTML/interactive features, data formats
+
+================================================================================
+PART 8: BUILD & COMPILATION
+================================================================================
+
+Requirements:
+  • CMake 3.20+
+  • C++20 compiler (GCC/Clang)
+  • Standard C++ library
+
+Build:
+  mkdir build && cd build
+  cmake .. -DCMAKE_BUILD_TYPE=Release
+  make -j$(nproc)
+
+Output:
+  build/src/libsiliconforge_lib.a (static library)
+  build/siliconforge (executable)
+
+================================================================================
+END OF COMPLETE ANALYSIS
+================================================================================

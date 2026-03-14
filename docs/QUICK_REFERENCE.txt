@@ -1,0 +1,300 @@
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                   DEF PARSER & HIERARCHY: QUICK REFERENCE                      ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+1. DEF PARSER PARSING SECTIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+DIEAREA ( x0 y0 ) ( x1 y1 ) ;
+├─ Coordinates divided by 1000 (DBU → microns)
+├─ Stores in: PhysicalDesign::die_area = Rect(x0/1000, y0/1000, x1/1000, y1/1000)
+└─ Lines 39-52 in def_parser.cpp
+
+COMPONENTS count ;
+  - name type PLACED ( x y ) ;
+END COMPONENTS
+├─ Each cell: name, type, placement keyword (PLACED or FIXED)
+├─ Coordinates: (x/1000, y/1000)
+├─ Hardcoded size: width=3.0, height=pd.row_height (≈10.0)
+├─ Creates CellInstance with placed=true flag
+├─ Stores in: PhysicalDesign::cells vector
+└─ Lines 54-86 in def_parser.cpp
+
+NETS count ;
+  - net_name ( cell_name pin ) ( cell_name pin ) ... ;
+END NETS
+├─ For each net entry:
+│  ├─ Extract net_name
+│  ├─ Find cells using LINEAR SEARCH on pd.cells[i].name
+│  └─ Only add net if ≥2 endpoints
+├─ Stores in: PhysicalDesign::nets vector
+└─ Lines 87-124 in def_parser.cpp
+
+SECTIONS SKIPPED (not parsed):
+├─ LEF (cell definitions)
+├─ BLOCKAGE, REGION, PIN
+├─ VIA, TRACK, GCELLGRID
+├─ ROUTING (wires/vias are stubs)
+└─ All power intent, timing constraints
+
+═══════════════════════════════════════════════════════════════════════════════
+
+2. NETLIST DATA FLOW
+═══════════════════════════════════════════════════════════════════════════════
+
+add_net(name)
+├─ Returns: NetId (index in nets_ vector)
+├─ Auto-naming: if empty → "n0", "n1", ...
+└─ Initializes: value=X, next_value=X, fanout=[], driver=-1
+
+add_gate(type, inputs[], output, name)
+├─ Returns: GateId (index in gates_ vector)
+├─ Updates bidirectional pointers:
+│  ├─ For each input NetId: nets_[ni].fanout.push_back(gid)
+│  └─ If output >= 0: nets_[output].driver = gid
+└─ Auto-naming: if empty → "BUF0", "NOT1", ...
+
+add_dff(d, clk, q, reset, name)
+├─ Creates Gate with type=DFF
+├─ Data input: inputs={d}
+├─ Control: clk, reset stored separately
+├─ Output: q
+├─ Updates fanout for d, clk, reset
+├─ Adds to dffs_ vector
+└─ Initializes: init_val=ZERO
+
+eval_gate(type, inputs[])
+├─ Truth tables for: BUF, NOT, AND, OR, NAND, NOR, XOR, XNOR, MUX
+├─ Conditional: BUFIF0, BUFIF1, NOTIF0, NOTIF1
+├─ Constants: CONST0, CONST1
+└─ 4-state logic: 0, 1, X (unknown), Z (high-impedance)
+
+topo_order()
+├─ Algorithm: Kahn's algorithm
+├─ Treats DFFs and INPUTs as sources (zero in-degree)
+├─ DFFs break feedback loops
+└─ Returns: vector<GateId> in evaluation order
+
+═══════════════════════════════════════════════════════════════════════════════
+
+3. HIERARCHY MANAGER OPERATIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+add_module(name, netlist)
+├─ Logical layer only
+├─ Sets: gate_count = netlist.num_gates()
+└─ Sets: is_leaf = true
+
+add_module(name, netlist, physical)
+├─ Both layers
+├─ Sets: gate_count = netlist.num_gates()
+├─ Sets: area_um2 = physical.die_area.area()
+└─ Sets: is_leaf = true
+
+instantiate(parent, child, instance_name="")
+├─ Adds child to parent.sub_modules[]
+├─ Sets: parent.is_leaf = false
+└─ Note: instance_name parameter UNUSED
+
+analyze()
+├─ Returns: HierarchyResult with:
+│  ├─ total_modules: count all
+│  ├─ leaf_modules: count is_leaf=true
+│  ├─ total_gates: sum all gate_counts
+│  ├─ total_area: sum all area_um2
+│  ├─ hierarchy_depth: max recursion depth
+│  └─ time_ms: execution time
+├─ Algorithm:
+│  ├─ 1. Count leaves, sum stats
+│  ├─ 2. Build set of all child modules
+│  ├─ 3. Find roots (not in children set)
+│  └─ 4. Compute max depth from each root (recursive)
+└─ Returns formatted message
+
+flatten(top_module)
+├─ Recursively merge all sub-modules
+├─ Process:
+│  ├─ 1. Copy nets with hierarchical prefix
+│  ├─ 2. Build net_remap: old NetId → new NetId
+│  ├─ 3. Copy gates (skip INPUT/OUTPUT), remap inputs/outputs
+│  ├─ 4. Prefix gate names: "cpu/alu/gate0"
+│  ├─ 5. Recursively merge sub-modules with deeper prefix
+│  └─ 6. Result: single Netlist with hierarchical names
+└─ Skips: I/O ports (INPUT, OUTPUT gate types)
+
+hierarchy_tree(top, indent)
+├─ Generates ASCII tree
+├─ Format: "├─ name (gates, area)"
+├─ Recursively indents sub-modules
+└─ Output example:
+    ├─ top (100 gates, 5000um²)
+      ├─ cpu (50 gates)
+      ├─ memory (50 gates)
+
+═══════════════════════════════════════════════════════════════════════════════
+
+4. PHYSICAL DESIGN METRICS
+═══════════════════════════════════════════════════════════════════════════════
+
+total_wirelength() [HPWL]
+├─ Formula: (max_x - min_x) + (max_y - min_y) per net
+├─ Half-Perimeter Wirelength
+├─ Sums over all nets
+├─ Uses cell.position + pin_offset
+└─ Units: microns
+
+utilization()
+├─ Formula: cell_area / die_area
+├─ cell_area = sum(width × height) for all cells
+├─ die_area = die_area.area()
+└─ Returns: fraction (0.0 to 1.0)
+
+has_overlaps()
+├─ O(n²) naive check
+├─ Checks only placed cells (placed=true)
+├─ Returns: true if any two cells overlap
+└─ Uses Rect::overlaps()
+
+═══════════════════════════════════════════════════════════════════════════════
+
+5. CRITICAL DESIGN PATTERNS
+═══════════════════════════════════════════════════════════════════════════════
+
+TWO-LAYER ARCHITECTURE:
+├─ Logical Layer: Netlist
+│  ├─ Pure gate-level logic
+│  ├─ Always flat (no hierarchy)
+│  ├─ Supports simulation, verification
+│  └─ Independent of physical design
+└─ Physical Layer: PhysicalDesign
+   ├─ Pure placement and routing
+   ├─ No gate semantics
+   ├─ Supports metrics, DRC (stubs)
+   └─ Independent of netlists
+
+BRIDGING LAYERS:
+├─ DesignModule contains BOTH Netlist AND PhysicalDesign
+├─ Can analyze either separately
+├─ Can flatten either separately
+└─ Hierarchy is stored at DesignModule level, not in Netlist
+
+BIDIRECTIONAL CONNECTIVITY:
+├─ Net struct:
+│  ├─ fanout[] ← gates reading this net
+│  └─ driver ← gate driving this net
+├─ Gate struct:
+│  ├─ inputs[] ← nets fed to this gate
+│  └─ output ← net driven by this gate
+└─ Both pointers kept in sync during add_gate()
+
+═══════════════════════════════════════════════════════════════════════════════
+
+6. LIMITATIONS & GAPS
+═══════════════════════════════════════════════════════════════════════════════
+
+DEF PARSER ISSUES:
+├─ Hardcoded cell width=3.0 microns (inflexible)
+├─ O(n) linear search for cell name lookup (inefficient in NETS)
+├─ No LEF parsing (cell library must be external)
+├─ No hierarchical DEF (flattens all modules)
+├─ No pin definitions parsed
+├─ No orientation/rotation enforced
+└─ Silent skipping of unknown sections (no error reporting)
+
+NETLIST LIMITATIONS:
+├─ No module hierarchy (always flat)
+├─ Limited gate set (18 types)
+├─ No timing constraints
+├─ No power intent
+└─ No cross-module nets preserved
+
+PHYSICAL DESIGN STUBS:
+├─ WireSegment vector usually empty
+├─ Via vector usually empty
+├─ No actual routing performed
+├─ No DRC checking
+├─ No congestion analysis
+├─ No macro placement constraints
+└─ No power network analysis
+
+HIERARCHY MANAGER GAPS:
+├─ instantiate() doesn't track instance names (only module references)
+├─ Cannot modify hierarchy after creation (immutable)
+├─ No instance-level customization (e.g., instance-specific parameters)
+└─ No support for parameterized modules
+
+═══════════════════════════════════════════════════════════════════════════════
+
+7. PARSING ALGORITHM (STATE MACHINE)
+═══════════════════════════════════════════════════════════════════════════════
+
+parse_file(filename)
+└─ Open file
+   └─ Read all bytes into string
+      └─ parse_string(content)
+         └─ tokenize(content)
+            ├─ Skip lines starting with '#'
+            ├─ Split on whitespace
+            ├─ Break at ';', '(', ')'
+            └─ Return vector<string>
+         └─ parse_tokens(tokens)
+            ├─ pos = 0
+            ├─ while (pos < tokens.size())
+            │  ├─ if (tokens[pos] == "DIEAREA")     → parse DIEAREA
+            │  ├─ else if (tokens[pos] == "COMPONENTS") → parse COMPONENTS
+            │  ├─ else if (tokens[pos] == "NETS")   → parse NETS
+            │  └─ else                               → skip (pos++)
+            └─ return true
+
+═══════════════════════════════════════════════════════════════════════════════
+
+8. KEY FORMULAS
+═══════════════════════════════════════════════════════════════════════════════
+
+DBU to Microns:
+   value_um = value_dbu / 1000.0
+
+HPWL (Half-Perimeter Wirelength):
+   hpwl = (max_x - min_x) + (max_y - min_y)
+
+Utilization:
+   utilization = (sum of cell areas) / (die area)
+
+Manhattan Distance:
+   dist = |x1 - x2| + |y1 - y2|
+
+Rect Overlap:
+   overlaps = NOT (x1_max <= x2_min OR x2_max <= x1_min OR 
+                   y1_max <= y2_min OR y2_max <= y1_min)
+
+═══════════════════════════════════════════════════════════════════════════════
+
+9. IEEE 1364 4-STATE LOGIC TRUTH TABLES
+═══════════════════════════════════════════════════════════════════════════════
+
+AND Operation (0 dominates):
+   & │  0  1  X  Z     OR Operation (1 dominates):
+   ──┼──────────────     | │  0  1  X  Z
+   0 │  0  0  0  0      ──┼──────────────
+   1 │  0  1  X  X      0 │  0  1  X  X
+   X │  0  X  X  X      1 │  1  1  1  1
+   Z │  0  X  X  X      X │  X  1  X  X
+                        Z │  X  1  X  X
+
+XOR (any X/Z → X):
+   ^ │  0  1  X  Z
+   ──┼──────────────
+   0 │  0  1  X  X
+   1 │  1  0  X  X
+   X │  X  X  X  X
+   Z │  X  X  X  X
+
+NOT:
+   NOT 0 = 1
+   NOT 1 = 0
+   NOT X = X
+   NOT Z = X
+
+═══════════════════════════════════════════════════════════════════════════════
+
+FULL ANALYSIS DOCUMENT: /home/paramsaini/DEEP_ANALYSIS.md (1156 lines)

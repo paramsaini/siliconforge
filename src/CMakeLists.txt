@@ -122,6 +122,11 @@ add_library(siliconforge_lib STATIC
 )
 
 target_include_directories(siliconforge_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(siliconforge_lib PUBLIC Threads::Threads)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(siliconforge_lib PUBLIC OpenMP::OpenMP_CXX)
+    target_compile_definitions(siliconforge_lib PUBLIC SF_HAS_OPENMP=1)
+endif()
 
 add_executable(siliconforge main.cpp)
 target_link_libraries(siliconforge PRIVATE siliconforge_lib)

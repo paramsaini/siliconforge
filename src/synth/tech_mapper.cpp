@@ -11,6 +11,10 @@
 #include <numeric>
 #include <cmath>
 #include <cctype>
+#include <mutex>
+#ifdef SF_HAS_OPENMP
+#include <omp.h>
+#endif
 
 namespace sf {
 
@@ -1325,38 +1329,49 @@ Netlist TechMapper::map(bool optimize_area) {
         goal_ = MapGoal::AREA;
     }
 
-    // Step 1: Enumerate all matches for all AIG AND nodes
+    // Step 1: Enumerate all matches for all AIG AND nodes (parallelized)
     // Step 2: Select best match based on goal
-    std::vector<CellMatch> matches;
-    std::unordered_set<uint32_t> covered_vars; // track nodes covered by multi-input matches
+    // Each node's match enumeration is independent — safe for parallel execution.
+    uint32_t max_var = aig_.max_var();
+    std::vector<uint32_t> and_vars;
+    and_vars.reserve(max_var);
+    for (uint32_t v = 1; v <= max_var; ++v) {
+        if (aig_.is_and(v)) and_vars.push_back(v);
+    }
 
-    for (uint32_t v = 1; v <= aig_.max_var(); ++v) {
-        if (!aig_.is_and(v)) continue;
+    std::vector<CellMatch> matches(and_vars.size());
 
+#ifdef SF_HAS_OPENMP
+    #pragma omp parallel for schedule(dynamic, 64)
+#endif
+    for (size_t idx = 0; idx < and_vars.size(); ++idx) {
+        uint32_t v = and_vars[idx];
         auto all_matches = find_all_matches(v);
         if (all_matches.empty()) {
-            // Fallback to original match_node
-            auto m = match_node(v);
-            if (m.cell) matches.push_back(m);
-            continue;
-        }
-
-        ExtendedMatch best = select_best_match(all_matches);
-        if (best.cell) {
-            matches.push_back(to_cell_match(best));
+            matches[idx] = match_node(v);
         } else {
-            // Fallback
-            auto m = match_node(v);
-            if (m.cell) matches.push_back(m);
+            ExtendedMatch best = select_best_match(all_matches);
+            if (best.cell) {
+                matches[idx] = to_cell_match(best);
+            } else {
+                matches[idx] = match_node(v);
+            }
         }
     }
 
+    // Remove entries with no cell match
+    std::vector<CellMatch> final_matches;
+    final_matches.reserve(matches.size());
+    for (auto& m : matches) {
+        if (m.cell) final_matches.push_back(std::move(m));
+    }
+
     // Step 3: Build netlist
-    auto nl = build_netlist(matches);
+    auto nl = build_netlist(final_matches);
 
     // Step 4: If goal is DELAY, run area recovery on non-critical paths
     if (goal_ == MapGoal::DELAY) {
-        area_recovery_pass(nl, matches);
+        area_recovery_pass(nl, final_matches);
     }
 
     stats_.depth = 0;
@@ -1433,17 +1448,27 @@ Netlist TechMapper::map_optimal(const IlpMapConfig& cfg) {
 
     for (int iter = 0; iter < cfg.lagrangian_iterations; iter++) {
         // For each AIG node, find all matches and select by weighted cost
-        std::vector<CellMatch> optimal_matches;
-        double total_cost = 0;
+        uint32_t max_v = aig_.max_var();
+        std::vector<uint32_t> opt_vars;
+        opt_vars.reserve(max_v);
+        for (uint32_t var = 1; var <= max_v; ++var) {
+            if (aig_.is_and(var)) opt_vars.push_back(var);
+        }
 
-        for (uint32_t var = 1; var <= aig_.max_var(); ++var) {
+        std::vector<CellMatch> optimal_matches(opt_vars.size());
+        std::vector<double> costs(opt_vars.size(), 0.0);
+
+#ifdef SF_HAS_OPENMP
+        #pragma omp parallel for schedule(dynamic, 64)
+#endif
+        for (size_t idx = 0; idx < opt_vars.size(); ++idx) {
+            uint32_t var = opt_vars[idx];
             auto candidates = find_all_matches(var);
             if (candidates.empty()) {
-                optimal_matches.push_back(match_node(var));
+                optimal_matches[idx] = match_node(var);
                 continue;
             }
 
-            // Score each candidate with current lambda
             double best_score = 1e18;
             ExtendedMatch best_em = candidates[0];
             for (auto& em : candidates) {
@@ -1454,11 +1479,21 @@ Netlist TechMapper::map_optimal(const IlpMapConfig& cfg) {
                 }
             }
 
-            optimal_matches.push_back(to_cell_match(best_em));
-            total_cost += best_score;
+            optimal_matches[idx] = to_cell_match(best_em);
+            costs[idx] = best_score;
         }
 
-        auto nl = build_netlist(optimal_matches);
+        // Filter and collect
+        std::vector<CellMatch> filtered;
+        double total_cost = 0;
+        for (size_t idx = 0; idx < opt_vars.size(); ++idx) {
+            if (optimal_matches[idx].cell) {
+                filtered.push_back(std::move(optimal_matches[idx]));
+                total_cost += costs[idx];
+            }
+        }
+
+        auto nl = build_netlist(filtered);
         insert_buffers(nl);
 
         if (total_cost < best_cost) {

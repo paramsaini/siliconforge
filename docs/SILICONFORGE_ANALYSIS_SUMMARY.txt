@@ -1,0 +1,651 @@
+================================================================================
+                    SILICONFORGE PROJECT COMPLETE REFERENCE
+                    Generated for: Integration & Development
+================================================================================
+
+PROJECT ROOT: ~/Desktop/siliconforge/
+
+This file contains complete API documentation and patterns for understanding
+and extending the SiliconForge codebase, with special focus on DFT tools.
+
+================================================================================
+QUICK START: Essential APIs
+================================================================================
+
+NETLIST CREATION (core/netlist.hpp):
+    Netlist nl;                                      // Create empty netlist
+    NetId sig = nl.add_net("signal_name");          // Create signal
+    GateId g = nl.add_gate(GateType::AND, {a, b}, out, "AND_0");  // Gate
+    GateId dff = nl.add_dff(d, clk, q, reset, "DFF_0");           // DFF
+    nl.mark_input(sig);                             // Mark as PI
+    nl.mark_output(sig);                            // Mark as PO
+
+QUERIES:
+    const auto& dff_ids = nl.flip_flops();          // All DFFs
+    const auto& pis = nl.primary_inputs();          // All PIs
+    const auto& gates = nl.gates();                 // All gates
+    Gate& g = nl.gate(gate_id);                     // Access gate by ID
+    std::vector<GateId> topo = nl.topo_order();     // Topological sort
+
+SCAN INSERTION (dft/scan_insert.hpp):
+    ScanConfig cfg;
+    cfg.max_chain_length = 100;
+    ScanInserter si(nl);
+    ScanResult result = si.insert(cfg);
+    // result.num_chains, result.total_ffs, result.chain_lengths
+
+FAULT SIMULATION (dft/fault_sim.hpp):
+    FaultSimulator sim(nl);
+    std::vector<std::vector<Logic4>> tests = { ... };
+    FaultSimResult result = sim.simulate(tests);
+    // result.coverage_pct(), result.detected, result.total_faults
+
+ATPG (dft/podem.hpp):
+    PodemAtpg atpg(nl);
+    Fault f{net_id, Logic4::ZERO};
+    AtpgResult test = atpg.generate_test(f);
+    FaultCoverage coverage = atpg.run_full_atpg();
+
+================================================================================
+DIRECTORY STRUCTURE
+================================================================================
+
+src/
+  core/           → netlist.hpp, types.hpp, aig, hierarchy, parsers
+  dft/            → scan_insert, fault_sim, podem
+  frontend/       → verilog_parser, sdc_parser, sva_parser
+  synth/          → behavioral_synth, tech_mapper, aig_opt, etc.
+  formal/         → equiv_checker, lec, bmc, k_induction
+  sim/            → event-driven simulator
+  sat/            → CDCL SAT solver
+  timing/         → sta, power, parasitics, mcmm, etc.
+  pnr/            → placement, routing, floorplan, gdsii_writer, etc.
+  verify/         → drc, lvs, cdc, antenna, etc.
+  viz/            → dashboard, visualization
+  ... (26 modules total)
+
+tests/           → 28 test phases (test_phase1.cpp to test_phase28.cpp)
+studio/          → Verilog test designs
+
+KEY FILES:
+  src/CMakeLists.txt          → Build config (105+ files, static library)
+  src/core/netlist.hpp        → Core gate-level netlist API
+  src/core/types.hpp          → Logic4, BitVector, logic operations
+  src/dft/scan_insert.hpp     → Scan chain insertion
+  src/dft/fault_sim.hpp       → Parallel-pattern fault simulator
+  src/dft/podem.hpp           → PODEM ATPG algorithm
+
+================================================================================
+NETLIST API (src/core/netlist.hpp)
+================================================================================
+
+GATE TYPES (GateType enum):
+  INPUT, OUTPUT               (I/O markers)
+  BUF, NOT                    (basic gates)
+  AND, OR, NAND, NOR          (multi-input logic)
+  XOR, XNOR                   (2-input logic)
+  MUX                         (3-input: select, data1, data0)
+  DFF, DLATCH                 (sequential elements)
+  TRI, CONST0, CONST1         (special)
+  BUFIF0, BUFIF1, NOTIF0, NOTIF1  (tristate/conditional)
+
+TYPE ALIASES:
+  using NetId = int32_t;      (signal identifier)
+  using GateId = int32_t;     (gate identifier)
+
+NET STRUCT:
+  struct Net {
+      NetId id;
+      std::string name;
+      Logic4 value, next_value;  (4-state values)
+      std::vector<GateId> fanout;
+      GateId driver = -1;
+  };
+
+GATE STRUCT:
+  struct Gate {
+      GateId id;
+      GateType type;
+      std::string name;
+      std::vector<NetId> inputs;  (order matters for MUX)
+      NetId output = -1;
+      NetId clk = -1;             (DFF-specific)
+      NetId reset = -1;           (DFF-specific)
+      Logic4 init_val = Logic4::ZERO;
+  };
+
+NETLIST CLASS PUBLIC METHODS:
+  
+  Construction:
+    NetId add_net(const std::string& name = "");
+    GateId add_gate(GateType type, const std::vector<NetId>& inputs,
+                   NetId output, const std::string& name = "");
+    GateId add_dff(NetId d, NetId clk, NetId q, NetId reset = -1,
+                  const std::string& name = "");
+    void mark_input(NetId id);
+    void mark_output(NetId id);
+  
+  Access:
+    Net& net(NetId id);
+    const Net& net(NetId id) const;
+    Gate& gate(GateId id);
+    const Gate& gate(GateId id) const;
+  
+  Queries:
+    size_t num_nets() const;
+    size_t num_gates() const;
+    const std::vector<NetId>& primary_inputs() const;
+    const std::vector<NetId>& primary_outputs() const;
+    const std::vector<GateId>& flip_flops() const;
+    const std::vector<Net>& nets() const;
+    const std::vector<Gate>& gates() const;
+  
+  Analysis:
+    std::vector<GateId> topo_order() const;  (Kahn's algorithm)
+    static Logic4 eval_gate(GateType type, const std::vector<Logic4>& inputs);
+  
+  Maintenance:
+    void print_stats() const;
+    void clear();
+
+IMPORTANT PATTERNS:
+
+  Iterate flip-flops safely:
+    auto ff_ids = std::vector<GateId>(nl.flip_flops().begin(),
+                                      nl.flip_flops().end());  // Cache!
+    for (GateId gid : ff_ids) {
+        Gate& g = nl.gate(gid);
+        // Safe to modify netlist here
+        nl.add_gate(...);  // Won't invalidate ff_ids
+    }
+
+  Access DFF components:
+    for (GateId dff_id : nl.flip_flops()) {
+        auto& g = nl.gate(dff_id);
+        NetId d = g.inputs[0];       // D input
+        NetId q = g.output;          // Q output
+        NetId clk = g.clk;           // Clock
+        NetId reset = g.reset;       // Reset (-1 if unused)
+    }
+
+  MUX gate structure:
+    GateId mux = nl.add_gate(GateType::MUX,
+        {select_net, data_if_1, data_if_0},  // inputs[0], [1], [2]
+        output_net);
+
+================================================================================
+SCAN INSERTION API (src/dft/scan_insert.hpp)
+================================================================================
+
+ScanConfig:
+    int max_chain_length = 100;              // Max FFs per chain
+    std::string scan_in_prefix = "scan_in";
+    std::string scan_out_prefix = "scan_out";
+    std::string scan_enable_name = "scan_enable";
+
+ScanResult:
+    int num_chains = 0;                      // Chains created
+    int total_ffs = 0;                       // FFs processed
+    std::vector<int> chain_lengths;          // Length of each chain
+    std::string message;                     // Status message
+
+ScanInserter Class:
+    explicit ScanInserter(Netlist& nl);      // Non-owning reference
+    ScanResult insert(const ScanConfig& config = {});
+    
+    Implementation:
+      1. Creates scan_enable net (primary input)
+      2. Groups FFs into chains of max_chain_length
+      3. For each chain:
+         - Creates scan_in_N net (primary input)
+         - Inserts MUX before each FF's D input
+         - Chains FF Q outputs as MUX select inputs
+         - Creates scan_out_N from last FF's Q (primary output)
+      4. Returns ScanResult with statistics
+
+================================================================================
+FAULT SIMULATOR API (src/dft/fault_sim.hpp)
+================================================================================
+
+FaultSimResult:
+    size_t total_faults = 0;
+    size_t detected = 0;
+    double coverage_pct() const;  // Returns 0-100
+
+FaultSimulator Class:
+    explicit FaultSimulator(Netlist& nl);
+    FaultSimResult simulate(const std::vector<std::vector<Logic4>>& tests);
+    
+    Algorithm:
+      - Enumerates all single stuck-at faults (2 per net: SA0, SA1)
+      - Uses bit-parallel simulation (64 patterns at once)
+      - For each test vector: inject fault, simulate, compare to golden
+      - Returns coverage statistics
+
+================================================================================
+PODEM ATPG API (src/dft/podem.hpp)
+================================================================================
+
+Fault:
+    NetId net;
+    Logic4 stuck_at;  // ZERO or ONE
+    std::string str() const;  // Returns "net_X SAY"
+
+AtpgResult:
+    bool detected = false;
+    std::vector<std::pair<NetId, Logic4>> test_vector;
+    std::string message;
+
+FaultCoverage:
+    size_t total_faults = 0;
+    size_t detected = 0;
+    size_t undetectable = 0;
+    double coverage_pct() const;
+    std::vector<std::pair<Fault, std::vector<...>>> tests;
+
+PodemAtpg Class:
+    explicit PodemAtpg(Netlist& nl);
+    
+    AtpgResult generate_test(const Fault& fault);
+      - Single fault test generation
+      - Returns test_vector with PI assignments
+    
+    FaultCoverage run_full_atpg();
+      - Tests all enumerated faults
+      - Returns complete coverage statistics
+    
+    std::vector<Fault> enumerate_faults() const;
+      - Lists all testable single stuck-at faults
+    
+    Algorithm: Recursive PODEM with D-frontier heuristics
+      - 5-value logic: 0, 1, X, D, D'
+      - MAX_RECURSION_DEPTH = 200
+      - MAX_BACKTRACKS = 5000
+
+================================================================================
+LOGIC4 & TYPES (src/core/types.hpp)
+================================================================================
+
+Logic4 Enum (4-state logic):
+    Logic4::ZERO  (0)  → logic low
+    Logic4::ONE   (1)  → logic high
+    Logic4::X     (2)  → unknown
+    Logic4::Z     (3)  → high-impedance
+
+Logic Operations (IEEE 1364-2005):
+    logic_not(a)        → inverts value
+    logic_and(a, b)     → AND with 0-dominance
+    logic_or(a, b)      → OR with 1-dominance
+    logic_xor(a, b)     → XOR with unknown propagation
+    logic_to_char(v)    → converts to '0', '1', 'x', 'z'
+    char_to_logic(c)    → parses character to Logic4
+
+BitVector Class:
+    BitVector() = default;
+    explicit BitVector(size_t width, Logic4 init = Logic4::X);
+    static BitVector from_uint(size_t width, uint64_t value);
+    
+    size_t width() const;
+    Logic4 operator[](size_t i) const;
+    Logic4& operator[](size_t i);
+    bool is_known() const;
+    uint64_t to_uint() const;
+    std::string to_string() const;  // MSB-first format
+
+================================================================================
+BUILD CONFIGURATION (src/CMakeLists.txt)
+================================================================================
+
+Library: siliconforge_lib (STATIC)
+
+Source files organized in 26 modules:
+  - Core (8 files)
+  - Synthesis (9 files)
+  - DFT (3 files)
+  - Formal (7 files)
+  - Place & Route (12 files)
+  - Timing & Power (8 files)
+  - Verify (6 files)
+  - And 15 other modules...
+
+To add new DFT tool:
+  1. Create src/dft/my_tool.hpp and src/dft/my_tool.cpp
+  2. Add "dft/my_tool.cpp" to CMakeLists.txt under DFT section
+  3. Rebuild: cd build && cmake .. && make
+
+Include paths: cmake sets ${CMAKE_CURRENT_SOURCE_DIR} = src/
+  - Use: #include "dft/scan_insert.hpp"
+  - Not: #include "../dft/scan_insert.hpp"
+
+================================================================================
+INCLUDE PATTERNS
+================================================================================
+
+Header files (*.hpp):
+    #pragma once
+    // SiliconForge — Component description
+    // [Optional detailed comments]
+    
+    #include "core/netlist.hpp"        // Always first dependency
+    #include "dft/podem.hpp"           // Other DFT headers if needed
+    #include <vector>                  // STL headers
+    #include <string>
+    #include <algorithm>
+    
+    namespace sf {
+    // Declarations
+    }
+
+Implementation files (*.cpp):
+    #include "dft/my_tool.hpp"         // Own header first
+    #include <algorithm>               // STL headers
+    #include <iostream>
+    #include <cassert>
+    
+    namespace sf {
+    // Implementations
+    }
+
+All code is in namespace sf { ... }
+
+================================================================================
+COMPLETE EXAMPLE: Creating New DFT Tool
+================================================================================
+
+File: src/dft/my_analysis.hpp
+
+#pragma once
+// SiliconForge — My Circuit Analysis Tool
+// Analyzes circuit properties and generates reports
+
+#include "core/netlist.hpp"
+#include <vector>
+#include <string>
+
+namespace sf {
+
+struct AnalysisConfig {
+    bool verbose = false;
+    int max_iterations = 1000;
+};
+
+struct AnalysisResult {
+    size_t gate_count = 0;
+    size_t dff_count = 0;
+    std::vector<std::pair<std::string, int>> gate_types;
+    std::string report;
+};
+
+class MyAnalyzer {
+public:
+    explicit MyAnalyzer(Netlist& nl) : nl_(nl) {}
+    
+    AnalysisResult analyze(const AnalysisConfig& config = {});
+
+private:
+    Netlist& nl_;
+};
+
+} // namespace sf
+
+
+File: src/dft/my_analysis.cpp
+
+#include "dft/my_analysis.hpp"
+#include <iostream>
+#include <algorithm>
+
+namespace sf {
+
+AnalysisResult MyAnalyzer::analyze(const AnalysisConfig& config) {
+    AnalysisResult result;
+    
+    // Count gates
+    result.gate_count = nl_.num_gates();
+    
+    // Count DFFs
+    result.dff_count = nl_.flip_flops().size();
+    
+    // Analyze gate types
+    std::unordered_map<GateType, int> type_counts;
+    for (const auto& g : nl_.gates()) {
+        type_counts[g.type]++;
+    }
+    
+    for (const auto& [type, count] : type_counts) {
+        result.gate_types.push_back({gate_type_str(type), count});
+    }
+    
+    result.report = "Analysis complete: " + std::to_string(result.gate_count) +
+                   " gates, " + std::to_string(result.dff_count) + " DFFs";
+    
+    return result;
+}
+
+} // namespace sf
+
+
+Update: src/CMakeLists.txt
+    # ── DFT ───────────────────────────────────────────────────────
+    dft/podem.cpp
+    dft/fault_sim.cpp
+    dft/scan_insert.cpp
+    dft/my_analysis.cpp          # <-- Add this line
+
+Rebuild:
+    cd build
+    cmake ..
+    make
+
+================================================================================
+TESTING TEMPLATE (tests/test_my_tool.cpp)
+================================================================================
+
+#include "core/netlist.hpp"
+#include "dft/my_analysis.hpp"
+#include <cassert>
+#include <iostream>
+
+int main() {
+    using namespace sf;
+    
+    // Build test circuit
+    Netlist nl;
+    
+    // Create primary inputs
+    auto in1 = nl.add_net("in1");
+    auto in2 = nl.add_net("in2");
+    nl.mark_input(in1);
+    nl.mark_input(in2);
+    
+    // Create output
+    auto out = nl.add_net("out");
+    nl.mark_output(out);
+    
+    // Create clock and flip-flop
+    auto clk = nl.add_net("clk");
+    auto q = nl.add_net("q");
+    nl.mark_input(clk);
+    
+    nl.add_dff(in1, clk, q);
+    
+    // Create AND gate
+    nl.add_gate(GateType::AND, {q, in2}, out);
+    
+    // Verify structure
+    assert(nl.num_nets() == 5);
+    assert(nl.num_gates() == 2);
+    assert(nl.flip_flops().size() == 1);
+    
+    // Test tool
+    MyAnalyzer analyzer(nl);
+    AnalysisConfig cfg;
+    cfg.verbose = true;
+    auto result = analyzer.analyze(cfg);
+    
+    assert(result.gate_count == 2);
+    assert(result.dff_count == 1);
+    
+    std::cout << result.report << std::endl;
+    std::cout << "Test passed!" << std::endl;
+    
+    return 0;
+}
+
+Compile & Run:
+    cd build
+    cmake ..
+    make test_my_tool
+    ./tests/test_my_tool
+
+================================================================================
+MEMORY MANAGEMENT PATTERNS
+================================================================================
+
+KEY ISSUE: Vector growth can invalidate references
+
+DON'T:
+    for (auto& gid : nl.flip_flops()) {
+        nl.add_gate(...);  // Modifies gates_ vector!
+        Gate& g = nl.gate(gid);  // DANGLING REFERENCE if vector grew!
+    }
+
+DO:
+    // Cache IDs before modification
+    std::vector<GateId> ff_ids(nl.flip_flops().begin(), 
+                               nl.flip_flops().end());
+    
+    for (GateId gid : ff_ids) {
+        // Safe to modify netlist
+        nl.add_gate(...);
+        
+        // Re-fetch after modification
+        Gate& g = nl.gate(gid);  // Still valid
+    }
+
+WHY: Standard C++ vector invalidates iterators on reallocation
+  - Cache vector contents before modifications
+  - NetId and GateId are small integers (int32_t)
+  - Re-fetch objects after adding/modifying
+
+================================================================================
+GATE EVALUATION SEMANTICS
+================================================================================
+
+Truth tables from IEEE 1364-2005 Verilog standard:
+
+AND gate:  0&X=0, 0&1=0, 0&0=0, 1&X=X, 1&1=1, X&X=X
+           (0-dominance: 0 wins, else 1 wins, else X)
+
+OR gate:   1|X=1, 1|0=1, 1|1=1, 0|X=X, 0|0=0, X|X=X
+           (1-dominance: 1 wins, else 0 wins, else X)
+
+XOR gate:  0^0=0, 0^1=1, 1^0=1, 1^1=0, X^?=X
+           (unknown propagates)
+
+MUX gate:  sel=1 → output=data1
+           sel=0 → output=data0
+           sel=X → output=X
+
+Tristate:  0/1 when enabled, Z (→ X in sim) when disabled
+
+Implementation: Netlist::eval_gate(GateType, vector<Logic4>)
+  - Pure function, no side effects
+  - Used by simulators, formal checkers, ATPG
+
+================================================================================
+INTEGRATION CHECKLIST
+================================================================================
+
+Creating new DFT module:
+
+☐ Header (my_tool.hpp)
+  ☐ #pragma once guard
+  ☐ Descriptive comment with reference if applicable
+  ☐ #include "core/netlist.hpp" (required)
+  ☐ Include other needed headers
+  ☐ Include <vector>, <string>, <algorithm>, etc.
+  ☐ namespace sf { ... }
+  ☐ Config struct with sensible defaults
+  ☐ Result struct with statistics
+  ☐ Tool class:
+     ☐ explicit Constructor(Netlist& nl)
+     ☐ Non-owning reference member
+     ☐ Public API method (insert/run/analyze)
+     ☐ Private helper methods
+
+☐ Implementation (my_tool.cpp)
+  ☐ #include "dft/my_tool.hpp" first
+  ☐ Standard library includes
+  ☐ namespace sf { ... }
+  ☐ Cache vector contents before modifications
+  ☐ Use nl_.flip_flops(), nl_.gates(), nl_.nets()
+  ☐ Add gates with nl_.add_gate(), nl_.add_net()
+  ☐ Mark I/O with mark_input(), mark_output()
+
+☐ Build integration
+  ☐ Add "dft/my_tool.cpp" to src/CMakeLists.txt
+  ☐ cd build && cmake .. && make
+
+☐ Testing
+  ☐ Create tests/test_my_tool.cpp
+  ☐ Follow template pattern
+  ☐ Build and verify
+
+================================================================================
+KEY DATA STRUCTURES AT A GLANCE
+================================================================================
+
+Net {
+    NetId id;                    ← Unique identifier
+    std::string name;            ← Signal name
+    Logic4 value;                ← Current 4-state value
+    Logic4 next_value;           ← Next value after clock
+    std::vector<GateId> fanout;  ← Driven gates
+    GateId driver;               ← Driving gate (-1 if PI)
+}
+
+Gate {
+    GateId id;                   ← Unique identifier
+    GateType type;               ← AND, OR, DFF, MUX, etc.
+    std::string name;            ← Instance name
+    std::vector<NetId> inputs;   ← Input nets (order matters!)
+    NetId output;                ← Output net
+    NetId clk;                   ← Clock (DFF only)
+    NetId reset;                 ← Reset (DFF only)
+    Logic4 init_val;             ← Initial value (DFF only)
+}
+
+Netlist {
+    std::vector<Net> nets_;      ← All nets, indexed by NetId
+    std::vector<Gate> gates_;    ← All gates, indexed by GateId
+    std::vector<NetId> pis_;     ← Primary input indices
+    std::vector<NetId> pos_;     ← Primary output indices
+    std::vector<GateId> dffs_;   ← DFF indices
+}
+
+================================================================================
+NAVIGATION GUIDE
+================================================================================
+
+Source root: /home/paramsaini/Desktop/siliconforge/src/
+
+Core documentation:
+  - src/core/netlist.hpp          (111 lines)
+  - src/core/types.hpp            (113 lines)
+
+DFT modules:
+  - src/dft/scan_insert.hpp/cpp   (37 + 71 lines)
+  - src/dft/fault_sim.hpp/cpp     (42 + 50+ lines)
+  - src/dft/podem.hpp/cpp         (79 + 50+ lines)
+
+Build:
+  - src/CMakeLists.txt            (113 lines)
+
+Test examples:
+  - tests/test_phase1.cpp through test_phase28.cpp
+
+Verilog examples:
+  - studio/test_*.v
+
+================================================================================

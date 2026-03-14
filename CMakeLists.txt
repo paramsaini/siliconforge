@@ -16,6 +16,10 @@ endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0")
 
+# Multi-threading support
+find_package(Threads REQUIRED)
+find_package(OpenMP)
+
 add_subdirectory(src)
 
 enable_testing()

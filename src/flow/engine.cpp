@@ -58,6 +58,8 @@
 #include "synth/multibit.hpp"
 #include "synth/clock_gating.hpp"
 #include "pnr/oasis_writer.hpp"
+#include "core/thread_pool.hpp"
+#include <future>
 
 #include <iostream>
 #include <fstream>
@@ -1955,12 +1957,26 @@ bool SiliconForge::run_all(double die_w, double die_h) {
     ok = ok && run_cts();
     ok = ok && route();
     ok = ok && run_metal_fill();
-    // DRC/LVS are advisory — don't block downstream analysis
-    bool drc_clean = run_drc();
-    bool lvs_clean = run_lvs();
-    run_erc();
-    run_esd();         // after ERC
-    run_latchup();     // after cell_insert
+
+    // DRC/LVS are advisory and independent — run in parallel
+    bool drc_clean = false, lvs_clean = false;
+    {
+        sf::ThreadPool pool(2);
+        auto f_drc = pool.submit([&]() { return run_drc(); });
+        auto f_lvs = pool.submit([&]() { return run_lvs(); });
+        drc_clean = f_drc.get();
+        lvs_clean = f_lvs.get();
+    }
+
+    // ERC, ESD, Latchup are independent verification — run in parallel
+    {
+        sf::ThreadPool pool(3);
+        auto f_erc = pool.submit([this]() { run_erc(); });
+        auto f_esd = pool.submit([this]() { run_esd(); });
+        auto f_lup = pool.submit([this]() { run_latchup(); });
+        f_erc.get(); f_esd.get(); f_lup.get();
+    }
+
     ok = ok && run_sta();
     run_sdf_export();  // after STA
     ok = ok && run_power();

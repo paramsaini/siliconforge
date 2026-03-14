@@ -121,4 +121,15 @@ private:
     int add_clause_internal(std::vector<int> lits, bool learned);
 };
 
+// Portfolio SAT solver: runs N CDCL instances with different configurations
+// in parallel. First to return SAT/UNSAT wins. Uses ThreadPool for execution.
+struct PortfolioResult {
+    SatResult result = SatResult::UNKNOWN;
+    int winning_config = -1;
+    double time_ms = 0;
+    std::vector<CdclSolver::SolverStats> per_config_stats;
+};
+
+PortfolioResult portfolio_solve(const CnfFormula& formula, int num_configs = 0);
+
 } // namespace sf

@@ -12,6 +12,9 @@
 #include <cassert>
 #include <unordered_set>
 #include <set>
+#ifdef SF_HAS_OPENMP
+#include <omp.h>
+#endif
 
 namespace sf {
 
@@ -107,6 +110,9 @@ void AnalyticalPlacer::solve_quadratic_cg() {
         diag_x[e.i] += e.wx; diag_x[e.j] += e.wx;
         diag_y[e.i] += e.wy; diag_y[e.j] += e.wy;
     }
+#ifdef SF_HAS_OPENMP
+    #pragma omp parallel for schedule(static) if(n > 500)
+#endif
     for (int i = 0; i < n; i++) {
         diag_x[i] += anchor_w_[i];
         diag_y[i] += anchor_w_[i];
@@ -119,12 +125,17 @@ void AnalyticalPlacer::solve_quadratic_cg() {
                       std::vector<double>& out_x, std::vector<double>& out_y) {
         std::fill(out_x.begin(), out_x.end(), 0);
         std::fill(out_y.begin(), out_y.end(), 0);
+        // Edge accumulation (sequential — edge-wise has write conflicts)
         for (auto& e : edges) {
             out_x[e.i] += e.wx * (vx[e.i] - vx[e.j]);
             out_x[e.j] += e.wx * (vx[e.j] - vx[e.i]);
             out_y[e.i] += e.wy * (vy[e.i] - vy[e.j]);
             out_y[e.j] += e.wy * (vy[e.j] - vy[e.i]);
         }
+        // Anchor term (parallelizable — per-cell independent)
+#ifdef SF_HAS_OPENMP
+        #pragma omp parallel for schedule(static) if(n > 500)
+#endif
         for (int i = 0; i < n; i++) {
             out_x[i] += anchor_w_[i] * vx[i];
             out_y[i] += anchor_w_[i] * vy[i];
@@ -135,19 +146,31 @@ void AnalyticalPlacer::solve_quadratic_cg() {
     std::vector<double> rx(n), ry(n), px(n), py(n), apx(n), apy(n);
     std::vector<double> ax(n), ay(n);
     matvec(x_, y_, ax, ay);
+#ifdef SF_HAS_OPENMP
+    #pragma omp parallel for schedule(static) if(n > 500)
+#endif
     for (int i = 0; i < n; i++) { rx[i] = rhs_x[i] - ax[i]; ry[i] = rhs_y[i] - ay[i]; }
     px = rx; py = ry;
     double rsq = 0;
+#ifdef SF_HAS_OPENMP
+    #pragma omp parallel for schedule(static) reduction(+:rsq) if(n > 500)
+#endif
     for (int i = 0; i < n; i++) rsq += rx[i]*rx[i] + ry[i]*ry[i];
 
     int max_cg = std::min(200, n * 2);
     for (int iter = 0; iter < max_cg && rsq > 1e-8; iter++) {
         matvec(px, py, apx, apy);
         double pap = 0;
+#ifdef SF_HAS_OPENMP
+        #pragma omp parallel for schedule(static) reduction(+:pap) if(n > 500)
+#endif
         for (int i = 0; i < n; i++) pap += px[i]*apx[i] + py[i]*apy[i];
         if (pap < 1e-15) break;
         double alpha = rsq / pap;
         double new_rsq = 0;
+#ifdef SF_HAS_OPENMP
+        #pragma omp parallel for schedule(static) reduction(+:new_rsq) if(n > 500)
+#endif
         for (int i = 0; i < n; i++) {
             if (fixed_cells_.count(i)) continue;
             x_[i] += alpha * px[i];
@@ -158,6 +181,9 @@ void AnalyticalPlacer::solve_quadratic_cg() {
         }
         if (new_rsq < 1e-8) break;
         double beta = new_rsq / rsq;
+#ifdef SF_HAS_OPENMP
+        #pragma omp parallel for schedule(static) if(n > 500)
+#endif
         for (int i = 0; i < n; i++) {
             px[i] = rx[i] + beta * px[i];
             py[i] = ry[i] + beta * py[i];
@@ -203,6 +229,8 @@ void AnalyticalPlacer::compute_density() {
     double bh = pd_.die_area.height() / bin_ny_;
     for (auto& row : density_grid_) for (auto& b : row) b.demand = 0;
 
+    // Cell-to-bin accumulation — sequential due to bin write conflicts
+    // (parallel would require atomic adds or thread-local grids)
     for (auto& cell : pd_.cells) {
         int bc = std::clamp((int)((cell.position.x - pd_.die_area.x0) / bw), 0, bin_nx_ - 1);
         int br = std::clamp((int)((cell.position.y - pd_.die_area.y0) / bh), 0, bin_ny_ - 1);

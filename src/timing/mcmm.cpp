@@ -2,10 +2,13 @@
 // N corners × M modes with proper CornerDerate, OCV/AOCV/POCV, per-mode constraints.
 // Industrial: scenario classification, pruning, CPPR/POCV per corner, sensitivity.
 #include "timing/mcmm.hpp"
+#include "core/thread_pool.hpp"
 #include <chrono>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <mutex>
+#include <future>
 
 namespace sf {
 
@@ -178,114 +181,164 @@ McmmResult McmmAnalyzer::analyze() {
     r.worst_setup_wns = 1e18;
     r.worst_hold_wns = 1e18;
 
+    // Phase 1: Build scenario list and identify active vs inactive
+    struct ScenarioWork {
+        PvtCorner corner;
+        FunctionalMode mode;
+        std::string name;
+        SignoffType signoff = SignoffType::ALL;
+        bool active = true;
+    };
+    std::vector<ScenarioWork> active_work;
+    std::vector<McmmScenario> inactive_scenarios;
+
     for (auto& corner : corners_) {
         for (auto& mode : modes_) {
-            McmmScenario scenario;
-            scenario.corner = corner;
-            scenario.mode = mode;
-            scenario.scenario_name = corner.name + "/" + mode.name;
-
-            // Industrial: check if scenario is active
-            scenario.active = is_scenario_active(scenario.scenario_name);
-            if (!scenario.active) {
-                r.details.push_back(scenario);
-                r.scenarios++;
-                r.pruned_scenarios++;
+            std::string sname = corner.name + "/" + mode.name;
+            bool is_active = is_scenario_active(sname);
+            if (!is_active) {
+                McmmScenario s;
+                s.corner = corner;
+                s.mode = mode;
+                s.scenario_name = sname;
+                s.active = false;
+                inactive_scenarios.push_back(std::move(s));
                 continue;
             }
-
-            // Determine signoff type from corner and mode
+            ScenarioWork sw;
+            sw.corner = corner;
+            sw.mode = mode;
+            sw.name = sname;
             if (corner.signoff != SignoffType::ALL)
-                scenario.signoff = corner.signoff;
+                sw.signoff = corner.signoff;
             else if (mode.signoff != SignoffType::ALL)
-                scenario.signoff = mode.signoff;
-
-            // STA
-            if (mode.clock_freq_mhz > 0 || mode.clock_period_ns > 0) {
-                scenario.sta = run_scenario_sta(corner, mode);
-
-                // Track CPPR/POCV usage
-                if (corner.cppr_enabled && config_.enable_cppr_per_corner)
-                    r.cppr_scenarios++;
-                if (corner.ocv_mode == OcvMode::POCV && config_.enable_pocv_per_corner)
-                    r.pocv_scenarios++;
-
-                // Track worst setup
-                if (scenario.sta.wns < r.worst_setup_wns) {
-                    r.worst_setup_wns = scenario.sta.wns;
-                    r.worst_setup_tns = scenario.sta.tns;
-                    r.worst_setup_scenario = scenario.scenario_name;
-                }
-                // Track worst hold
-                if (scenario.sta.hold_wns < r.worst_hold_wns) {
-                    r.worst_hold_wns = scenario.sta.hold_wns;
-                    r.worst_hold_tns = scenario.sta.hold_tns;
-                    r.worst_hold_scenario = scenario.scenario_name;
-                }
-                r.total_setup_violations += scenario.sta.num_violations;
-                r.total_hold_violations += scenario.sta.hold_violations;
-
-                // Update signoff summaries
-                if (scenario.signoff == SignoffType::SETUP || scenario.signoff == SignoffType::ALL) {
-                    r.setup_signoff.scenario_count++;
-                    if (scenario.sta.wns < r.setup_signoff.worst_wns || r.setup_signoff.worst_scenario.empty()) {
-                        r.setup_signoff.worst_wns = scenario.sta.wns;
-                        r.setup_signoff.worst_tns = scenario.sta.tns;
-                        r.setup_signoff.worst_scenario = scenario.scenario_name;
-                    }
-                    r.setup_signoff.total_violations += scenario.sta.num_violations;
-                }
-                if (scenario.signoff == SignoffType::HOLD || scenario.signoff == SignoffType::ALL) {
-                    r.hold_signoff.scenario_count++;
-                    if (scenario.sta.hold_wns < r.hold_signoff.worst_wns || r.hold_signoff.worst_scenario.empty()) {
-                        r.hold_signoff.worst_wns = scenario.sta.hold_wns;
-                        r.hold_signoff.worst_tns = scenario.sta.hold_tns;
-                        r.hold_signoff.worst_scenario = scenario.scenario_name;
-                    }
-                    r.hold_signoff.total_violations += scenario.sta.hold_violations;
-                }
-
-                // Sensitivity analysis (optional)
-                if (config_.enable_sensitivity) {
-                    auto sens = compute_sensitivity(corner, mode, scenario.sta.wns);
-                    r.sensitivities.push_back({scenario.scenario_name, sens});
-                }
-            }
-
-            // Power
-            PowerAnalyzer pa(nl_);
-            double freq = mode.clock_freq_mhz > 0 ? mode.clock_freq_mhz : 1.0;
-            scenario.power = pa.analyze(freq, corner.voltage, mode.switching_activity);
-            scenario.power.total_power_mw *= corner.power_scale;
-            scenario.power.dynamic_power_mw *= corner.power_scale;
-
-            if (scenario.power.total_power_mw > r.max_power_mw) {
-                r.max_power_mw = scenario.power.total_power_mw;
-                r.max_power_scenario = scenario.scenario_name;
-            }
-
-            // Signoff power summaries
-            if (scenario.signoff == SignoffType::LEAKAGE || scenario.signoff == SignoffType::ALL) {
-                r.leakage_signoff.scenario_count++;
-                if (scenario.power.static_power_mw > r.leakage_signoff.worst_wns ||
-                    r.leakage_signoff.worst_scenario.empty()) {
-                    r.leakage_signoff.worst_wns = scenario.power.static_power_mw;
-                    r.leakage_signoff.worst_scenario = scenario.scenario_name;
-                }
-            }
-            if (scenario.signoff == SignoffType::DYNAMIC_POWER || scenario.signoff == SignoffType::ALL) {
-                r.power_signoff.scenario_count++;
-                if (scenario.power.dynamic_power_mw > r.power_signoff.worst_wns ||
-                    r.power_signoff.worst_scenario.empty()) {
-                    r.power_signoff.worst_wns = scenario.power.dynamic_power_mw;
-                    r.power_signoff.worst_scenario = scenario.scenario_name;
-                }
-            }
-
-            r.active_scenarios++;
-            r.details.push_back(scenario);
-            r.scenarios++;
+                sw.signoff = mode.signoff;
+            active_work.push_back(std::move(sw));
         }
+    }
+
+    // Phase 2: Run STA + Power for each active scenario in parallel
+    std::vector<McmmScenario> results(active_work.size());
+    {
+        sf::ThreadPool pool;
+        std::vector<std::future<void>> futures;
+        futures.reserve(active_work.size());
+
+        for (size_t i = 0; i < active_work.size(); ++i) {
+            futures.push_back(pool.submit([this, i, &active_work, &results]() {
+                auto& sw = active_work[i];
+                McmmScenario scenario;
+                scenario.corner = sw.corner;
+                scenario.mode = sw.mode;
+                scenario.scenario_name = sw.name;
+                scenario.signoff = sw.signoff;
+                scenario.active = true;
+
+                // STA
+                if (sw.mode.clock_freq_mhz > 0 || sw.mode.clock_period_ns > 0) {
+                    scenario.sta = run_scenario_sta(sw.corner, sw.mode);
+                }
+
+                // Power
+                PowerAnalyzer pa(nl_);
+                double freq = sw.mode.clock_freq_mhz > 0 ? sw.mode.clock_freq_mhz : 1.0;
+                scenario.power = pa.analyze(freq, sw.corner.voltage, sw.mode.switching_activity);
+                scenario.power.total_power_mw *= sw.corner.power_scale;
+                scenario.power.dynamic_power_mw *= sw.corner.power_scale;
+
+                results[i] = std::move(scenario);
+            }));
+        }
+
+        for (auto& f : futures) f.get();
+    }
+
+    // Phase 3: Sequential merge of results (thread-safe accumulation)
+    for (auto& s : inactive_scenarios) {
+        r.details.push_back(std::move(s));
+        r.scenarios++;
+        r.pruned_scenarios++;
+    }
+
+    for (size_t i = 0; i < results.size(); ++i) {
+        auto& scenario = results[i];
+        auto& sw = active_work[i];
+
+        if (sw.mode.clock_freq_mhz > 0 || sw.mode.clock_period_ns > 0) {
+            // Track CPPR/POCV usage
+            if (sw.corner.cppr_enabled && config_.enable_cppr_per_corner)
+                r.cppr_scenarios++;
+            if (sw.corner.ocv_mode == OcvMode::POCV && config_.enable_pocv_per_corner)
+                r.pocv_scenarios++;
+
+            // Track worst setup
+            if (scenario.sta.wns < r.worst_setup_wns) {
+                r.worst_setup_wns = scenario.sta.wns;
+                r.worst_setup_tns = scenario.sta.tns;
+                r.worst_setup_scenario = scenario.scenario_name;
+            }
+            // Track worst hold
+            if (scenario.sta.hold_wns < r.worst_hold_wns) {
+                r.worst_hold_wns = scenario.sta.hold_wns;
+                r.worst_hold_tns = scenario.sta.hold_tns;
+                r.worst_hold_scenario = scenario.scenario_name;
+            }
+            r.total_setup_violations += scenario.sta.num_violations;
+            r.total_hold_violations += scenario.sta.hold_violations;
+
+            // Update signoff summaries
+            if (scenario.signoff == SignoffType::SETUP || scenario.signoff == SignoffType::ALL) {
+                r.setup_signoff.scenario_count++;
+                if (scenario.sta.wns < r.setup_signoff.worst_wns || r.setup_signoff.worst_scenario.empty()) {
+                    r.setup_signoff.worst_wns = scenario.sta.wns;
+                    r.setup_signoff.worst_tns = scenario.sta.tns;
+                    r.setup_signoff.worst_scenario = scenario.scenario_name;
+                }
+                r.setup_signoff.total_violations += scenario.sta.num_violations;
+            }
+            if (scenario.signoff == SignoffType::HOLD || scenario.signoff == SignoffType::ALL) {
+                r.hold_signoff.scenario_count++;
+                if (scenario.sta.hold_wns < r.hold_signoff.worst_wns || r.hold_signoff.worst_scenario.empty()) {
+                    r.hold_signoff.worst_wns = scenario.sta.hold_wns;
+                    r.hold_signoff.worst_tns = scenario.sta.hold_tns;
+                    r.hold_signoff.worst_scenario = scenario.scenario_name;
+                }
+                r.hold_signoff.total_violations += scenario.sta.hold_violations;
+            }
+
+            // Sensitivity analysis (optional)
+            if (config_.enable_sensitivity) {
+                auto sens = compute_sensitivity(sw.corner, sw.mode, scenario.sta.wns);
+                r.sensitivities.push_back({scenario.scenario_name, sens});
+            }
+        }
+
+        if (scenario.power.total_power_mw > r.max_power_mw) {
+            r.max_power_mw = scenario.power.total_power_mw;
+            r.max_power_scenario = scenario.scenario_name;
+        }
+
+        // Signoff power summaries
+        if (scenario.signoff == SignoffType::LEAKAGE || scenario.signoff == SignoffType::ALL) {
+            r.leakage_signoff.scenario_count++;
+            if (scenario.power.static_power_mw > r.leakage_signoff.worst_wns ||
+                r.leakage_signoff.worst_scenario.empty()) {
+                r.leakage_signoff.worst_wns = scenario.power.static_power_mw;
+                r.leakage_signoff.worst_scenario = scenario.scenario_name;
+            }
+        }
+        if (scenario.signoff == SignoffType::DYNAMIC_POWER || scenario.signoff == SignoffType::ALL) {
+            r.power_signoff.scenario_count++;
+            if (scenario.power.dynamic_power_mw > r.power_signoff.worst_wns ||
+                r.power_signoff.worst_scenario.empty()) {
+                r.power_signoff.worst_wns = scenario.power.dynamic_power_mw;
+                r.power_signoff.worst_scenario = scenario.scenario_name;
+            }
+        }
+
+        r.active_scenarios++;
+        r.details.push_back(std::move(scenario));
+        r.scenarios++;
     }
 
     // Industrial: prune dominated scenarios (post-analysis, for reporting)

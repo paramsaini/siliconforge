@@ -1,0 +1,292 @@
+================================================================================
+           SILICONFORGE RTL-TO-GDSII FLOW — COMPREHENSIVE INVENTORY
+================================================================================
+
+DOCUMENT INFORMATION:
+- Full Inventory: /home/paramsaini/SiliconForge_Complete_Inventory.md (647 lines)
+- JSON Reference: /home/paramsaini/SiliconForge_QuickRef.json
+- This Summary: /home/paramsaini/SiliconForge_QUICK_SUMMARY.txt
+
+================================================================================
+                            SUBSYSTEM OVERVIEW
+================================================================================
+
+1. FRONTEND SUBSYSTEM (4 modules)
+   ├─ Verilog Parser (verilog_parser.hpp)
+   ├─ SDC Parser (sdc_parser.hpp)
+   ├─ SVA Parser (sva_parser.hpp)
+   └─ UPF Parser (upf_parser.hpp)
+
+2. CORE SUBSYSTEM (9 modules)
+   ├─ Types (types.hpp) — 4-state logic, BitVector
+   ├─ Netlist (netlist.hpp) — Gate-level representation
+   ├─ AIG (aig.hpp) — And-Inverter Graph with structural hashing
+   ├─ Liberty Parser (liberty_parser.hpp) — NLDM timing models
+   ├─ LEF Parser (lef_parser.hpp) — Physical layer definitions
+   ├─ DEF Parser (def_parser.hpp) — Physical design import
+   ├─ Design Database (design_db.hpp) — Multi-design management
+   ├─ Hierarchy Manager (hierarchy.hpp) — Module hierarchy analysis
+   └─ Die-to-Die / 3D-IC (die_to_die.hpp) — TSV/chiplet physics
+
+3. SYNTHESIS SUBSYSTEM (9 modules)
+   ├─ AIG Optimizer (aig_opt.hpp) — Rewrite, refactor, balance, sweep
+   ├─ Technology Mapper (tech_mapper.hpp) — FlowMap cell mapping
+   ├─ Behavioral Synthesizer (behavioral_synth.hpp) — AST to netlist
+   ├─ Register Retiming (retiming.hpp) — Leiserson-Saxe algorithm
+   ├─ Clock Gating (clock_gating.hpp) — ICG insertion
+   ├─ ECO Engine (eco.hpp) — Engineering change orders
+   ├─ FSM Extractor (fsm_extract.hpp) — State machine extraction
+   ├─ Multi-Vt Optimizer (multi_vt.hpp) — Leakage/performance tradeoff
+   └─ Resource Sharing (resource_share.hpp) — Area optimization
+
+4. SAT SUBSYSTEM (1 module)
+   └─ CDCL Solver (cdcl_solver.hpp) — Complete SAT solver
+
+================================================================================
+                        KEY ALGORITHMS & TECHNIQUES
+================================================================================
+
+FRONTEND PARSING:
+  • Verilog: 70+ token types, 12-level operator precedence, module elaboration
+  • SDC: TCL-like constraint parsing with clock/exception handling
+  • SVA: Linear Temporal Logic (LTL) with |-> and |=> operators
+  • UPF: IEEE 1801 power domain hierarchy, isolation, level-shifting
+
+CORE DATA STRUCTURES:
+  • Logic4: IEEE 1364/1800 4-state (0/1/X/Z) with truth tables
+  • Netlist: Gate-level with topological sorting, simulation support
+  • AIG: AIGER encoding, structural hashing, DAG-aware construction
+  • Liberty: NLDM 2D interpolation tables for timing/power
+  • LEF: 5.8 standard layer/via/macro/pin definitions
+  • 3D-IC: TSV parasitic physics (R/L/C), micro-bump models, yield analysis
+
+OPTIMIZATION ALGORITHMS:
+  • AIG Opt: DAG rewriting, tree balancing, SAT-based redundancy (Mishchenko)
+  • Tech Map: Cut enumeration + area/delay covering (FlowMap, Cong & Ding)
+  • Behavioral: 30 AST node types, multi-bit arithmetic, memory synthesis
+  • Retiming: Leiserson-Saxe with hold-time, ICG preservation (Pan 1999)
+  • Clock Gating: ICG insertion with enable factoring (Benini 1998)
+  • Multi-Vt: Depth-based Vt assignment for leakage reduction
+  • Resource Sharing: Mutual exclusivity analysis for area optimization
+  • SAT: CDCL with 2-watched literals, First-UIP, VSIDS heuristic
+
+================================================================================
+                        CRITICAL STRUCTURES (BY SUBSYSTEM)
+================================================================================
+
+FRONTEND:
+  VerilogParseResult — Parse success/counts/errors
+  SdcConstraints — Clocks, delays, exceptions, fanout/transition limits
+  SvaProperty — LTL properties with clock domains
+  UpfDesign — Power domains, supplies, isolation, level shifters, retention
+
+CORE:
+  Logic4 enum — {ZERO, ONE, X, Z}
+  BitVector — n-bit signals with 4-state values
+  Net/Gate — Netlist nodes (with fanin/fanout, DFF state)
+  AigNode — AND gates with structural hashing
+  LibertyCell — Timing arcs with NLDM tables
+  LefMacro — Physical cell definitions (width/height/pins/obs)
+  DesignState — Design stages: INIT→RTL_PARSED→SYNTHESIZED→PLACED→ROUTED→VERIFIED→SIGNED_OFF
+  TSV/DieInstance — 3D packaging with physics-based parasitics
+
+SYNTHESIS:
+  AstNode — 30+ behavioral AST types (ASSIGN, ALWAYS, IF_ELSE, etc.)
+  RetimingConfig — Preserve ICG/reset/MCP, hold margin, resource limits
+  RetimingResult — Critical path improvement metrics
+  StateMachine — State names, transitions, encodings (BINARY/ONE_HOT/GRAY)
+  EcoChange — Atomic modifications: add/remove/replace gates, buffer insertion
+  TsvParasitics — TSV R/L/C formulas per Katti et al. 2010
+
+SAT:
+  Clause — Internal literal representation with learned flag
+  CdclSolver::Stats — Decisions/propagations/conflicts/restarts counters
+  LBool enum — {UNDEF, TRUE, FALSE} solver variable state
+
+================================================================================
+                        PUBLIC API HIGHLIGHTS
+================================================================================
+
+PARSING & I/O:
+  VerilogParser::parse_string/parse_file(src) → VerilogParseResult
+  SdcParser::parse_string/parse_file(src) → SdcParseResult
+  SvaParser::parse(source) → std::vector<SvaProperty>
+  UpfParser::parse_string/parse_file(filename) → UpfDesign
+  LibertyLibrary::parse(filename) → bool
+  LefParser::parse_file(filename) → LefLibrary
+  DefParser::parse_file(filename, PhysicalDesign) → bool
+
+NETLIST & DESIGN:
+  Netlist::add_net(name) → NetId
+  Netlist::add_gate(type, inputs, output) → GateId
+  Netlist::add_dff(d, clk, q, reset) → GateId
+  Netlist::topo_order() → std::vector<GateId>
+  DesignDatabase::create(name, tech) / get(name) / snapshot(name)
+  HierarchyManager::add_module/instantiate/flatten/analyze
+
+AIG & SYNTHESIS:
+  AigGraph::create_and/or/xor/mux(a, b) → AigLit
+  AigGraph::evaluate(input_values) → std::vector<bool>
+  AigOptimizer::optimize(num_passes=3) → OptStats
+  TechMapper::map(optimize_area=true) → Netlist
+  BehavioralSynthesizer::synthesize(ast, nl) → bool
+  RetimingEngine::optimize(nl) → bool / optimize_with_result(nl) → RetimingResult
+
+3D-IC:
+  PackageDesign::add_die(name, z_layer, x, y) → int
+  PackageDesign::add_signal_tsv(net_id, from, to, x, y) → int
+  PackageDesign::add_d2d_link(from_die, to_die, lanes, rate) → int
+  PackageDesign::estimate_yield(model) → double
+  PackageDesign::generate_report() → ChipletReport
+
+ECO & GATING:
+  ClockGatingEngine::insert() → ClockGatingResult
+  EcoEngine::insert_buffer/remove_gate/replace_gate/reconnect
+  EcoEngine::fix_timing(critical_nets) / fix_fanout(max_fanout) → EcoResult
+
+SAT:
+  CdclSolver::solve() → SatResult
+  CdclSolver::solve(assumptions) → SatResult
+  CdclSolver::add_clause(clause) / new_var() / model_value(var)
+
+================================================================================
+                        KEY THRESHOLDS & PARAMETERS
+================================================================================
+
+Parser Constants:
+  MAX_HIERARCHY_DEPTH = 16 (Verilog module nesting limit)
+  Token types = 70+ (Verilog tokenizer)
+  AstNodeType variants = 30+ (Behavioral synthesis)
+
+Optimizer Thresholds:
+  AigOptimizer::max_cut_size = 4 (for 4-input rewriting)
+  TechMapper: No explicit threshold (FlowMap algorithm)
+  ClockGatingEngine::min_group = 1 (minimum FFs per ICG)
+  ClockGatingEngine::activity = 0.1 (10% switching by default)
+  RetimingEngine::binary_search_steps = 12 (clock period precision)
+  RetimingEngine::improvement_threshold = 0.01 (1% minimum improvement)
+  RetimingEngine::hold_margin = 0.05 ns (hold time safety margin)
+  MultiVtOptimizer::timing_margin = 0.1 (10% slack preservation)
+
+Physics & Technology:
+  TsvTechParams::radius_um = 2.5 (TSV copper radius)
+  TsvTechParams::height_um = 50.0 (wafer thickness)
+  TsvTechParams::pitch_um = 10.0 (TSV-to-TSV pitch)
+  TsvTechParams::max_current_ma = 20.0 (EM limit per TSV)
+  MicroBumpTech::pitch_um = 40.0
+  MicroBumpTech::max_current_ma = 150.0
+  InterposerConfig::num_rdl_layers = 4
+  PowerGrid3D::grid_nx/ny = 16 (3D power mesh resolution)
+  YieldModel::tsv_defect_rate = 1e-5 (per TSV)
+  YieldModel::bump_defect_rate = 5e-6 (per bump)
+
+LibVT Speeds:
+  lvt_speed_factor = 0.7 (LVT is 30% faster)
+  hvt_speed_factor = 1.4 (HVT is 40% slower)
+  lvt_leakage_factor = 10 (LVT leaks 10× more)
+  hvt_leakage_factor = 0.1 (HVT leaks 10× less)
+
+================================================================================
+                        INDUSTRY STANDARDS & REFERENCES
+================================================================================
+
+Standards:
+  IEEE 1364-2005 — Verilog HDL
+  IEEE 1800-2017 — SystemVerilog
+  IEEE 1801 — Unified Power Format (UPF 2.1)
+  AIGER — And-Inverter Graph encoding format
+  LEF/DEF 5.8 — Library & Design Exchange Formats (Cadence)
+  Liberty — Synopsys timing/power library format
+
+Key Academic References:
+  1. Mishchenko et al. (DAC 2006) — "DAG-Aware AIG Rewriting"
+  2. Cong & Ding (IEEE TCAD 1994) — "FlowMap" technology mapping
+  3. Leiserson & Saxe (Algorithmica 1991) — Register retiming
+  4. Pan (DAC 1999) — "Retiming Under Setup and Hold Constraints"
+  5. Benini & De Micheli (Springer 1998) — "Dynamic Power Management"
+  6. Sirichotiyakul et al. (DAC 1999) — "Simultaneous Vt Selection and Sizing"
+  7. Katti et al. (IEEE T-CPMT 2010) — "Electrical Modeling of TSVs"
+  8. Pak et al. (ECTC 2011) — "TSV Parasitic Modeling"
+  9. Marques-Silva & Sakallah — "GRASP" SAT solver
+  10. Eén & Sörensson — "MiniSat" SAT solver design
+
+================================================================================
+                        FILES INCLUDED IN THIS INVENTORY
+================================================================================
+
+Generated Files (in /home/paramsaini/):
+  1. SiliconForge_Complete_Inventory.md — Full 647-line detailed inventory
+  2. SiliconForge_QuickRef.json — Structured JSON reference
+  3. SiliconForge_QUICK_SUMMARY.txt — This file
+
+Source Code Analyzed:
+  Frontend (4 files):
+    • frontend/verilog_parser.hpp (173 lines)
+    • frontend/sdc_parser.hpp (79 lines)
+    • frontend/sva_parser.hpp (46 lines)
+    • frontend/upf_parser.hpp (184 lines)
+
+  Core (10 files):
+    • core/types.hpp (112 lines)
+    • core/netlist.hpp (112 lines)
+    • core/aig.hpp (132 lines)
+    • core/liberty_parser.hpp (99 lines)
+    • core/lef_parser.hpp (234 lines)
+    • core/def_parser.hpp (29 lines)
+    • core/design_db.hpp (80 lines)
+    • core/hierarchy.hpp (65 lines)
+    • core/die_to_die.hpp (256 lines)
+
+  Synthesis (9 files):
+    • synth/aig_opt.hpp (57 lines)
+    • synth/tech_mapper.hpp (54 lines)
+    • synth/behavioral_synth.hpp (181 lines)
+    • synth/retiming.hpp (148 lines)
+    • synth/clock_gating.hpp (57 lines)
+    • synth/eco.hpp (62 lines)
+    • synth/fsm_extract.hpp (48 lines)
+    • synth/multi_vt.hpp (60 lines)
+    • synth/resource_share.hpp (31 lines)
+
+  SAT (1 file):
+    • sat/cdcl_solver.hpp (77 lines)
+
+  TOTAL: 22 .hpp files analyzed, 2,017 lines of code documented
+
+================================================================================
+                        USAGE RECOMMENDATIONS
+================================================================================
+
+For QUICK REFERENCE:
+  → Read: SiliconForge_QUICK_SUMMARY.txt (this file)
+  → Use: SiliconForge_QuickRef.json for structured lookup
+
+For DETAILED STUDY:
+  → Read: SiliconForge_Complete_Inventory.md section by section
+  → Cross-reference: Public API methods with file paths
+  → Study: Algorithm descriptions and physics models
+
+For IMPLEMENTATION:
+  1. Frontend modules parse RTL/constraints/power intent
+  2. Core modules build unified design representation (netlist/AIG/3D)
+  3. Synthesis modules optimize gates, timing, area, power
+  4. SAT module supports formal verification & redundancy analysis
+
+For INTEGRATION:
+  - All classes are in namespace sf::
+  - Structures are designed for incremental updates (snapshots, ECO)
+  - Physical design (LEF/DEF) integrates with netlist via wire coordinates
+  - Constraints (SDC) drive timing optimization in retiming/mapping
+  - Power intent (UPF) enables power-aware synthesis
+
+================================================================================
+                        END OF SUMMARY
+================================================================================
+
+For questions or updates, refer to:
+  - Source: /home/paramsaini/Desktop/siliconforge/src/
+  - Documentation: /home/paramsaini/SiliconForge_Complete_Inventory.md
+  - JSON: /home/paramsaini/SiliconForge_QuickRef.json
+
+Generated: 2025 — SiliconForge RTL-to-GDSII Flow Analysis
+================================================================================

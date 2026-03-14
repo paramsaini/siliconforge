@@ -1,0 +1,323 @@
+{
+  "SiliconForge RTL-to-GDSII Flow": {
+    "Frontend Subsystem": {
+      "Verilog Parser": {
+        "file": "frontend/verilog_parser.hpp",
+        "main_class": "VerilogParser",
+        "key_structures": ["VerilogParseResult", "Token", "ModuleDef", "BehavioralAST", "AstNode"],
+        "public_methods": [
+          "parse_string(src, nl) → VerilogParseResult",
+          "parse_file(filename, nl) → VerilogParseResult",
+          "to_verilog(nl, module_name) → std::string"
+        ],
+        "algorithms": ["Precedence-based recursive descent", "Structural hashing", "Module hierarchical elaboration", "Parameter evaluation", "Generate block parsing", "Memory array synthesis"],
+        "thresholds": {
+          "MAX_HIERARCHY_DEPTH": 16
+        },
+        "supported_features": ["Structural Verilog", "Behavioral Verilog", "Generate blocks", "Functions/Tasks", "Multi-dimensional arrays", "Signed signal tracking"]
+      },
+      "SDC Parser": {
+        "file": "frontend/sdc_parser.hpp",
+        "main_class": "SdcParser",
+        "key_structures": ["SdcClock", "SdcInputDelay", "SdcOutputDelay", "SdcException", "SdcConstraints"],
+        "public_methods": [
+          "parse_string(src, sdc) → SdcParseResult",
+          "parse_file(filename, sdc) → SdcParseResult",
+          "to_sdc(constraints) → std::string"
+        ],
+        "algorithms": ["TCL-like tokenization", "Constraint command parsing"],
+        "constraints_supported": ["create_clock", "set_input_delay", "set_output_delay", "set_max_delay", "set_false_path", "set_multicycle_path", "set_clock_groups"]
+      },
+      "SVA Parser": {
+        "file": "frontend/sva_parser.hpp",
+        "main_class": "SvaParser",
+        "key_structures": ["SvaOp", "SvaNode", "SvaProperty"],
+        "public_methods": [
+          "parse(source) → std::vector<SvaProperty>"
+        ],
+        "algorithms": ["LTL property parsing", "Overlapping/non-overlapping implication operators"],
+        "supported_operators": ["PROP_OVERLAPPING (|->)", "PROP_NON_OVERLAPPING (|=>)", "LITERAL"]
+      },
+      "UPF Parser": {
+        "file": "frontend/upf_parser.hpp",
+        "main_classes": ["UpfParser", "UpfChecker"],
+        "key_structures": ["SupplyNet", "SupplyPort", "PowerDomain", "IsolationStrategy", "LevelShifter", "RetentionStrategy", "PowerState", "PowerStateTable"],
+        "public_methods": [
+          "parse_file(filename) → UpfDesign",
+          "parse_string(content) → UpfDesign",
+          "UpfDesign::validate() → bool",
+          "UpfDesign::report() → std::string",
+          "UpfChecker::check(upf, nl) → std::vector<std::string>"
+        ],
+        "standard": "IEEE 1801 (UPF 2.1)",
+        "features": ["Power domain hierarchy", "Isolation cell insertion", "Level shifter specification", "Retention logic", "Power state tables", "3D/2.5D support"]
+      }
+    },
+    "Core Subsystem": {
+      "Types": {
+        "file": "core/types.hpp",
+        "main_structures": ["Logic4 enum", "BitVector class"],
+        "logic_operations": ["logic_not", "logic_and", "logic_or", "logic_xor"],
+        "standard": "IEEE 1364/1800 4-state logic",
+        "values": ["ZERO (0)", "ONE (1)", "X (2)", "Z (3)"]
+      },
+      "Netlist": {
+        "file": "core/netlist.hpp",
+        "main_class": "Netlist",
+        "key_structures": ["Net", "Gate"],
+        "gate_types": ["INPUT", "OUTPUT", "BUF", "NOT", "AND", "OR", "NAND", "NOR", "XOR", "XNOR", "MUX", "DFF", "DLATCH", "TRI", "CONST0", "CONST1", "BUFIF0", "BUFIF1", "NOTIF0", "NOTIF1"],
+        "public_methods": [
+          "add_net(name) → NetId",
+          "add_gate(type, inputs, output, name) → GateId",
+          "add_dff(d, clk, q, reset, name) → GateId",
+          "mark_input(id), mark_output(id)",
+          "topo_order() → std::vector<GateId>",
+          "eval_gate(type, inputs) → Logic4",
+          "print_stats()"
+        ]
+      },
+      "AIG": {
+        "file": "core/aig.hpp",
+        "main_classes": ["AigGraph", "AigVec"],
+        "encoding": "AIGER standard: (variable << 1) | complement",
+        "public_methods": [
+          "create_input(name) → AigLit",
+          "create_and(a, b), create_or(a, b), create_xor(a, b), create_mux(sel, t, e)",
+          "add_output(lit, name), add_latch(next, init, name)",
+          "evaluate(input_values) → std::vector<bool>",
+          "to_dot() → std::string"
+        ],
+        "key_feature": "Structural hashing for DAG construction"
+      },
+      "Liberty Parser": {
+        "file": "core/liberty_parser.hpp",
+        "main_class": "LibertyLibrary",
+        "key_structures": ["LibertyCell", "LibertyPin", "LibertyTiming", "NldmTable"],
+        "public_methods": [
+          "parse(filename) → bool",
+          "find_cell(name) → const LibertyCell*",
+          "cells_by_function(func) → std::vector<const LibertyCell*>"
+        ],
+        "timing_models": ["NLDM 2D tables for cell_rise/fall and transition times"]
+      },
+      "LEF Parser": {
+        "file": "core/lef_parser.hpp",
+        "main_class": "LefLibrary",
+        "standard": "LEF 5.8",
+        "key_structures": ["LefLayer", "LefVia", "LefViaRule", "LefSite", "LefMacro", "LefPin", "LefObs"],
+        "layer_types": ["ROUTING", "CUT", "MASTERSLICE", "OVERLAP", "IMPLANT"],
+        "public_methods": [
+          "parse_file(filename) → LefLibrary",
+          "find_macro(name), find_layer(name), find_via(name), find_site(name)",
+          "num_routing_layers(), num_cut_layers()"
+        ]
+      },
+      "Design Database": {
+        "file": "core/design_db.hpp",
+        "main_class": "DesignDatabase",
+        "design_stages": ["INIT", "RTL_PARSED", "SYNTHESIZED", "PLACED", "ROUTED", "VERIFIED", "SIGNED_OFF"],
+        "public_methods": [
+          "create(name, tech), get(name) → DesignState&",
+          "set_stage(name, stage), log(name, msg)",
+          "snapshot(name) → int",
+          "stats() → DesignDbStats",
+          "summary(name) → std::string"
+        ]
+      },
+      "Hierarchy Manager": {
+        "file": "core/hierarchy.hpp",
+        "main_class": "HierarchyManager",
+        "public_methods": [
+          "add_module(name, nl)",
+          "instantiate(parent, child, instance_name)",
+          "analyze() → HierarchyResult",
+          "flatten(top_module) → Netlist",
+          "hierarchy_tree(top) → std::string"
+        ]
+      },
+      "3D-IC / Die-to-Die": {
+        "file": "core/die_to_die.hpp",
+        "main_class": "PackageDesign",
+        "key_structures": ["TSV", "DieInstance", "TsvParasitics", "MicroBump", "D2DLink", "PowerGrid3D", "YieldModel"],
+        "physics_models": [
+          "TSV R/L/C (Katti et al. 2010)",
+          "Micro-bump contact resistance",
+          "Interposer RDL parasitic extraction",
+          "3D power grid IR-drop analysis",
+          "Yield estimation with defect rate"
+        ],
+        "public_methods": [
+          "add_die(name, z_layer, x, y) → int",
+          "add_signal_tsv(net_id, from_die, to_die, x, y) → int",
+          "add_d2d_link(from_die, to_die, lanes, rate) → int",
+          "estimate_yield(model) → double",
+          "compute_ir_drop(die_id) → double",
+          "generate_report() → ChipletReport"
+        ]
+      }
+    },
+    "Synthesis Subsystem": {
+      "AIG Optimizer": {
+        "file": "synth/aig_opt.hpp",
+        "main_class": "AigOptimizer",
+        "key_algorithms": [
+          "Rewrite (4-input cuts)",
+          "Refactor (collapse and re-derive)",
+          "Balance (tree-height reduction)",
+          "Sweep (constant propagation)",
+          "SAT-based redundancy removal"
+        ],
+        "public_methods": [
+          "optimize(num_passes=3) → OptStats",
+          "rewrite(), refactor(), balance(), sweep(), sat_sweep()",
+          "compute_depth(aig) → uint32_t"
+        ],
+        "thresholds": {
+          "max_cut_size": 4
+        }
+      },
+      "Technology Mapper": {
+        "file": "synth/tech_mapper.hpp",
+        "main_class": "TechMapper",
+        "algorithm": "FlowMap (Cong & Ding, IEEE TCAD 1994)",
+        "public_methods": [
+          "map(optimize_area=true) → Netlist"
+        ],
+        "techniques": ["Cut enumeration", "Area/delay-optimal covering", "Buffer insertion for high-fanout"]
+      },
+      "Behavioral Synthesizer": {
+        "file": "synth/behavioral_synth.hpp",
+        "main_classes": ["BehavioralSynthesizer", "StructuralSynthesizer"],
+        "ast_node_types": 30,
+        "public_methods": [
+          "synthesize(ast, nl) → bool",
+          "synth_expr_single(expr, nl) → NetId",
+          "synth_expr_bus(expr, nl, target_w) → std::vector<NetId>"
+        ],
+        "arithmetic_builders": [
+          "Single-bit: adder, subtractor, mux2, comparator_lt, comparator_gt",
+          "Multi-bit: bus_adder, bus_subtractor, bus_multiplier, barrel shifts, divider",
+          "Memory synthesis: synth_mem_read, synth_mem_write"
+        ],
+        "features": ["Bus-aware synthesis", "Signed arithmetic", "Memory array support", "State machine generation"]
+      },
+      "Register Retiming": {
+        "file": "synth/retiming.hpp",
+        "main_class": "RetimingEngine",
+        "algorithm": "Leiserson-Saxe (Algorithmica 1991)",
+        "public_methods": [
+          "optimize(nl) → bool",
+          "optimize_with_result(nl) → RetimingResult"
+        ],
+        "industrial_features": [
+          "Preserve clock gating (ICG)",
+          "Preserve reset paths",
+          "Honor multi-cycle paths",
+          "Hold-time aware retiming"
+        ],
+        "config_parameters": {
+          "preserve_clock_gating": true,
+          "preserve_reset_paths": true,
+          "hold_margin_ns": 0.05,
+          "binary_search_steps": 12,
+          "improvement_threshold_pct": 1.0
+        }
+      },
+      "Clock Gating": {
+        "file": "synth/clock_gating.hpp",
+        "main_class": "ClockGatingEngine",
+        "reference": "Benini & De Micheli, Dynamic Power Management (1998)",
+        "public_methods": [
+          "insert() → ClockGatingResult"
+        ],
+        "configuration": {
+          "min_group": 1,
+          "activity_factor": 0.1
+        }
+      },
+      "ECO Engine": {
+        "file": "synth/eco.hpp",
+        "main_class": "EcoEngine",
+        "atomic_operations": [
+          "insert_buffer(net, name) → GateId",
+          "remove_gate(gid) → bool",
+          "replace_gate(gid, new_type) → GateId",
+          "split_net(nid, name) → NetId",
+          "reconnect(gid, input_idx, new_net) → bool"
+        ],
+        "high_level_eco": [
+          "fix_timing(critical_nets) → EcoResult",
+          "fix_fanout(max_fanout) → EcoResult"
+        ]
+      },
+      "FSM Extractor": {
+        "file": "synth/fsm_extract.hpp",
+        "main_class": "FsmExtractor",
+        "encodings": ["BINARY", "ONE_HOT", "GRAY_CODE"],
+        "public_methods": [
+          "extract_fsms(root) → std::vector<StateMachine>",
+          "optimize_fsms(root, fsms, encoding)"
+        ]
+      },
+      "Multi-Vt Optimizer": {
+        "file": "synth/multi_vt.hpp",
+        "main_class": "MultiVtOptimizer",
+        "reference": "Sirichotiyakul et al., DAC 1999",
+        "vt_types": ["SVT (Standard)", "LVT (Low - 30% faster)", "HVT (High - 40% slower)"],
+        "metrics": {
+          "lvt_leakage_factor": 10,
+          "hvt_leakage_factor": 0.1,
+          "timing_margin_pct": 10
+        },
+        "public_methods": [
+          "optimize() → MultiVtResult"
+        ]
+      },
+      "Resource Sharing": {
+        "file": "synth/resource_share.hpp",
+        "main_class": "ResourceSharer",
+        "public_methods": [
+          "optimize(root) → void"
+        ],
+        "technique": "Identify and share mutually exclusive arithmetic operations"
+      }
+    },
+    "SAT Subsystem": {
+      "CDCL Solver": {
+        "file": "sat/cdcl_solver.hpp",
+        "main_class": "CdclSolver",
+        "inherits_from": "SatSolver",
+        "core_algorithms": [
+          "2-watched literal propagation",
+          "First-UIP conflict analysis",
+          "Non-chronological backjumping",
+          "VSIDS variable activity heuristic"
+        ],
+        "public_methods": [
+          "solve() → SatResult",
+          "solve(assumptions) → SatResult",
+          "model_value(var) → bool",
+          "add_clause(clause)",
+          "new_var() → int",
+          "stats() → const Stats&"
+        ],
+        "internal_literal_encoding": "var v → pos=2v, neg=2v+1",
+        "decision_process": [
+          "Unit propagation (2-watched literals)",
+          "Conflict detection",
+          "First-UIP learning",
+          "Backtrack to decision level",
+          "Variable activity decay"
+        ]
+      }
+    },
+    "Summary Statistics": {
+      "total_modules": 22,
+      "total_hpp_files": 22,
+      "total_classes": 40,
+      "total_structs_enums": 80,
+      "key_algorithms_count": 35,
+      "industrial_standards": ["IEEE 1364/1800 (Verilog)", "IEEE 1801 (UPF)", "LEF/DEF 5.8", "AIGER", "NLDM Liberty"]
+    }
+  }
+}

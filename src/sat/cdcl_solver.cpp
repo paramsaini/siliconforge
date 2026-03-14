@@ -1,6 +1,11 @@
 // SiliconForge — CDCL SAT Solver Implementation
 #include "sat/cdcl_solver.hpp"
+#include "core/thread_pool.hpp"
 #include <iostream>
+#include <chrono>
+#include <atomic>
+#include <mutex>
+#include <thread>
 
 namespace sf {
 
@@ -544,6 +549,73 @@ CdclSolver::SolverStats CdclSolver::get_stats() const {
         stats_.restarts,
         0.0
     };
+}
+
+// ============================================================================
+// Portfolio SAT Solver — parallel multi-strategy solving
+// ============================================================================
+
+PortfolioResult portfolio_solve(const CnfFormula& formula, int num_configs) {
+    auto t0 = std::chrono::high_resolution_clock::now();
+
+    // Default: use hardware concurrency (capped at 4 for SAT)
+    if (num_configs <= 0)
+        num_configs = std::min(4u, std::max(1u, std::thread::hardware_concurrency()));
+
+    // Define diverse solver configurations
+    struct SolverConfig {
+        CdclSolver::RestartPolicy restart;
+        bool vsids;
+        bool phase_saving;
+        CdclSolver::ClauseDbConfig clause_cfg;
+    };
+
+    std::vector<SolverConfig> configs = {
+        {CdclSolver::RestartPolicy::GEOMETRIC, true,  false, {2000, 6, 0.95}},
+        {CdclSolver::RestartPolicy::LUBY,      true,  true,  {3000, 8, 0.90}},
+        {CdclSolver::RestartPolicy::GLUCOSE,    true,  true,  {1500, 4, 0.95}},
+        {CdclSolver::RestartPolicy::GEOMETRIC,  false, false, {5000, 10, 0.99}},
+    };
+    while ((int)configs.size() < num_configs)
+        configs.push_back(configs[configs.size() % 4]);
+    configs.resize(num_configs);
+
+    // Shared result state
+    std::atomic<bool> done{false};
+    std::mutex result_mutex;
+    PortfolioResult portfolio;
+    portfolio.per_config_stats.resize(num_configs);
+
+    // Launch solvers using ThreadPool
+    sf::ThreadPool pool(num_configs);
+    std::vector<std::future<void>> futures;
+
+    for (int ci = 0; ci < num_configs; ++ci) {
+        futures.push_back(pool.submit([&, ci]() {
+            CdclSolver solver(formula);
+            solver.set_restart_policy(configs[ci].restart);
+            solver.enable_vsids(configs[ci].vsids);
+            solver.enable_phase_saving(configs[ci].phase_saving);
+            solver.set_clause_db_config(configs[ci].clause_cfg);
+
+            SatResult res = solver.solve();
+
+            portfolio.per_config_stats[ci] = solver.get_stats();
+
+            if (!done.exchange(true)) {
+                std::lock_guard<std::mutex> lock(result_mutex);
+                portfolio.result = res;
+                portfolio.winning_config = ci;
+            }
+        }));
+    }
+
+    for (auto& f : futures) f.get();
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    portfolio.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    return portfolio;
 }
 
 } // namespace sf
