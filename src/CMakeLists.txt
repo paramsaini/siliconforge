@@ -53,6 +53,7 @@ add_library(siliconforge_lib STATIC
     dft/podem.cpp
     dft/fault_sim.cpp
     dft/scan_insert.cpp
+    dft/scan_compress.cpp
     dft/jtag_bist.cpp
 
     # ── HLS ───────────────────────────────────────────────────────────
