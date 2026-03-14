@@ -1,2 +1,4 @@
 build/
 build_asan/
+build_test/
+.DS_Store

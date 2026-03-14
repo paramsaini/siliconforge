@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/test_phase17.dir/test_phase17.cpp.o -o test_phase17  ../src/libsiliconforge_lib.a 
