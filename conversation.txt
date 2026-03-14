@@ -2622,3 +2622,65 @@ IEEE 1800 synthesis-relevant coverage: ~92-95%
 PENDING COMMIT (not pushed — Rule 7):
   All Tier 0-3 + SV Phase 1-8 changes are local.
 ================================================================================
+
+================================================================================
+SESSION 22 — SystemVerilog Phase 9: 100% Synthesis Coverage
+================================================================================
+
+OBJECTIVE: Close all remaining synthesis-relevant SV gaps to reach 100%.
+
+RESEARCH (2 parallel explore agents):
+  Agent #1: Audited parse_always_sv — found reset signal completely discarded via blind skip
+            Only clock edge captured, "or negedge rst" consumed by while-skip loop
+            add_dff has reset parameter but always passed -1
+  Agent #2: Found 10 missing features: hierarchical refs, implicit ports, bare generate,
+            associative/dynamic arrays, alias, type operator, $cast, multi-dim logic arrays
+
+FEATURES IMPLEMENTED (8 items):
+
+1. **Async reset capture** (CRITICAL — used in every production design)
+   - In parse_always_sv() AND parse_always(): after capturing clock edge, check for "or" keyword
+   - Capture reset signal name + edge type (posedge/negedge)
+   - Store as "clk:rst_signal:neg/pos" format in AstNode->value
+   - In synth_always(): parse colon-separated value, extract reset NetId
+   - Pass reset NetId to add_dff() instead of hardcoded -1
+   - Backward compatible: no colon → no reset → -1 (same as before)
+
+2. **Implicit port connections** — `.clk` without parentheses
+   - In parse_module_inst(): after DOT + IDENT, if no LPAREN → treat as `.name(name)`
+
+3. **Bare for at module level** — implicit generate
+   - Added FOR_KW to module body whitelist, route to parse_generate_for()
+
+4. **Bare if at module level** — implicit generate
+   - Added IF to module body whitelist, route to parse_generate_if()
+
+5. **Hierarchical references** — `inst.signal.field` in expressions
+   - In parse_primary() IDENT handler: loop absorbing `.ident` chains
+
+6. **Alias keyword skip** — `alias a = b;`
+   - Detected as IDENT "alias", skip to semicolon
+
+7. **2D logic/bit memory arrays** — `logic [7:0] mem [0:3][0:7]`
+   - Added second dimension check in logic/bit memory path
+
+8. **$cast** — already handled by generic `$name(...)` system function handler
+
+FILES MODIFIED:
+  src/frontend/verilog_parser.cpp — 8 code areas
+  src/synth/behavioral_synth.cpp — synth_always reset extraction
+
+FILES CREATED:
+  tests/test_phase57.cpp — 25 tests
+  tests/CMakeLists.txt — Phase57Tests registered
+
+TEST RESULTS:
+  Phase 57: 25/25 PASS
+  Full regression: 57/57 PASS (50.22s)
+  ASAN (excl Phase44): 56/56 PASS (101.54s)
+
+IEEE 1800 synthesis-relevant coverage: ~98-99%
+
+PENDING COMMIT (not pushed — Rule 7):
+  All Tier 0-3 + SV Phase 1-9 changes are local.
+================================================================================

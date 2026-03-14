@@ -190,7 +190,25 @@ void BehavioralSynthesizer::synth_node(std::shared_ptr<AstNode> node, Netlist& n
 // ============================================================
 void BehavioralSynthesizer::synth_always(std::shared_ptr<AstNode> node, Netlist& nl) {
     BlockState state;
-    state.clock_net = get_net(nl, node->value.empty() ? "clk" : node->value);
+    // SV Phase 9: Parse "clk:rst:edge" format from value
+    std::string clk_name, rst_name;
+    bool rst_negedge = true;
+    std::string val = node->value.empty() ? "clk" : node->value;
+    auto colon1 = val.find(':');
+    if (colon1 != std::string::npos) {
+        clk_name = val.substr(0, colon1);
+        auto colon2 = val.find(':', colon1 + 1);
+        if (colon2 != std::string::npos) {
+            rst_name = val.substr(colon1 + 1, colon2 - colon1 - 1);
+            rst_negedge = (val.substr(colon2 + 1) == "neg");
+        } else {
+            rst_name = val.substr(colon1 + 1);
+        }
+    } else {
+        clk_name = val;
+    }
+    state.clock_net = get_net(nl, clk_name);
+    NetId rst_net = rst_name.empty() ? -1 : get_net(nl, rst_name);
     state.is_combinational = false;
     std::map<std::string, std::vector<NetId>> next_state;
 
@@ -208,13 +226,13 @@ void BehavioralSynthesizer::synth_always(std::shared_ptr<AstNode> node, Netlist&
         int w = (int)d_bits.size();
         if (w == 1) {
             NetId q_net = get_net(nl, name);
-            nl.add_dff(d_bits[0], state.clock_net, q_net, -1, "reg_" + name);
+            nl.add_dff(d_bits[0], state.clock_net, q_net, rst_net, "reg_" + name);
         } else {
             int lo = get_bus_lo(name);
             for (int i = 0; i < w; i++) {
                 std::string bname = name + "[" + std::to_string(lo + i) + "]";
                 NetId q_net = get_net(nl, bname);
-                nl.add_dff(d_bits[i], state.clock_net, q_net, -1, "reg_" + bname);
+                nl.add_dff(d_bits[i], state.clock_net, q_net, rst_net, "reg_" + bname);
             }
         }
     }

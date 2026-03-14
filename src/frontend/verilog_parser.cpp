@@ -835,6 +835,13 @@ std::shared_ptr<AstNode> VerilogParser::parse_primary(const std::vector<Token>& 
         std::string name = t[pos].value;
         pos++;
 
+        // SV Phase 9: Hierarchical references — inst.signal.field
+        while (pos + 1 < t.size() && t[pos].type == Token::DOT &&
+               t[pos+1].type == Token::IDENT) {
+            name += "." + t[pos+1].value;
+            pos += 2;
+        }
+
         // SV Phase 7: Type cast — type'(expr) e.g. int'(val), logic'(x)
         // Token sequence: IDENT("type") NUMBER("'") LPAREN expr RPAREN
         if (pos + 1 < t.size() && t[pos].type == Token::NUMBER && t[pos].value == "'" &&
@@ -1416,6 +1423,9 @@ size_t VerilogParser::parse_module_inst(const std::vector<Token>& t, size_t pos,
                     if (pos < t.size() && t[pos].type == Token::IDENT) { sig = t[pos].value; pos++; }
                     if (pos < t.size() && t[pos].type == Token::RPAREN) pos++;
                     connections.push_back({port, sig});
+                } else {
+                    // SV Phase 9: Implicit port — .clk without parentheses means .clk(clk)
+                    connections.push_back({port, port});
                 }
             } else if (t[pos].type == Token::IDENT) {
                 connections.push_back({"", t[pos].value}); pos++;
@@ -1770,6 +1780,7 @@ size_t VerilogParser::parse_module(const std::vector<Token>& t, size_t pos, Netl
             t[pos].type != Token::PRIORITY_KW &&
             t[pos].type != Token::PARAMETER_KW && t[pos].type != Token::INTEGER_KW &&
             t[pos].type != Token::GENERATE_KW && t[pos].type != Token::GENVAR_KW &&
+            t[pos].type != Token::FOR_KW && t[pos].type != Token::IF &&
             t[pos].type != Token::FUNCTION_KW && t[pos].type != Token::TASK_KW &&
             t[pos].type != Token::INITIAL_KW && t[pos].type != Token::SPECIFY_KW &&
             t[pos].type != Token::DEFPARAM_KW && t[pos].type != Token::DISABLE_KW &&
@@ -1899,6 +1910,18 @@ size_t VerilogParser::parse_module(const std::vector<Token>& t, size_t pos, Netl
                         int word_w = (word_range.first >= 0) ?
                             std::abs(word_range.first - word_range.second) + 1 : 1;
                         int depth = std::abs(mem_range.first - mem_range.second) + 1;
+                        // SV Phase 9: Check for second dimension
+                        if (pos < t.size() && t[pos].type == Token::LBRACKET) {
+                            auto dim2_range = parse_bus_range(t, pos);
+                            if (dim2_range.first >= 0) {
+                                int depth2 = std::abs(dim2_range.first - dim2_range.second) + 1;
+                                multidim_arrays_[var_name] = {word_w, depth, depth2};
+                                memory_arrays_[var_name] = {word_w, depth * depth2};
+                                if (word_range.first >= 0) bus_ranges_[var_name] = word_range;
+                                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+                                continue;
+                            }
+                        }
                         memory_arrays_[var_name] = {word_w, depth};
                         if (word_range.first >= 0) bus_ranges_[var_name] = word_range;
                         if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
@@ -1960,6 +1983,14 @@ size_t VerilogParser::parse_module(const std::vector<Token>& t, size_t pos, Netl
                 }
             }
             if (pos < t.size() && t[pos].type == Token::ENDGENERATE_KW) pos++;
+        }
+        // SV Phase 9: Bare for at module level — implicit generate
+        else if (t[pos].type == Token::FOR_KW) {
+            pos = parse_generate_for(t, pos, nl, r);
+        }
+        // SV Phase 9: Bare if at module level — implicit generate
+        else if (t[pos].type == Token::IF) {
+            pos = parse_generate_if(t, pos, nl, r);
         }
         else if (t[pos].type == Token::FUNCTION_KW) {
             pos = parse_function_def(t, pos);
@@ -2208,6 +2239,12 @@ size_t VerilogParser::parse_module(const std::vector<Token>& t, size_t pos, Netl
             else if (t[pos].type == Token::IDENT &&
                      (t[pos].value == "string" || t[pos].value == "chandle")) {
                 pos++; // skip type
+                while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
+                if (pos < t.size()) pos++;
+            }
+            // SV Phase 9: alias — skip to semicolon
+            else if (t[pos].type == Token::IDENT && t[pos].value == "alias") {
+                pos++;
                 while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
                 if (pos < t.size()) pos++;
             }
@@ -2707,7 +2744,19 @@ size_t VerilogParser::parse_always(const std::vector<Token>& t, size_t pos, std:
             always->type = AstNodeType::ALWAYS_COMB;
             always->value = "*";
         }
-        // Skip to closing paren (handles "or" in sensitivity lists)
+        // SV Phase 9: Capture async reset — "or negedge rst" / "or posedge rst"
+        if (always->type != AstNodeType::ALWAYS_COMB &&
+            pos < t.size() && t[pos].type == Token::IDENT && t[pos].value == "or") {
+            pos++; // skip "or"
+            bool reset_negedge = true;
+            if (pos < t.size() && t[pos].type == Token::NEGEDGE) { reset_negedge = true; pos++; }
+            else if (pos < t.size() && t[pos].type == Token::POSEDGE) { reset_negedge = false; pos++; }
+            if (pos < t.size() && t[pos].type == Token::IDENT) {
+                always->value += ":" + t[pos].value + ":" + (reset_negedge ? "neg" : "pos");
+                pos++;
+            }
+        }
+        // Skip to closing paren (handles remaining sensitivity items)
         while (pos < t.size() && t[pos].type != Token::RPAREN) pos++;
         if (pos < t.size() && t[pos].type == Token::RPAREN) pos++;
     }
@@ -2755,7 +2804,19 @@ size_t VerilogParser::parse_always_sv(const std::vector<Token>& t, size_t pos, s
                     always->value = t[pos].value; pos++;
                 }
             }
-            // Skip rest of sensitivity list (e.g., "or negedge rst")
+            // SV Phase 9: Capture async reset — "or negedge rst" / "or posedge rst"
+            if (pos < t.size() && t[pos].type == Token::IDENT && t[pos].value == "or") {
+                pos++; // skip "or"
+                bool reset_negedge = true;
+                if (pos < t.size() && t[pos].type == Token::NEGEDGE) { reset_negedge = true; pos++; }
+                else if (pos < t.size() && t[pos].type == Token::POSEDGE) { reset_negedge = false; pos++; }
+                if (pos < t.size() && t[pos].type == Token::IDENT) {
+                    // Store as "clk:rst_signal:edge" — parsed by synth_always
+                    always->value += ":" + t[pos].value + ":" + (reset_negedge ? "neg" : "pos");
+                    pos++;
+                }
+            }
+            // Skip remaining sensitivity items
             while (pos < t.size() && t[pos].type != Token::RPAREN) pos++;
             if (pos < t.size() && t[pos].type == Token::RPAREN) pos++;
         }
