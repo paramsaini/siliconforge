@@ -13,12 +13,14 @@ struct ParasiticNet {
     int net_id;
     double total_cap_ff = 0;   // total capacitance in fF
     double total_res_ohm = 0;  // total resistance in Ohm
+    double total_ind_nh = 0;   // total inductance in nH
     double elmore_delay_ps = 0;
 
     struct RCSegment {
         double length;
         double resistance;
         double capacitance;
+        double inductance = 0;  // nH
         int layer = -1; // routing layer (-1 = estimated)
     };
     std::vector<RCSegment> segments;
@@ -29,6 +31,13 @@ struct ParasiticNet {
         double overlap_um;
     };
     std::vector<CouplingCap> coupling;
+
+    struct MutualCoupling {
+        int other_net;
+        double mutual_ind_nh = 0;  // mutual inductance in nH
+    };
+    std::vector<MutualCoupling> mutual_inductance;
+
     double total_coupling_ff = 0;
     int via_count = 0;
 };
@@ -39,6 +48,11 @@ struct ParasiticResult {
 
     // SPEF-like output
     std::string to_spef() const;
+
+    // Scale parasitics by temperature and voltage
+    // R_scaled = R * (1 + TCR * (T - T_ref)), C_scaled mildly with voltage
+    void scale_parasitics(double temp_factor, double voltage_factor,
+                          double tcr = 0.003, double vcc = 0.001);
 };
 
 struct MetalLayerParams {
@@ -51,6 +65,7 @@ struct MetalLayerParams {
 struct TechParams {
     double wire_res_per_um = 0.1;   // Ohm/um
     double wire_cap_per_um = 0.05;  // fF/um
+    double wire_ind_per_um = 0.5;   // nH/um (self-inductance estimate)
     double via_res = 5.0;           // Ohm per via
     double via_cap = 0.5;           // fF per via
     double coupling_cap_factor = 0.3;

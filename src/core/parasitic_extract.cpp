@@ -146,6 +146,37 @@ double SpefExtractor::compute_coupling_cap(const WireSegment& a,
     return C * 1e12; // pF
 }
 
+// ── Wire inductance ──────────────────────────────────────────────────────
+
+double SpefExtractor::compute_wire_inductance(const WireSegment& seg) const {
+    double L_um = wire_length_um(seg);
+    if (L_um < 1e-9) return 0.0;
+
+    double W_um = seg.width;
+    if (W_um < 1e-9) W_um = 0.1;
+
+    double t_um = metal_thickness(seg.layer);
+
+    // Approximate partial self-inductance using Grover's formula for
+    // a rectangular conductor: L ≈ (μ₀/(2π)) * l * [ln(2l/(w+t)) + 0.5 + (w+t)/(3l)]
+    // all in SI units (metres, Henries)
+    constexpr double MU_0 = 4.0 * 3.14159265358979323846 * 1e-7; // H/m
+    double l_m = L_um * 1e-6;
+    double w_m = W_um * 1e-6;
+    double t_m = t_um * 1e-6;
+
+    double wt = w_m + t_m;
+    if (wt < 1e-12) wt = 1e-12;
+
+    double ratio = 2.0 * l_m / wt;
+    if (ratio < 1.0) ratio = 1.0;
+
+    double L_henry = (MU_0 / (2.0 * 3.14159265358979323846)) * l_m *
+                     (std::log(ratio) + 0.5 + wt / (3.0 * l_m));
+
+    return L_henry; // Henries
+}
+
 // ── Wire index ───────────────────────────────────────────────────────────
 
 SpefExtractor::WireIndex SpefExtractor::build_wire_index() const {
@@ -169,11 +200,13 @@ SpefNet SpefExtractor::extract_lumped(int net_id,
 
     double total_R = 0.0;
     double total_C = 0.0;
+    double total_L = 0.0;
 
     for (int wi : wire_ids) {
         const auto& seg = pd_.wires[wi];
         total_R += compute_wire_resistance(seg);
         total_C += compute_wire_cap_to_ground(seg);
+        total_L += compute_wire_inductance(seg);
     }
 
     // Add via parasitics — estimate one via per layer transition
@@ -222,6 +255,17 @@ SpefNet SpefExtractor::extract_lumped(int net_id,
     gc.value = total_C;
     sn.caps.push_back(gc);
 
+    // Lumped inductance
+    if (total_L > 0.0 && sn.pins.size() >= 2) {
+        SpefInductor ind;
+        ind.id = 1;
+        ind.node1 = sn.pins.front().pin_name;
+        ind.node2 = sn.pins.back().pin_name;
+        ind.value = total_L;
+        sn.inductors.push_back(ind);
+        sn.total_ind = total_L;
+    }
+
     return sn;
 }
 
@@ -236,7 +280,9 @@ SpefNet SpefExtractor::extract_distributed(int net_id,
     int N = std::max(1, cfg_.pi_segments);
     int rid = 0; // resistor counter
     int cid_counter = 0; // capacitor counter
+    int lid = 0; // inductor counter
     double total_cap = 0.0;
+    double total_ind = 0.0;
 
     // Pin parasitics
     for (size_t p = 0; p < net.cell_ids.size(); ++p) {
@@ -257,11 +303,13 @@ SpefNet SpefExtractor::extract_distributed(int net_id,
         const auto& seg = pd_.wires[wire_ids[wi_idx]];
         double seg_R = compute_wire_resistance(seg);
         double seg_C = compute_wire_cap_to_ground(seg);
+        double seg_L = compute_wire_inductance(seg);
 
-        if (seg_R < 1e-15 && seg_C < 1e-15) continue;
+        if (seg_R < 1e-15 && seg_C < 1e-15 && seg_L < 1e-20) continue;
 
         double r_per_pi = seg_R / N;
         double c_per_pi = seg_C / N;
+        double l_per_pi = seg_L / N;
 
         std::string base = sn.name + ":w" + std::to_string(wi_idx);
 
@@ -289,6 +337,17 @@ SpefNet SpefExtractor::extract_distributed(int net_id,
                 r.node2 = node_b;
                 r.value = r_per_pi;
                 sn.resistors.push_back(r);
+            }
+
+            // Inductor (series with resistor)
+            if (l_per_pi > 1e-20) {
+                SpefInductor ind;
+                ind.id = ++lid;
+                ind.node1 = node_a;
+                ind.node2 = node_b;
+                ind.value = l_per_pi;
+                total_ind += ind.value;
+                sn.inductors.push_back(ind);
             }
 
             // Right cap (C/2)
@@ -330,6 +389,7 @@ SpefNet SpefExtractor::extract_distributed(int net_id,
     }
 
     sn.total_cap = total_cap;
+    sn.total_ind = total_ind;
 
     // Distribute pin cap equally
     if (!sn.pins.empty()) {
@@ -424,6 +484,12 @@ SpefData SpefExtractor::extract() {
         extract_coupling_caps(wire_idx, spef.nets);
     }
 
+    return spef;
+}
+
+SpefData SpefExtractor::extract_with_corner(const ExtractionCorner& corner) {
+    SpefData spef = extract();
+    spef.apply_corner(corner);
     return spef;
 }
 

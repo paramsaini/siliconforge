@@ -40,10 +40,13 @@ ParasiticNet ParasiticExtractor::extract_net(int net_idx) {
             double c = length * c_per_um;
             // Fringe capacitance (proportional to wire perimeter)
             c += length * params_.fringe_cap_per_um;
+            // Self-inductance estimate
+            double l = length * params_.wire_ind_per_um;
 
-            pn.segments.push_back({length, r, c, w->layer});
+            pn.segments.push_back({length, r, c, l, w->layer});
             pn.total_res_ohm += r;
             pn.total_cap_ff += c;
+            pn.total_ind_nh += l;
         }
     } else {
         // Fallback: Manhattan distance between pin pairs (unrouted nets)
@@ -60,10 +63,12 @@ ParasiticNet ParasiticExtractor::extract_net(int net_idx) {
             double r = length * params_.wire_res_per_um;
             double c = length * params_.wire_cap_per_um;
             c += c * params_.coupling_cap_factor;
+            double l = length * params_.wire_ind_per_um;
 
-            pn.segments.push_back({length, r, c, -1});
+            pn.segments.push_back({length, r, c, l, -1});
             pn.total_res_ohm += r;
             pn.total_cap_ff += c;
+            pn.total_ind_nh += l;
         }
     }
 
@@ -159,7 +164,8 @@ std::string ParasiticResult::to_spef() const {
        << "*DELIMITER :\n"
        << "*T_UNIT 1 PS\n"
        << "*C_UNIT 1 FF\n"
-       << "*R_UNIT 1 OHM\n\n";
+       << "*R_UNIT 1 OHM\n"
+       << "*L_UNIT 1 NH\n\n";
 
     for (auto& pn : nets) {
         if (pn.segments.empty()) continue;
@@ -189,12 +195,49 @@ std::string ParasiticResult::to_spef() const {
                << " " << seg.resistance << "\n";
             seg_id++;
         }
+        // Inductance section
+        if (pn.total_ind_nh > 0) {
+            ss << "*INDUC\n";
+            seg_id = 1;
+            for (auto& seg : pn.segments) {
+                if (seg.inductance > 0) {
+                    ss << seg_id << " n" << pn.net_id << ":" << seg_id
+                       << " n" << pn.net_id << ":" << (seg_id + 1)
+                       << " " << seg.inductance << "\n";
+                }
+                seg_id++;
+            }
+        }
         if (pn.via_count > 0) {
             ss << "*VIA " << pn.via_count << "\n";
         }
         ss << "*END\n\n";
     }
     return ss.str();
+}
+
+
+void ParasiticResult::scale_parasitics(double temp_factor, double voltage_factor,
+                                       double tcr, double vcc) {
+    double r_scale = 1.0 + tcr * (temp_factor - 1.0);
+    double c_scale = 1.0 + vcc * (voltage_factor - 1.0);
+    double l_scale = 1.0 + 0.0005 * (temp_factor - 1.0);
+
+    for (auto& pn : nets) {
+        pn.total_res_ohm *= r_scale;
+        pn.total_cap_ff *= c_scale;
+        pn.total_ind_nh *= l_scale;
+        pn.total_coupling_ff *= c_scale;
+        for (auto& seg : pn.segments) {
+            seg.resistance *= r_scale;
+            seg.capacitance *= c_scale;
+            seg.inductance *= l_scale;
+        }
+        for (auto& cc : pn.coupling)
+            cc.coupling_ff *= c_scale;
+        // Recompute Elmore delay with scaled values
+        pn.elmore_delay_ps = pn.total_res_ohm * pn.total_cap_ff;
+    }
 }
 
 

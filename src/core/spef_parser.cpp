@@ -109,8 +109,11 @@ bool SpefParser::parse_string(const std::string& content) {
 
     while (idx < lines.size()) {
         const auto& line = lines[idx];
-        if (line.rfind("*D_NET", 0) == 0 || line.rfind("*R_NET", 0) == 0) {
+        if (line.rfind("*D_NET", 0) == 0 || line.rfind("*R_NET", 0) == 0 ||
+            line.rfind("*L_NET", 0) == 0) {
             parse_net(lines, idx);
+        } else if (line.rfind("*K_NET", 0) == 0 || line.rfind("*MUTUAL", 0) == 0) {
+            parse_mutual_inductance(lines, idx);
         } else {
             idx++;
         }
@@ -124,17 +127,20 @@ bool SpefParser::parse_string(const std::string& content) {
 }
 
 void SpefParser::print_stats() const {
-    size_t total_res = 0, total_caps = 0, total_pins = 0;
+    size_t total_res = 0, total_caps = 0, total_pins = 0, total_inds = 0;
     for (auto& n : data_.nets) {
         total_res  += n.resistors.size();
         total_caps += n.caps.size();
         total_pins += n.pins.size();
+        total_inds += n.inductors.size();
     }
     std::cout << "SPEF Design: " << data_.design_name << "\n"
               << "  Nets:       " << data_.nets.size() << "\n"
               << "  Pins:       " << total_pins << "\n"
               << "  Resistors:  " << total_res << "\n"
-              << "  Capacitors: " << total_caps << "\n";
+              << "  Capacitors: " << total_caps << "\n"
+              << "  Inductors:  " << total_inds << "\n"
+              << "  Mutual L:   " << data_.mutual_inductances.size() << "\n";
 }
 
 // ── Header parsing ───────────────────────────────────────────────────────────
@@ -146,7 +152,8 @@ void SpefParser::parse_header(const std::vector<std::string>& lines, size_t& idx
         // Stop at name map or first net section
         if (line.rfind("*NAME_MAP", 0) == 0 ||
             line.rfind("*D_NET", 0) == 0 ||
-            line.rfind("*R_NET", 0) == 0)
+            line.rfind("*R_NET", 0) == 0 ||
+            line.rfind("*L_NET", 0) == 0)
             return;
 
         auto toks = split_tokens(line);
@@ -182,6 +189,7 @@ void SpefParser::parse_name_map(const std::vector<std::string>& lines, size_t& i
         const auto& line = lines[idx];
         // End of name map: next keyword section
         if (line.rfind("*D_NET", 0) == 0 || line.rfind("*R_NET", 0) == 0 ||
+            line.rfind("*L_NET", 0) == 0 ||
             line.rfind("*PORTS", 0) == 0 || line.rfind("*POWER_NETS", 0) == 0 ||
             line.rfind("*GROUND_NETS", 0) == 0)
             return;
@@ -211,7 +219,7 @@ void SpefParser::parse_net(const std::vector<std::string>& lines, size_t& idx) {
     net.total_cap = std::stod(header_toks[2]);
     idx++;
 
-    enum Section { NONE, CONN, CAP, RES };
+    enum Section { NONE, CONN, CAP, RES, INDUC };
     Section section = NONE;
 
     while (idx < lines.size()) {
@@ -221,12 +229,14 @@ void SpefParser::parse_net(const std::vector<std::string>& lines, size_t& idx) {
         if (line == "*END") { idx++; break; }
 
         // Start of a different net (missing *END)
-        if (line.rfind("*D_NET", 0) == 0 || line.rfind("*R_NET", 0) == 0) break;
+        if (line.rfind("*D_NET", 0) == 0 || line.rfind("*R_NET", 0) == 0 ||
+            line.rfind("*L_NET", 0) == 0) break;
 
         // Section headers
-        if (line.rfind("*CONN", 0) == 0)   { section = CONN; idx++; continue; }
-        if (line.rfind("*CAP", 0) == 0)     { section = CAP;  idx++; continue; }
-        if (line.rfind("*RES", 0) == 0)     { section = RES;  idx++; continue; }
+        if (line.rfind("*CONN", 0) == 0)   { section = CONN;  idx++; continue; }
+        if (line.rfind("*CAP", 0) == 0)     { section = CAP;   idx++; continue; }
+        if (line.rfind("*RES", 0) == 0)     { section = RES;   idx++; continue; }
+        if (line.rfind("*INDUC", 0) == 0)   { section = INDUC; idx++; continue; }
 
         auto toks = split_tokens(line);
         if (toks.empty()) { idx++; continue; }
@@ -296,6 +306,19 @@ void SpefParser::parse_net(const std::vector<std::string>& lines, size_t& idx) {
             }
             break;
         }
+        case INDUC: {
+            // id node1 node2 value  (inductance in scaled units)
+            if (toks.size() >= 4) {
+                SpefInductor ind;
+                ind.id    = std::stoi(toks[0]);
+                ind.node1 = resolve_name(toks[1]);
+                ind.node2 = resolve_name(toks[2]);
+                ind.value = std::stod(toks[3]);
+                net.inductors.push_back(ind);
+                net.total_ind += ind.value;
+            }
+            break;
+        }
         default:
             break;
         }
@@ -303,6 +326,66 @@ void SpefParser::parse_net(const std::vector<std::string>& lines, size_t& idx) {
     }
 
     data_.nets.push_back(std::move(net));
+}
+
+// ── Mutual inductance parsing ────────────────────────────────────────────
+
+void SpefParser::parse_mutual_inductance(const std::vector<std::string>& lines, size_t& idx) {
+    // *K_NET net1 net2 coupling_value  OR  *MUTUAL net1 net2 coupling_value
+    auto toks = split_tokens(lines[idx]);
+    if (toks.size() >= 4) {
+        MutualInductance mi;
+        mi.net1      = resolve_name(toks[1]);
+        mi.net2      = resolve_name(toks[2]);
+        mi.coupling_l = std::stod(toks[3]);
+        data_.mutual_inductances.push_back(mi);
+    }
+    idx++;
+}
+
+// ── SpefData: temperature/voltage scaling ────────────────────────────────
+
+void SpefData::scale_parasitics(double temp_factor, double voltage_factor,
+                                double tcr, double vcc) {
+    // Resistance scales with temperature: R_scaled = R * (1 + TCR * (T - T_ref))
+    // where temp_factor encodes (T - T_ref) as a ratio: temp_factor = T/T_ref
+    double r_scale = 1.0 + tcr * (temp_factor - 1.0);
+
+    // Capacitance scales mildly with voltage (depletion cap effect)
+    double c_scale = 1.0 + vcc * (voltage_factor - 1.0);
+
+    // Inductance has mild temperature dependence (skin effect changes)
+    double l_scale = 1.0 + 0.0005 * (temp_factor - 1.0);
+
+    for (auto& net : nets) {
+        for (auto& r : net.resistors)
+            r.value *= r_scale;
+        for (auto& c : net.caps)
+            c.value *= c_scale;
+        net.total_cap *= c_scale;
+        for (auto& l : net.inductors)
+            l.value *= l_scale;
+        net.total_ind *= l_scale;
+    }
+    for (auto& mi : mutual_inductances)
+        mi.coupling_l *= l_scale;
+}
+
+// ── SpefData: process-corner derating ────────────────────────────────────
+
+void SpefData::apply_corner(const ExtractionCorner& corner) {
+    for (auto& net : nets) {
+        for (auto& r : net.resistors)
+            r.value *= corner.r_factor;
+        for (auto& c : net.caps)
+            c.value *= corner.c_factor;
+        net.total_cap *= corner.c_factor;
+        for (auto& l : net.inductors)
+            l.value *= corner.l_factor;
+        net.total_ind *= corner.l_factor;
+    }
+    for (auto& mi : mutual_inductances)
+        mi.coupling_l *= corner.l_factor;
 }
 
 } // namespace sf

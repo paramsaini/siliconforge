@@ -91,10 +91,14 @@ public:
     // Main extraction — produces a complete SpefData structure
     SpefData extract();
 
+    // Extract with process-corner derating applied
+    SpefData extract_with_corner(const ExtractionCorner& corner);
+
     // Per-wire computations (public for unit testing)
     double compute_wire_resistance(const WireSegment& seg) const;
     double compute_wire_cap_to_ground(const WireSegment& seg) const;
     double compute_coupling_cap(const WireSegment& a, const WireSegment& b) const;
+    double compute_wire_inductance(const WireSegment& seg) const;
 
 private:
     const PhysicalDesign& pd_;
