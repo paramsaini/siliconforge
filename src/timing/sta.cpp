@@ -1095,71 +1095,10 @@ void StaEngine::compute_cppr_credits(std::vector<TimingPath>& paths, double cloc
 
         if (launch_ff < 0 || capture_ff < 0) continue;
 
-        // Trace clock tree paths for both FFs
-        auto launch_clk = trace_clock_path(launch_ff);
-        auto capture_clk = trace_clock_path(capture_ff);
-
-        // Find deepest common prefix (gates shared by both clock paths)
-        size_t common_len = 0;
-        size_t min_len = std::min(launch_clk.size(), capture_clk.size());
-        for (size_t i = 0; i < min_len; ++i) {
-            if (launch_clk[i] == capture_clk[i])
-                common_len = i + 1;
-            else
-                break;
-        }
-
         double credit = 0;
-        if (common_len > 0) {
-            // Per-gate CPPR: sum |late_delay - early_delay| for each common gate
-            for (size_t i = 0; i < common_len; ++i) {
-                GateId gid = launch_clk[i];
-                double in_slew = 0.01;
-                int depth = 1;
-                auto dit = gate_depth_.find(gid);
-                if (dit != gate_depth_.end()) depth = std::max(1, dit->second);
 
-                double late_derate = 1.0, early_derate = 1.0;
-                if (ocv_mode_ == OcvMode::OCV) {
-                    late_derate = ocv_late_cell_;
-                    early_derate = ocv_early_cell_;
-                } else if (ocv_mode_ == OcvMode::AOCV) {
-                    std::string ctype = gate_type_str(nl_.gate(gid).type);
-                    late_derate = aocv_table_.late_derate(depth, ctype);
-                    early_derate = aocv_table_.early_derate(depth, ctype);
-                } else if (ocv_mode_ == OcvMode::POCV) {
-                    std::string ctype = gate_type_str(nl_.gate(gid).type);
-                    double sigma = pocv_table_.get_sigma(ctype);
-                    late_derate = 1.0 + sigma * pocv_table_.n_sigma;
-                    early_derate = 1.0 - sigma * pocv_table_.n_sigma;
-                }
-
-                // Compute nominal gate delay (without OCV) for the common gate
-                bool saved = analyzing_late_;
-                analyzing_late_ = true;
-                double base_delay = gate_delay(gid, in_slew);
-                // Undo derate to get nominal
-                double nom_delay = base_delay / late_derate;
-                analyzing_late_ = saved;
-
-                // Wire delay contribution on the common path
-                auto& g = nl_.gate(gid);
-                double wd_nom = 0;
-                if (!g.inputs.empty() && g.output >= 0) {
-                    double wd = wire_delay(g.inputs[0], g.output);
-                    double wire_late = 1.0, wire_early = 1.0;
-                    if (ocv_mode_ == OcvMode::OCV) {
-                        wire_late = ocv_late_cell_;
-                        wire_early = ocv_early_cell_;
-                    }
-                    wd_nom = wd / (analyzing_late_ ? wire_late : wire_early);
-                    credit += wd_nom * std::abs(wire_late - wire_early);
-                }
-
-                credit += nom_delay * std::abs(late_derate - early_derate);
-            }
-        } else {
-            // Fallback: use clock insertion delays for common-path estimate
+        if (cppr_.mode == CpprMode::APPROXIMATE) {
+            // APPROXIMATE: use clock insertion delays only
             double launch_ins = 0, capture_ins = 0;
             auto lci = clock_insertion_.find(launch_ff);
             if (lci != clock_insertion_.end()) launch_ins = lci->second;
@@ -1180,6 +1119,69 @@ void StaEngine::compute_cppr_credits(std::vector<TimingPath>& paths, double cloc
                     early_f = 1.0 - pocv_table_.default_sigma_pct * pocv_table_.n_sigma;
                 }
                 credit = common_delay * std::abs(late_f - early_f);
+            }
+        } else {
+            // EXACT: trace actual clock tree topology
+            auto launch_clk = trace_clock_path(launch_ff);
+            auto capture_clk = trace_clock_path(capture_ff);
+
+            // Find deepest common prefix (gates shared by both clock paths)
+            size_t common_len = 0;
+            size_t min_len = std::min(launch_clk.size(), capture_clk.size());
+            for (size_t i = 0; i < min_len; ++i) {
+                if (launch_clk[i] == capture_clk[i])
+                    common_len = i + 1;
+                else
+                    break;
+            }
+
+            if (common_len > 0) {
+                // Per-gate CPPR: sum |late_delay - early_delay| for each common gate
+                for (size_t i = 0; i < common_len; ++i) {
+                    GateId gid = launch_clk[i];
+                    double in_slew = 0.01;
+                    int depth = 1;
+                    auto dit = gate_depth_.find(gid);
+                    if (dit != gate_depth_.end()) depth = std::max(1, dit->second);
+
+                    double late_derate = 1.0, early_derate = 1.0;
+                    if (ocv_mode_ == OcvMode::OCV) {
+                        late_derate = ocv_late_cell_;
+                        early_derate = ocv_early_cell_;
+                    } else if (ocv_mode_ == OcvMode::AOCV) {
+                        std::string ctype = gate_type_str(nl_.gate(gid).type);
+                        late_derate = aocv_table_.late_derate(depth, ctype);
+                        early_derate = aocv_table_.early_derate(depth, ctype);
+                    } else if (ocv_mode_ == OcvMode::POCV) {
+                        std::string ctype = gate_type_str(nl_.gate(gid).type);
+                        double sigma = pocv_table_.get_sigma(ctype);
+                        late_derate = 1.0 + sigma * pocv_table_.n_sigma;
+                        early_derate = 1.0 - sigma * pocv_table_.n_sigma;
+                    }
+
+                    // Compute nominal gate delay (without OCV) for the common gate
+                    bool saved = analyzing_late_;
+                    analyzing_late_ = true;
+                    double base_delay = gate_delay(gid, in_slew);
+                    double nom_delay = base_delay / late_derate;
+                    analyzing_late_ = saved;
+
+                    // Wire delay contribution on the common path
+                    auto& g = nl_.gate(gid);
+                    double wd_nom = 0;
+                    if (!g.inputs.empty() && g.output >= 0) {
+                        double wd = wire_delay(g.inputs[0], g.output);
+                        double wire_late = 1.0, wire_early = 1.0;
+                        if (ocv_mode_ == OcvMode::OCV) {
+                            wire_late = ocv_late_cell_;
+                            wire_early = ocv_early_cell_;
+                        }
+                        wd_nom = wd / (analyzing_late_ ? wire_late : wire_early);
+                        credit += wd_nom * std::abs(wire_late - wire_early);
+                    }
+
+                    credit += nom_delay * std::abs(late_derate - early_derate);
+                }
             }
         }
 
@@ -2208,6 +2210,211 @@ double StaEngine::level_shifter_penalty(GateId from_gate, GateId to_gate) const 
 
     // Crossing voltage domains — apply level-shifter delay
     return level_shifter_delay_;
+}
+
+// ============================================================================
+// MCMM Weighted Scenario Configuration
+// ============================================================================
+
+void StaEngine::set_mcmm_scenarios(const std::vector<McmmWeightedScenario>& scenarios) {
+    mcmm_scenarios_ = scenarios;
+}
+
+// ============================================================================
+// POCV Monte Carlo with Spatial Correlation
+// ============================================================================
+
+PocvMonteCarloResult StaEngine::run_pocv_monte_carlo(double clock_period,
+                                                      const PocvMonteCarloConfig& cfg) {
+    PocvMonteCarloResult result;
+    result.num_samples = cfg.num_samples;
+
+    // Ensure timing graph is built
+    auto saved_ocv = ocv_mode_;
+    ocv_mode_ = OcvMode::POCV;
+    last_clock_period_ = clock_period;
+    build_timing_graph();
+
+    // Collect combinational gates in topo order
+    struct GateInfo {
+        GateId id;
+        double nominal_delay;
+        double sigma_frac;
+        double x = 0, y = 0;  // position for correlation
+    };
+    std::vector<GateInfo> comb_gates;
+    for (auto gid : topo_) {
+        auto& g = nl_.gate(gid);
+        if (g.type == GateType::DFF || g.type == GateType::DLATCH ||
+            g.type == GateType::INPUT || g.type == GateType::OUTPUT ||
+            g.output < 0)
+            continue;
+        GateInfo gi;
+        gi.id = gid;
+        gi.nominal_delay = gate_delay(gid, 0.01);
+        std::string type_name = gate_type_str(g.type);
+        gi.sigma_frac = pocv_table_.get_sigma(type_name);
+        comb_gates.push_back(gi);
+    }
+
+    // Assign positions: use physical design if available, else topo grid
+    if (pd_ && !pd_->cells.empty()) {
+        for (auto& gi : comb_gates) {
+            auto& g = nl_.gate(gi.id);
+            for (auto& cell : pd_->cells) {
+                if (cell.name == g.name) {
+                    gi.x = cell.position.x;
+                    gi.y = cell.position.y;
+                    break;
+                }
+            }
+        }
+    } else {
+        int cols = std::max(1, (int)std::sqrt(comb_gates.size()));
+        double spacing = 10.0;
+        for (size_t i = 0; i < comb_gates.size(); ++i) {
+            comb_gates[i].x = ((int)i % cols) * spacing;
+            comb_gates[i].y = ((int)i / cols) * spacing;
+        }
+    }
+
+    // Build DFF info for endpoint checking
+    struct DffInfo {
+        NetId d_input;
+        double insertion;
+    };
+    std::vector<DffInfo> dffs;
+    for (auto gid : nl_.flip_flops()) {
+        auto& ff = nl_.gate(gid);
+        if (!ff.inputs.empty()) {
+            double ins = 0;
+            auto ci = clock_insertion_.find(gid);
+            if (ci != clock_insertion_.end()) ins = ci->second;
+            dffs.push_back({ff.inputs[0], ins});
+        }
+    }
+
+    // Monte Carlo sampling
+    std::mt19937 rng(cfg.seed);
+    std::normal_distribution<double> norm(0.0, 1.0);
+    result.wns_distribution.resize(cfg.num_samples);
+
+    for (int s = 0; s < cfg.num_samples; ++s) {
+        // Generate independent random draws for each gate
+        std::vector<double> z(comb_gates.size());
+        for (size_t i = 0; i < comb_gates.size(); ++i)
+            z[i] = norm(rng);
+
+        // Apply spatial correlation: blend nearby gates
+        std::vector<double> correlated_z(comb_gates.size());
+        if (cfg.enable_correlation && comb_gates.size() > 1) {
+            for (size_t i = 0; i < comb_gates.size(); ++i) {
+                double weighted_sum = z[i];
+                double weight_total = 1.0;
+                for (size_t j = 0; j < comb_gates.size(); ++j) {
+                    if (i == j) continue;
+                    double dx = comb_gates[i].x - comb_gates[j].x;
+                    double dy = comb_gates[i].y - comb_gates[j].y;
+                    double dist = std::sqrt(dx * dx + dy * dy);
+                    double cor = std::exp(-dist / cfg.correlation_distance);
+                    if (cor > 0.01) {
+                        weighted_sum += cor * z[j];
+                        weight_total += cor;
+                    }
+                }
+                correlated_z[i] = weighted_sum / weight_total;
+            }
+        } else {
+            correlated_z = z;
+        }
+
+        // Compute perturbed delays: delay_i = nominal_i × (1 + sigma_i × z_i)
+        std::unordered_map<GateId, double> perturbed_delays;
+        for (size_t i = 0; i < comb_gates.size(); ++i) {
+            double variation = comb_gates[i].sigma_frac * correlated_z[i];
+            double d = comb_gates[i].nominal_delay * (1.0 + variation);
+            perturbed_delays[comb_gates[i].id] = std::max(d, 0.001);
+        }
+
+        // Forward propagation with perturbed delays
+        std::unordered_map<NetId, double> arrival;
+        for (auto pi : nl_.primary_inputs())
+            arrival[pi] = 0.0;
+        for (auto gid : nl_.flip_flops()) {
+            auto& ff = nl_.gate(gid);
+            if (ff.output >= 0) {
+                double ins = 0;
+                auto ci = clock_insertion_.find(gid);
+                if (ci != clock_insertion_.end()) ins = ci->second;
+                arrival[ff.output] = ins + gate_delay(gid, 0.01);
+            }
+        }
+
+        for (auto gid : topo_) {
+            auto& g = nl_.gate(gid);
+            if (g.type == GateType::DFF || g.type == GateType::DLATCH ||
+                g.type == GateType::INPUT || g.type == GateType::OUTPUT ||
+                g.output < 0)
+                continue;
+
+            double max_arr = 0;
+            for (auto ni : g.inputs) {
+                auto it = arrival.find(ni);
+                if (it != arrival.end())
+                    max_arr = std::max(max_arr, it->second);
+            }
+
+            auto dit = perturbed_delays.find(gid);
+            double delay = (dit != perturbed_delays.end()) ? dit->second
+                                                            : gate_delay(gid, 0.01);
+            // Add wire delay
+            double wd = wire_delay(g.inputs.empty() ? -1 : g.inputs[0], g.output);
+            arrival[g.output] = max_arr + delay + wd;
+        }
+
+        // Compute WNS for this sample
+        double worst_slack = std::numeric_limits<double>::max();
+        for (auto po : nl_.primary_outputs()) {
+            auto it = arrival.find(po);
+            if (it != arrival.end()) {
+                double slack = clock_period - it->second;
+                worst_slack = std::min(worst_slack, slack);
+            }
+        }
+        for (auto& dff : dffs) {
+            auto it = arrival.find(dff.d_input);
+            if (it != arrival.end()) {
+                double req = clock_period + dff.insertion - 0.05 - setup_uncertainty_;
+                double slack = req - it->second;
+                worst_slack = std::min(worst_slack, slack);
+            }
+        }
+
+        if (worst_slack == std::numeric_limits<double>::max())
+            worst_slack = 0;
+        result.wns_distribution[s] = worst_slack;
+    }
+
+    // Compute statistics
+    auto sorted = result.wns_distribution;
+    std::sort(sorted.begin(), sorted.end());
+
+    double sum = 0;
+    for (double v : sorted) sum += v;
+    result.mean_wns = sum / cfg.num_samples;
+
+    double sq_sum = 0;
+    for (double v : sorted) sq_sum += (v - result.mean_wns) * (v - result.mean_wns);
+    result.sigma_wns = std::sqrt(sq_sum / cfg.num_samples);
+
+    // 99th percentile: 1% of samples have WNS worse than this
+    size_t p99_idx = std::max((size_t)0,
+        (size_t)(0.01 * (sorted.size() - 1)));
+    result.p99_wns = sorted[p99_idx];
+
+    // Restore OCV mode
+    ocv_mode_ = saved_ocv;
+    return result;
 }
 
 } // namespace sf

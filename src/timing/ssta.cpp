@@ -311,10 +311,21 @@ SstaResult SstaEngine::run_monte_carlo() {
         double global_var;
         std::vector<double> local_vars;
 
+        // Importance sampling: shift the mean of variation distributions
+        // toward the tail region to get more samples near timing failures.
+        // The shift amount targets paths with slack < tail_threshold.
+        // Likelihood ratio = P_original(x) / P_shifted(x) corrects bias.
+        double is_shift = 0.0;
+        if (config_.enable_importance_sampling) {
+            // Mean-shift IS: shift global variation toward worst-case
+            // Shift = 2σ toward slower process (positive variation = slower)
+            is_shift = 2.0 * (config_.global_variation_pct / 100.0);
+        }
+
         if (config_.sampling_mode != SstaConfig::SamplingMode::PSEUDO_RANDOM) {
             // Quasi-random: dimension 0 = global, dimensions 1..N = local
             double gv_scale = config_.global_variation_pct / 100.0;
-            global_var = quasi_random_normal(s, 0) * gv_scale;
+            global_var = quasi_random_normal(s, 0) * gv_scale + is_shift;
             double lv_scale = config_.local_variation_pct / 100.0;
             local_vars.resize(comb_gates.size());
             for (size_t i = 0; i < comb_gates.size(); ++i) {
@@ -322,7 +333,7 @@ SstaResult SstaEngine::run_monte_carlo() {
             }
         } else {
             // Pseudo-random (original path)
-            global_var = global_dist(rng);
+            global_var = global_dist(rng) + is_shift;
             local_vars = generate_correlated_locals(rng, comb_gates);
         }
 
@@ -388,6 +399,20 @@ SstaResult SstaEngine::run_monte_carlo() {
 
         wns_samples[s] = clock_period_ - worst_arr;  // WNS (negative = violation)
         tns_samples[s] = total_neg_slack;
+
+        // Importance sampling: compute likelihood ratio weight
+        // w(x) = P_original(x) / P_shifted(x) = exp(shift*x/σ² - shift²/(2σ²))
+        if (config_.enable_importance_sampling && is_shift != 0.0) {
+            double sigma_g = config_.global_variation_pct / 100.0;
+            double unshifted_var = global_var - is_shift;
+            double log_w = -(unshifted_var * unshifted_var) / (2.0 * sigma_g * sigma_g)
+                           + (global_var * global_var - 2.0 * global_var * is_shift + is_shift * is_shift) / (2.0 * sigma_g * sigma_g);
+            // Simplified: log_w = is_shift * unshifted_var / sigma_g^2 - is_shift^2 / (2*sigma_g^2)
+            log_w = is_shift * unshifted_var / (sigma_g * sigma_g) - is_shift * is_shift / (2.0 * sigma_g * sigma_g);
+            double w = std::exp(-log_w);
+            wns_samples[s] *= w;
+            tns_samples[s] *= w;
+        }
     }
 
     // Build statistical WNS

@@ -15,6 +15,7 @@
 #include <utility>
 #include <limits>
 #include <cmath>
+#include <random>
 
 namespace sf {
 
@@ -78,15 +79,18 @@ struct PocvTable {
     }
 };
 
+// CPPR mode: controls precision of common clock path identification
+enum class CpprMode {
+    APPROXIMATE,  // Use clock insertion delay approximation (fast, less accurate)
+    EXACT         // Trace actual clock tree topology for common path (accurate)
+};
+
 // CPPR: Common Path Pessimism Removal
 // Removes artificial pessimism from shared launch/capture clock paths
 // Reference: DAC'21, Huang et al., "A Provably Good Algorithm for CPPR"
 struct CpprConfig {
     bool enabled = false;
-    // In full implementation, we'd track clock tree topology.
-    // With CTS insertion delays only, we approximate:
-    // common_path = min(launch_insertion, capture_insertion)
-    // credit = common_delay × |late_derate - early_derate|
+    CpprMode mode = CpprMode::EXACT;  // default to exact topology-based
 };
 
 // Crosstalk delta-delay estimation
@@ -99,6 +103,34 @@ struct CrosstalkConfig {
     double aggressor_slew = 0.05;           // default aggressor slew (ns)
     double min_spacing_um = 0.14;           // below this, coupling is max
     double max_coupling_distance_um = 1.0;  // beyond this, ignore coupling
+};
+
+// POCV Monte Carlo configuration with spatial correlation
+// Reference: Synopsys POCV Application Note, "Monte Carlo OCV Analysis"
+struct PocvMonteCarloConfig {
+    int num_samples = 1000;
+    bool enable_correlation = true;     // spatial correlation between nearby cells
+    double correlation_distance = 100.0; // um — cells within this distance are correlated
+    unsigned seed = 42;
+};
+
+// POCV Monte Carlo result — WNS distribution from statistical sampling
+struct PocvMonteCarloResult {
+    double mean_wns = 0.0;
+    double sigma_wns = 0.0;
+    double p99_wns = 0.0;      // 99th percentile WNS
+    int num_samples = 0;
+    std::vector<double> wns_distribution;
+};
+
+// MCMM weighted scenario for multi-corner multi-mode optimization
+// Each scenario defines a (corner, mode) pair with weight and guardband.
+struct McmmWeightedScenario {
+    std::string name;            // e.g., "func_slow", "scan_fast"
+    double weight = 1.0;         // optimization weight
+    std::string mode;            // functional mode name
+    std::string corner;          // PVT corner name
+    double guardband = 0.0;      // additional margin (ns)
 };
 
 // Multi-corner derating factors with Temperature/Voltage scaling
@@ -277,6 +309,7 @@ public:
 
     // --- CPPR Configuration ---
     void enable_cppr(bool enable = true) { cppr_.enabled = enable; }
+    void set_cppr_mode(CpprMode mode) { cppr_.mode = mode; }
     
     // --- POCV Configuration ---
     void set_pocv_table(const PocvTable& table) { pocv_table_ = table; }
@@ -299,6 +332,13 @@ public:
 
     // --- Latch Timing Configuration ---
     void set_latch_timing_enabled(bool enable) { latch_timing_enabled_ = enable; }
+
+    // --- POCV Monte Carlo ---
+    PocvMonteCarloResult run_pocv_monte_carlo(double clock_period, const PocvMonteCarloConfig& cfg = {});
+
+    // --- MCMM Scenario Weighting ---
+    void set_mcmm_scenarios(const std::vector<McmmWeightedScenario>& scenarios);
+    const std::vector<McmmWeightedScenario>& mcmm_scenarios() const { return mcmm_scenarios_; }
     void set_latch_info(GateId latch_id, const LatchTimingInfo& info) {
         latch_info_[latch_id] = info;
     }
@@ -461,6 +501,9 @@ private:
 
     // Last clock period cached for incremental STA
     double last_clock_period_ = 0;
+
+    // MCMM weighted scenario state
+    std::vector<McmmWeightedScenario> mcmm_scenarios_;
 
     // Core STA steps
     void build_timing_graph();

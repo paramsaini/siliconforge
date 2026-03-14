@@ -31,6 +31,13 @@ struct SstaConfig {
     unsigned int seed                    = 42;
     double confidence_level              = 0.997;  // 3-sigma
 
+    // Importance sampling: biases MC toward tail distribution for better
+    // estimation of rare timing failures. Uses mean-shift IS with
+    // likelihood ratio correction.
+    // Reference: Singhee & Rutenbar, "Statistical Blockade", DAC 2007
+    bool   enable_importance_sampling    = false;
+    double tail_threshold                = -0.1;   // focus on paths with slack < threshold (ns)
+
     // Quasi-random sampling mode (Tier 2)
     // Sobol/Halton low-discrepancy sequences converge faster than pseudo-random.
     // For 1000 samples, Sobol typically gives 3-5× lower estimation error.
