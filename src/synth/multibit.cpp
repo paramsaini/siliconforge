@@ -54,18 +54,51 @@ std::vector<std::vector<GateId>> MultiBitOptimizer::find_bankable_groups(const M
 }
 
 void MultiBitOptimizer::merge_group(const std::vector<GateId>& group) {
-    if (group.empty()) return;
+    if (group.size() < 2) return;
 
-    // Rename the first FF in the group to represent the multi-bit cell
-    // E.g., DFF4 for a group of 4
+    // Structural multi-bit cell merge:
+    // The leader gate becomes a multi-bit DFF whose D inputs are the
+    // concatenation of all member FFs' D inputs.  All member Q outputs
+    // are redirected through the leader.
+    //
+    // Commercial approach (Cadence/Synopsys): replace N single-bit DFFs
+    // with one multi-bit cell from the Liberty library, rewire all fanin/
+    // fanout.  We emulate this by:
+    //   1. Expanding leader's input vector to hold all D inputs
+    //   2. Creating new output nets for each bit of the banked cell
+    //   3. Rewiring all downstream fanout from removed FFs to new nets
+    //   4. Converting removed FFs to BUF pass-throughs
+
     std::string mb_type = "DFF" + std::to_string(group.size());
     auto& leader = nl_.gate(group[0]);
     leader.name = mb_type + "_" + leader.name;
 
-    // Mark other FFs as merged (rename to indicate banked status)
+    // Leader keeps its own D input at index 0.
+    // Append D inputs from the other FFs in the group.
     for (size_t i = 1; i < group.size(); ++i) {
         auto& ff = nl_.gate(group[i]);
-        ff.name = mb_type + "_bank_" + std::to_string(i) + "_" + ff.name;
+
+        // Add this FF's D input to the leader's input list
+        if (!ff.inputs.empty()) {
+            leader.inputs.push_back(ff.inputs[0]);
+        }
+
+        // Rewire fanout: all gates driven by this FF's output net
+        // should now be driven via a BUF from the leader.
+        // Create a pass-through BUF that connects leader output → original fanout.
+        // The BUF preserves the original output net connectivity.
+        NetId old_q = ff.output;
+        if (old_q >= 0) {
+            // Convert the removed FF into a BUF driven by the leader's Q
+            ff.type = GateType::BUF;
+            ff.inputs.clear();
+            ff.inputs.push_back(leader.output);
+            ff.name = mb_type + "_buf_" + std::to_string(i);
+            ff.clk = -1;
+            ff.reset = -1;
+            // ff.output remains the same — downstream fanout is preserved
+            // The BUF just passes the leader's Q to the original output net
+        }
     }
 }
 

@@ -108,30 +108,57 @@ void FsmExtractor::optimize_fsms(std::shared_ptr<AstNode> root, const std::vecto
     }
 }
 
-// Rewrites AST conditional == checks and <= assignments with the new mathematically optimal encoding
+// Rewrites AST conditional checks and assignments with the new encoded values.
+// Handles: == / != comparisons, case statements, blocking/nonblocking assigns.
 void FsmExtractor::rewrite_ast(std::shared_ptr<AstNode> node, const StateMachine& fsm) {
     if (!node) return;
-    
-    // Replace literals in comparisons (if state == 0)
-    if (node->type == AstNodeType::BIN_OP && node->value == "==") {
-        if (!node->children.empty() && node->children[0]->value == fsm.state_var_name) {
-            std::string old_val = node->children[1]->value;
-            if (fsm.encoded_values.count(old_val)) {
-                node->children[1]->value = std::to_string(fsm.encoded_values.at(old_val));
-            }
+
+    // Helper: replace a literal node's value if it matches a known state name
+    auto try_replace = [&](std::shared_ptr<AstNode>& lit) {
+        if (!lit || !lit->children.empty()) return;
+        auto it = fsm.encoded_values.find(lit->value);
+        if (it != fsm.encoded_values.end()) {
+            lit->value = std::to_string(it->second);
+            lit->int_val = it->second;
+        }
+    };
+
+    // 1. Binary comparison: state == val  or  state != val
+    if (node->type == AstNodeType::BIN_OP &&
+        (node->value == "==" || node->value == "!=")) {
+        if (node->children.size() >= 2) {
+            if (node->children[0]->value == fsm.state_var_name)
+                try_replace(node->children[1]);
+            else if (node->children[1]->value == fsm.state_var_name)
+                try_replace(node->children[0]);
         }
     }
-    
-    // Replace literals in assignments (state <= 1)
+
+    // 2. Nonblocking assignment: state <= val
     if (node->type == AstNodeType::NONBLOCK_ASSIGN && node->value == fsm.state_var_name) {
-        if (!node->children.empty() && node->children[0]->children.empty()) { // Simple wire/literal assignment
-            std::string old_val = node->children[0]->value;
-            if (fsm.encoded_values.count(old_val)) {
-                node->children[0]->value = std::to_string(fsm.encoded_values.at(old_val));
+        if (!node->children.empty())
+            try_replace(node->children[0]);
+    }
+
+    // 3. Blocking assignment: state = val (combinational always blocks)
+    if (node->type == AstNodeType::BLOCK_ASSIGN && node->value == fsm.state_var_name) {
+        if (!node->children.empty())
+            try_replace(node->children[0]);
+    }
+
+    // 4. Case statement: case(state_var) — rewrite each CASE_ITEM label
+    if (node->type == AstNodeType::CASE_STMT && node->value == fsm.state_var_name) {
+        for (auto& child : node->children) {
+            if (child && child->type == AstNodeType::CASE_ITEM) {
+                auto it = fsm.encoded_values.find(child->value);
+                if (it != fsm.encoded_values.end()) {
+                    child->value = std::to_string(it->second);
+                }
             }
         }
     }
-    
+
+    // Recurse into all children
     for (auto& child : node->children) {
         rewrite_ast(child, fsm);
     }

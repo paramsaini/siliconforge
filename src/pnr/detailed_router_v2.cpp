@@ -1026,8 +1026,8 @@ bool DetailedRouterV2::drc_check_segment(double x1, double y1, double x2, double
         double ext_x = std::min(std::abs(vx - std::min(x1, x2)), std::abs(vx - std::max(x1, x2)));
         double ext_y = std::min(std::abs(vy - std::min(y1, y2)), std::abs(vy - std::max(y1, y2)));
         if (ext_x < via_enc && ext_y < via_enc && length > via_enc * 2) {
-            // Enclosure violated only if both extensions are too small
-            // and the segment is long enough that the via isn't at the center
+            // Enclosure violated: via is too close to segment edge on both axes
+            return false;
         }
     }
 

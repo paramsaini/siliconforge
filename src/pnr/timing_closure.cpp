@@ -1,6 +1,7 @@
 // SiliconForge — Timing Closure Engine implementation
 
 #include "pnr/timing_closure.hpp"
+#include "pnr/detailed_router_v2.hpp"
 #include <chrono>
 #include <cmath>
 #include <sstream>
@@ -73,7 +74,18 @@ TimingClosureResult TimingClosureEngine::run(const TimingClosureConfig& cfg) {
         PostRouteResult opt_res = opt.optimize(cfg.target_wns);
         result.setup_violations_fixed += opt_res.setup_fixes;
 
-        // Re-run STA after optimization
+        // Incremental re-route: gate sizing / buffer insertion changes physical
+        // netlist, so wire parasitics need updating before STA.
+        {
+            int num_layers = 0;
+            for (auto& w : pd_.wires)
+                num_layers = std::max(num_layers, w.layer + 1);
+            if (num_layers < 2) num_layers = 2;
+            DetailedRouterV2 router(pd_, num_layers);
+            router.route(1); // single-threaded incremental re-route
+        }
+
+        // Re-run STA after optimization + re-route
         StaEngine sta(nl_, lib_, &pd_);
         sta_res = sta.analyze(cfg.clock_period);
         result.wns_per_iteration.push_back(sta_res.wns);

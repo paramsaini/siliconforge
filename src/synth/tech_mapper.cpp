@@ -243,19 +243,37 @@ TechMapper::CellMatch TechMapper::to_cell_match(const ExtendedMatch& em) const {
 
 double TechMapper::compute_load_delay(const LibertyCell* cell, double load_cap) const {
     if (!cell) return 1e9;
-    LoadModel model;
 
-    // Extract intrinsic delay from timing tables if available
+    // Use NLDM 2D table interpolation if available (input_slew × output_load).
+    // This is the industry-standard Non-Linear Delay Model from Liberty.
     if (!cell->timings.empty()) {
         const auto& t = cell->timings[0];
+
+        // NLDM tables present → bilinear interpolation
+        if (t.nldm_rise.valid() && t.nldm_fall.valid()) {
+            // Assume nominal input slew (midpoint of index_1 range)
+            double nom_slew = 0.1; // default 100ps
+            if (!t.nldm_rise.index_1.empty()) {
+                size_t mid = t.nldm_rise.index_1.size() / 2;
+                nom_slew = t.nldm_rise.index_1[mid];
+            }
+            double rise_d = t.nldm_rise.interpolate(nom_slew, load_cap);
+            double fall_d = t.nldm_fall.interpolate(nom_slew, load_cap);
+            double delay = (rise_d + fall_d) / 2.0;
+            if (delay > 0) return delay;
+        }
+
+        // Fallback: scalar values + Elmore approximation
+        LoadModel model;
         model.intrinsic_delay = (t.cell_rise + t.cell_fall) / 2.0;
         if (model.intrinsic_delay <= 0.0) model.intrinsic_delay = 0.1;
         model.transition_delay = (t.rise_transition + t.fall_transition) / 2.0;
         if (model.transition_delay <= 0.0) model.transition_delay = 0.05;
+        return model.intrinsic_delay + model.transition_delay * load_cap;
     }
 
-    // Elmore: delay = intrinsic + transition × load_cap
-    return model.intrinsic_delay + model.transition_delay * load_cap;
+    // No timing data at all
+    return 0.1 + 0.05 * load_cap;
 }
 
 // ============================================================================

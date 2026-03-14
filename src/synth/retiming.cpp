@@ -527,29 +527,147 @@ RetimingResult RetimingEngine::optimize_with_result(Netlist& nl) {
 
     result.fmax_before = result.critical_path_before > 0 ? 1.0 / result.critical_path_before : 0;
 
-    // Binary search for minimum feasible clock period
-    double lo = 0;
-    for (auto& n : nodes_) lo = std::max(lo, n.delay); // minimum = slowest gate
-    double hi = result.critical_path_before;
-    double best_T = hi;
+    // Large-design guard: Leiserson-Saxe generates O(V²) constraints from
+    // zero-weight path enumeration, then Bellman-Ford solves in O(V·|C|) →
+    // overall O(V³).  For designs beyond the threshold, fall back to an
+    // ASAP greedy heuristic that runs in O(V+E).
+    constexpr int LEISERSON_SAXE_THRESHOLD = 400;
+    bool use_heuristic = (static_cast<int>(nodes_.size()) > LEISERSON_SAXE_THRESHOLD);
     bool found_improvement = false;
+    double best_T = result.critical_path_before;
 
-    // Binary search: configurable iterations
-    int steps = config_.binary_search_steps;
-    for (int step = 0; step < steps; ++step) {
-        double mid = (lo + hi) / 2.0;
+    if (use_heuristic) {
+        std::cout << "[Retiming] Design has " << nodes_.size()
+                  << " nodes (>" << LEISERSON_SAXE_THRESHOLD
+                  << ") — using ASAP heuristic.\n";
 
-        // Reset r-values
-        for (auto& n : nodes_) n.r_val = 0;
+        // ASAP heuristic retiming: push registers as far forward as possible
+        // along each path to balance pipeline stages.
+        //
+        // 1. Topological sort of the retiming graph (zero-weight subgraph).
+        // 2. Forward pass: accumulate combinational delay from PIs.
+        // 3. For each node, compute how many registers can move forward
+        //    without creating negative-weight edges.
 
-        if (compute_retiming_values(mid)) {
-            best_T = mid;
-            hi = mid;
-            found_improvement = true;
-        } else {
-            lo = mid;
+        int n = static_cast<int>(nodes_.size());
+
+        // Build in-degree and adjacency for zero-weight edges
+        std::vector<int> indeg(n, 0);
+        std::vector<std::vector<int>> fwd(n);
+        for (auto& e : edges_) {
+            if (e.weight == 0) {
+                fwd[e.u].push_back(e.v);
+                ++indeg[e.v];
+            }
         }
-        result.iterations = step + 1;
+
+        // Kahn's topological sort on zero-weight subgraph
+        std::queue<int> topo_q;
+        for (int i = 0; i < n; ++i)
+            if (indeg[i] == 0) topo_q.push(i);
+
+        std::vector<int> topo_order;
+        topo_order.reserve(n);
+        while (!topo_q.empty()) {
+            int u = topo_q.front(); topo_q.pop();
+            topo_order.push_back(u);
+            for (int v : fwd[u])
+                if (--indeg[v] == 0) topo_q.push(v);
+        }
+
+        // Forward pass: compute ASAP arrival time at each node
+        std::vector<double> arrival(n, 0.0);
+        for (int u : topo_order) {
+            arrival[u] += nodes_[u].delay;
+            for (int v : fwd[u])
+                arrival[v] = std::max(arrival[v], arrival[u]);
+        }
+
+        // Compute target period: slowest-gate delay acts as lower bound,
+        // attempt to equalize stages to avg_stage_delay
+        double max_gate = 0;
+        for (auto& nd : nodes_) max_gate = std::max(max_gate, nd.delay);
+        double max_arrival = *std::max_element(arrival.begin(), arrival.end());
+
+        // Count existing pipeline stages from register edges
+        int total_regs = 0;
+        for (auto& e : edges_)
+            total_regs += e.weight;
+        int stages = std::max(total_regs, 1);
+        double target_stage_delay = std::max(max_arrival / stages, max_gate);
+
+        // Assign r-values: each node gets r = floor(arrival / target_stage_delay)
+        // clamped by edge feasibility constraints
+        for (int i = 0; i < n; ++i) {
+            if (nodes_[i].frozen) {
+                nodes_[i].r_val = 0;
+            } else {
+                nodes_[i].r_val = static_cast<int>(arrival[i] / target_stage_delay);
+            }
+        }
+
+        // Feasibility correction: ensure no edge gets negative weight
+        // new_w(e) = w(e) + r(v) - r(u) ≥ 0
+        bool corrected = true;
+        for (int pass = 0; pass < n && corrected; ++pass) {
+            corrected = false;
+            for (auto& e : edges_) {
+                int new_w = e.weight + nodes_[e.v].r_val - nodes_[e.u].r_val;
+                if (new_w < 0) {
+                    // Reduce r(v) to make edge weight non-negative
+                    nodes_[e.v].r_val = nodes_[e.u].r_val - e.weight;
+                    corrected = true;
+                }
+            }
+        }
+
+        // Compute resulting critical path under this retiming
+        // Recompute arrival times with the retimed edge weights
+        std::fill(arrival.begin(), arrival.end(), 0.0);
+        for (int u : topo_order) {
+            arrival[u] += nodes_[u].delay;
+            for (auto& e : edges_) {
+                if (e.u != u) continue;
+                int new_w = e.weight + nodes_[e.v].r_val - nodes_[e.u].r_val;
+                if (new_w == 0) {
+                    arrival[e.v] = std::max(arrival[e.v], arrival[u]);
+                }
+            }
+        }
+        best_T = *std::max_element(arrival.begin(), arrival.end());
+        if (best_T <= 0) best_T = result.critical_path_before;
+
+        bool any_nonzero = false;
+        for (auto& nd : nodes_)
+            if (nd.r_val != 0) { any_nonzero = true; break; }
+
+        found_improvement = any_nonzero && (best_T < result.critical_path_before);
+        result.iterations = 1;
+
+    } else {
+        // Exact Leiserson-Saxe for small designs (≤ threshold)
+        double lo = 0;
+        for (auto& n : nodes_) lo = std::max(lo, n.delay); // minimum = slowest gate
+        double hi = result.critical_path_before;
+        best_T = hi;
+
+        // Binary search: configurable iterations
+        int steps = config_.binary_search_steps;
+        for (int step = 0; step < steps; ++step) {
+            double mid = (lo + hi) / 2.0;
+
+            // Reset r-values
+            for (auto& n : nodes_) n.r_val = 0;
+
+            if (compute_retiming_values(mid)) {
+                best_T = mid;
+                hi = mid;
+                found_improvement = true;
+            } else {
+                lo = mid;
+            }
+            result.iterations = step + 1;
+        }
     }
 
     double improvement_pct = (result.critical_path_before - best_T) / result.critical_path_before;
@@ -562,14 +680,16 @@ RetimingResult RetimingEngine::optimize_with_result(Netlist& nl) {
         return result;
     }
 
-    // Recompute r-values for the best feasible period
-    for (auto& n : nodes_) n.r_val = 0;
-    if (!compute_retiming_values(best_T)) {
-        result.message = "Failed to recompute retiming for best period.";
-        result.critical_path_after = result.critical_path_before;
-        result.fmax_after = result.fmax_before;
-        result.register_count_after = result.register_count_before;
-        return result;
+    // For exact mode, recompute r-values for the best feasible period
+    if (!use_heuristic) {
+        for (auto& n : nodes_) n.r_val = 0;
+        if (!compute_retiming_values(best_T)) {
+            result.message = "Failed to recompute retiming for best period.";
+            result.critical_path_after = result.critical_path_before;
+            result.fmax_after = result.fmax_before;
+            result.register_count_after = result.register_count_before;
+            return result;
+        }
     }
 
     // Apply structural changes

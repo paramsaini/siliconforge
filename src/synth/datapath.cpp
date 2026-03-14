@@ -207,19 +207,16 @@ int DatapathOptimizer::wallace_levels(int n) const {
 }
 
 int DatapathOptimizer::csa_gate_count(int partial_products) const {
-    // Each full adder: ~5 gates (2 XOR + 2 AND + 1 OR)
-    // Approximate total gates across all reduction levels
+    // Each full adder (CSA cell): ~5 gates (2 XOR + 2 AND + 1 OR)
+    // At each Wallace tree level, groups of 3 rows reduce to 2 via full adders.
+    // Remaining rows (mod 3) pass through unchanged.
     int gates = 0;
     int rows = partial_products;
     while (rows > 2) {
         int triplets = rows / 3;
-        gates += triplets * 5; // 5 gates per FA
-        rows = rows - triplets + triplets * 0; // 3→2 reduction
-        rows = (rows - triplets * 3) + triplets * 2;
-        rows = partial_products; // recount
-        // simpler: accumulate and break
-        gates = partial_products * 5 * wallace_levels(partial_products) / 3;
-        break;
+        int remainder = rows - triplets * 3;     // 0, 1, or 2 pass-through rows
+        gates += triplets * 5;                    // 5 gates per full adder
+        rows = triplets * 2 + remainder;          // 3→2 reduction per triplet
     }
     return std::max(gates, 1);
 }

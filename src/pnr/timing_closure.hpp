@@ -9,6 +9,7 @@
 #include "pnr/physical.hpp"
 #include "timing/sta.hpp"
 #include "pnr/post_route_opt.hpp"
+#include "pnr/detailed_router_v2.hpp"
 #include <string>
 #include <vector>
 

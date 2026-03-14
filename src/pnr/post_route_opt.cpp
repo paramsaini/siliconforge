@@ -170,13 +170,35 @@ int PostRouteOptimizer::timing_gate_sizing(const StaResult& sta) {
             }
             if (!func.empty()) {
                 auto equiv = lib_->cells_by_function(func);
-                // If multiple drive-strength variants exist, upsizing is possible
-                if (equiv.size() > 1) resized++;
+                // Select fastest cell variant (lowest delay) for critical gate
+                if (equiv.size() > 1) {
+                    const LibertyCell* best = nullptr;
+                    double best_delay = std::numeric_limits<double>::max();
+                    for (auto* cell : equiv) {
+                        double d = std::numeric_limits<double>::max();
+                        if (!cell->timings.empty())
+                            d = (cell->timings[0].cell_rise + cell->timings[0].cell_fall) / 2.0;
+                        if (d < best_delay) {
+                            best_delay = d;
+                            best = cell;
+                        }
+                    }
+                    if (best && best->name != g.name) {
+                        g.name = best->name;
+                        resized++;
+                    }
+                }
             }
         } else {
-            // No library: count high-fanout drivers as sizing candidates
-            if (g.output >= 0 && nl_.net(g.output).fanout.size() > 4)
+            // No library: insert drive buffer for high-fanout gates
+            if (g.output >= 0 && nl_.net(g.output).fanout.size() > 4) {
+                NetId old_out = g.output;
+                NetId buf_net = nl_.add_net("size_buf_" + std::to_string(nl_.num_nets()));
+                g.output = buf_net;
+                nl_.add_gate(GateType::BUF, {buf_net}, old_out,
+                             "size_buf_" + std::to_string(nl_.num_gates()));
                 resized++;
+            }
         }
     }
     return resized;
@@ -457,45 +479,95 @@ int PostRouteOptimizer::vt_swap_for_timing(const StaResult& sta) {
 
 int PostRouteOptimizer::clone_high_fanout(const StaResult& sta) {
     if (!config_.enable_cell_cloning) return 0;
-    
-    // Clone gates with fanout > threshold that are on critical paths
+
     int cloned = 0;
     auto crit = find_critical_gates(sta);
-    
+
     for (auto gid : crit) {
-        auto& g = nl_.gate(gid);
-        if (g.output < 0 || g.type == GateType::DFF) continue;
-        
-        int fanout = static_cast<int>(nl_.net(g.output).fanout.size());
+        // Capture gate info by value before any netlist mutation
+        GateType gtype = nl_.gate(gid).type;
+        NetId g_output = nl_.gate(gid).output;
+        std::vector<NetId> g_inputs = nl_.gate(gid).inputs;
+        std::string g_name = nl_.gate(gid).name;
+
+        if (g_output < 0 || gtype == GateType::DFF) continue;
+
+        int fanout = static_cast<int>(nl_.net(g_output).fanout.size());
         if (fanout <= config_.fanout_clone_threshold) continue;
-        
-        // Clone: create a duplicate gate driving half the fanout
-        // In real tools, this involves:
-        // 1. Create new gate with same function
-        // 2. Split fanout list: half to original, half to clone
-        // 3. Route new net from clone to its sinks
-        // Here: count the cloning opportunity (structural modification is complex)
-        cloned++;
+
+        // Capture fanout list before mutation
+        std::vector<GateId> orig_fanout = nl_.net(g_output).fanout;
+        int half = fanout / 2;
+
+        // Create clone: duplicate gate with same function and inputs
+        // add_net/add_gate may reallocate — don't hold refs across these calls
+        NetId clone_out = nl_.add_net("clone_net_" + std::to_string(nl_.num_nets()));
+        nl_.add_gate(gtype, g_inputs, clone_out, "clone_" + g_name);
+
+        // Split fanout: second half of sinks moves to clone's output net
+        std::vector<GateId> to_move(orig_fanout.begin() + half, orig_fanout.end());
+        int moved = 0;
+
+        // Rewire: change input references in moved sinks from original net to clone net
+        for (GateId sink : to_move) {
+            auto& sg = nl_.gate(sink);
+            for (auto& inp : sg.inputs) {
+                if (inp == g_output) {
+                    inp = clone_out;
+                    moved++;
+                    break;
+                }
+            }
+        }
+
+        // Update fanout lists
+        if (moved > 0) {
+            auto& fo = nl_.net(g_output).fanout;
+            if (half < static_cast<int>(fo.size()))
+                fo.erase(fo.begin() + half, fo.end());
+            for (GateId sink : to_move)
+                nl_.net(clone_out).fanout.push_back(sink);
+            cloned++;
+        }
     }
     return cloned;
 }
 
 int PostRouteOptimizer::insert_buffers_for_slew(const StaResult& sta) {
     if (!config_.enable_buffer_insertion) return 0;
-    
-    // Insert buffers on nets where output slew exceeds max_slew
+
     int inserted = 0;
-    
+
     for (auto& path : sta.critical_paths) {
-        if (path.slack >= 0) continue; // only on failing paths
-        
+        if (path.slack >= 0) continue;
+
         for (auto nid : path.nets) {
             if (nid < 0 || nid >= static_cast<NetId>(nl_.num_nets())) continue;
             auto& net = nl_.net(nid);
-            
-            // High-fanout or long-wire nets may have slew issues
+
+            // High-fanout nets have slew degradation — insert buffer
             if (static_cast<int>(net.fanout.size()) > config_.fanout_clone_threshold / 2) {
-                // Buffer insertion candidate
+                // Try DRC-aware buffer insertion via physical design
+                auto locs = find_buffer_locations(nid);
+                bool placed = false;
+                for (auto& loc : locs) {
+                    if (insert_buffer_drc_safe(loc)) {
+                        placed = true;
+                        break;
+                    }
+                }
+
+                if (!placed) {
+                    // Capture driver before add_net (which may reallocate nets_ vector)
+                    GateId driver_gid = nl_.net(nid).driver;
+                    NetId buf_in = nl_.add_net("slew_buf_in_" + std::to_string(nl_.num_nets()));
+                    // After add_net, the 'net' reference is potentially invalid — use nid
+                    if (driver_gid >= 0) {
+                        nl_.gate(driver_gid).output = buf_in;
+                        nl_.add_gate(GateType::BUF, {buf_in}, nid,
+                                     "slew_buf_" + std::to_string(nl_.num_gates()));
+                    }
+                }
                 inserted++;
                 break; // one buffer per path segment
             }
@@ -506,22 +578,55 @@ int PostRouteOptimizer::insert_buffers_for_slew(const StaResult& sta) {
 
 int PostRouteOptimizer::fix_hold_violations(const StaResult& sta) {
     if (!config_.enable_hold_fix) return 0;
-    
-    // Fix hold violations by inserting delay buffers on short paths
-    // Hold violation: data arrives too early at capture FF
-    // Fix: add delay cells (buffer chain) to slow down the data path
+
     int fixed = 0;
-    
+
     for (auto& path : sta.critical_paths) {
         if (!path.is_hold) continue;
-        if (path.slack >= -config_.hold_margin_ns) continue; // within margin
-        
+        if (path.slack >= -config_.hold_margin_ns) continue;
+
         // Number of delay buffers needed ≈ |hold_violation| / buffer_delay
         double violation = -path.slack;
-        double buf_delay = 0.02; // 20ps per delay buffer
+        double buf_delay = 0.02; // ~20ps per delay buffer (typical 28nm)
         int num_buffers = static_cast<int>(std::ceil(violation / buf_delay));
-        num_buffers = std::min(num_buffers, 10); // cap at 10 buffers
-        
+        num_buffers = std::min(num_buffers, 10); // cap chain length
+
+        // Find the endpoint net to insert the delay chain
+        // The hold violation is at the capture FF — insert buffers on the data path
+        // just before it to add delay.
+        NetId target_net = -1;
+        if (!path.nets.empty()) {
+            // Last net in the path is closest to the capture FF
+            target_net = path.nets.back();
+        }
+
+        if (target_net < 0 || target_net >= static_cast<NetId>(nl_.num_nets()))
+            continue;
+
+        // Build delay buffer chain: net → buf1 → buf2 → ... → bufN → original_sink
+        NetId chain_in = target_net;
+        for (int b = 0; b < num_buffers; ++b) {
+            NetId chain_out = nl_.add_net("hold_dly_" + std::to_string(nl_.num_nets()));
+            nl_.add_gate(GateType::BUF, {chain_in}, chain_out,
+                         "hold_buf_" + std::to_string(nl_.num_gates()));
+            chain_in = chain_out;
+        }
+
+        // Rewire: the capture FF's D input changes from target_net to chain end
+        // Find capture gate from path endpoint
+        if (!path.gates.empty() && chain_in != target_net) {
+            GateId cap_gate = path.gates.back();
+            if (cap_gate >= 0 && cap_gate < static_cast<GateId>(nl_.num_gates())) {
+                auto& cg = nl_.gate(cap_gate);
+                for (auto& inp : cg.inputs) {
+                    if (inp == target_net) {
+                        inp = chain_in;
+                        break;
+                    }
+                }
+            }
+        }
+
         fixed += num_buffers;
     }
     return fixed;
@@ -529,30 +634,42 @@ int PostRouteOptimizer::fix_hold_violations(const StaResult& sta) {
 
 int PostRouteOptimizer::useful_skew_optimization(const StaResult& sta) {
     if (!config_.enable_useful_skew) return 0;
-    
-    // Useful skew: intentionally adjust clock arrival to borrow time
-    // from paths with positive slack to fix paths with negative slack.
-    //
-    // For a DFF-to-DFF path: if capture clock arrives later, setup slack improves.
-    // But: this degrades hold slack on the same path and affects other paths
-    // through the same DFF. Must be done carefully.
+
+    // Useful skew: intentionally adjust clock arrival at capture DFF to borrow
+    // time from paths with positive slack to paths with negative slack.
+    // Setup slack improves when capture clock arrives later.
+    // Constraint: total skew budget must stay within useful_skew_max_ns.
     int adjustments = 0;
-    
+
     for (auto& path : sta.critical_paths) {
         if (path.is_hold) continue;
-        if (path.slack >= 0) continue; // only fix violations
-        
+        if (path.slack >= 0) continue;
+
         double needed = -path.slack;
-        if (needed > config_.useful_skew_max_ns) continue; // too much to fix with skew
-        
-        // Find the capture DFF and adjust its clock insertion
-        std::string cap_name = path.endpoint;
-        auto slash = cap_name.find('/');
-        if (slash != std::string::npos) cap_name = cap_name.substr(0, slash);
-        
-        // Record as useful skew candidate (actual CTS adjustment requires
-        // re-routing clock tree — here we count the optimization opportunity)
-        adjustments++;
+        if (needed > config_.useful_skew_max_ns) continue;
+
+        // Find the capture DFF gate from the path endpoint
+        GateId cap_gid = -1;
+        if (!path.gates.empty()) {
+            GateId last = path.gates.back();
+            if (last >= 0 && last < static_cast<GateId>(nl_.num_gates()) &&
+                nl_.gate(last).type == GateType::DFF) {
+                cap_gid = last;
+            }
+        }
+        if (cap_gid < 0) continue;
+
+        // Apply clock insertion delay: add a buffer on the capture DFF's clock net
+        // This delays clock arrival → improves setup slack at cost of hold margin.
+        NetId old_clk = nl_.gate(cap_gid).clk;
+        if (old_clk >= 0) {
+            NetId skew_net = nl_.add_net("uskew_clk_" + std::to_string(nl_.num_nets()));
+            nl_.add_gate(GateType::BUF, {old_clk}, skew_net,
+                         "uskew_buf_" + std::to_string(nl_.num_gates()));
+            // Re-access gate after mutation (add_gate may reallocate gates_ vector)
+            nl_.gate(cap_gid).clk = skew_net;
+            adjustments++;
+        }
     }
     return adjustments;
 }
