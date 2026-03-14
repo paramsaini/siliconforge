@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include "synth/datapath.hpp"
 
 namespace sf {
 
@@ -34,6 +35,18 @@ bool BehavioralSynthesizer::synthesize(const BehavioralAST& ast, Netlist& nl) {
     shared_resources_.clear();
     stats_ = SynthStats{};
     synth_node(ast.root, nl);
+
+    // Post-synthesis datapath optimization: replace naive multipliers/adders
+    // with carry-chain, Wallace tree, and Booth-encoded structures
+    if (nl.num_gates() > 0) {
+        DatapathOptimizer dp(nl);
+        DatapathConfig dp_cfg;
+        dp_cfg.enable_carry_chain = true;
+        dp_cfg.enable_wallace_tree = true;
+        dp_cfg.enable_booth_encoding = true;
+        dp.optimize(dp_cfg);
+    }
+
     return true;
 }
 
