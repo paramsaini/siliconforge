@@ -172,6 +172,18 @@ size_t LibertyLibrary::parse_pin(const std::vector<Token>& t, size_t pos, Libert
             } else if (t[pos].value == "internal_power") {
                 pos++;
                 pos = parse_internal_power(t, pos, cell);
+            } else if (t[pos].value == "noise_immunity_high") {
+                pos++;
+                pos = parse_noise_table(t, pos, pin.noise.noise_immunity_high);
+            } else if (t[pos].value == "noise_immunity_low") {
+                pos++;
+                pos = parse_noise_table(t, pos, pin.noise.noise_immunity_low);
+            } else if (t[pos].value == "internal_power_table" || t[pos].value == "nlpm") {
+                pos++;
+                pos = parse_nlpm_table(t, pos, pin.internal_power_table);
+            } else if (t[pos].value == "cap_table") {
+                pos++;
+                pos = parse_cap_table(t, pos, pin.cap_table);
             } else {
                 // Skip unknown attribute/group
                 if (t[pos].type == Token::IDENT) {
@@ -244,6 +256,12 @@ size_t LibertyLibrary::parse_cell(const std::vector<Token>& t, size_t pos) {
             } else if (t[pos].value == "pin") {
                 pos++;
                 pos = parse_pin(t, pos, cell);
+            } else if (t[pos].value == "em_limit") {
+                pos++;
+                pos = parse_em_limit(t, pos, cell);
+            } else if (t[pos].value == "dvfs_table" || t[pos].value == "scaling_factors") {
+                pos++;
+                pos = parse_dvfs_entry(t, pos, cell);
             } else {
                 if (t[pos].type == Token::IDENT) {
                     pos++;
@@ -1052,6 +1070,260 @@ size_t sf::LibertyLibrary::parse_ecsm_table(const std::vector<Token>& t, size_t 
                         pos = skip_group(t, pos);
                 } else if (pos < t.size() && t[pos].type == Token::LBRACE) {
                     pos = skip_group(t, pos);
+                }
+            }
+        }
+        if (pos < t.size() && t[pos].type == Token::RBRACE) pos++;
+    }
+    return pos;
+}
+
+// Parse a 2D noise table: noise_immunity_high(tmpl) { index_1(...); index_2(...); values(...); }
+size_t sf::LibertyLibrary::parse_noise_table(const std::vector<Token>& t, size_t pos,
+                                              std::vector<std::vector<double>>& table_out) {
+    if (pos < t.size() && t[pos].type == Token::LPAREN) {
+        while (pos < t.size() && t[pos].type != Token::RPAREN) pos++;
+        if (pos < t.size()) pos++;
+    }
+    if (pos < t.size() && t[pos].type == Token::LBRACE) {
+        pos++;
+        while (pos < t.size() && t[pos].type != Token::RBRACE) {
+            if (t[pos].value == "values") {
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::LPAREN) {
+                    pos++;
+                    while (pos < t.size() && t[pos].type != Token::RPAREN) {
+                        if (t[pos].type == Token::STRING || t[pos].type == Token::NUMBER ||
+                            t[pos].type == Token::IDENT) {
+                            auto row = parse_number_list(t[pos].value);
+                            if (!row.empty()) table_out.push_back(row);
+                        }
+                        pos++;
+                        if (pos < t.size() && t[pos].type == Token::COMMA) pos++;
+                    }
+                    if (pos < t.size()) pos++;
+                }
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            } else {
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::LPAREN) {
+                    while (pos < t.size() && t[pos].type != Token::RPAREN) pos++;
+                    if (pos < t.size()) pos++;
+                } else if (pos < t.size() && t[pos].type == Token::COLON) {
+                    pos++;
+                    if (pos < t.size()) pos++;
+                    if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+                }
+            }
+        }
+        if (pos < t.size() && t[pos].type == Token::RBRACE) pos++;
+    }
+    return pos;
+}
+
+// Parse em_limit() { pin_name : "..."; max_current : ...; max_transition : ...; }
+size_t sf::LibertyLibrary::parse_em_limit(const std::vector<Token>& t, size_t pos,
+                                           LibertyCell& cell) {
+    EmLimit em;
+    if (pos < t.size() && t[pos].type == Token::LPAREN) {
+        while (pos < t.size() && t[pos].type != Token::RPAREN) pos++;
+        if (pos < t.size()) pos++;
+    }
+    if (pos < t.size() && t[pos].type == Token::LBRACE) {
+        pos++;
+        while (pos < t.size() && t[pos].type != Token::RBRACE) {
+            if ((t[pos].value == "pin_name" || t[pos].value == "related_pin") && pos + 2 < t.size()) {
+                pos += 2;
+                em.pin_name = t[pos].value; pos++;
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            } else if ((t[pos].value == "max_current" || t[pos].value == "max_current_ma") && pos + 2 < t.size()) {
+                pos += 2;
+                try { em.max_current_ma = std::stod(t[pos].value); } catch (...) {}
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            } else if ((t[pos].value == "max_transition" || t[pos].value == "max_transition_ns") && pos + 2 < t.size()) {
+                pos += 2;
+                try { em.max_transition_ns = std::stod(t[pos].value); } catch (...) {}
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            } else {
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::COLON) {
+                    pos++;
+                    if (pos < t.size()) pos++;
+                    if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+                }
+            }
+        }
+        if (pos < t.size() && t[pos].type == Token::RBRACE) pos++;
+    }
+    cell.em_limits.push_back(em);
+    return pos;
+}
+
+// Parse dvfs_table() / scaling_factors()
+size_t sf::LibertyLibrary::parse_dvfs_entry(const std::vector<Token>& t, size_t pos,
+                                             LibertyCell& cell) {
+    if (pos < t.size() && t[pos].type == Token::LPAREN) {
+        while (pos < t.size() && t[pos].type != Token::RPAREN) pos++;
+        if (pos < t.size()) pos++;
+    }
+    if (pos < t.size() && t[pos].type == Token::LBRACE) {
+        pos++;
+        DvfsEntry entry;
+        while (pos < t.size() && t[pos].type != Token::RBRACE) {
+            if (t[pos].value == "voltage" && pos + 2 < t.size()) {
+                pos += 2;
+                try { entry.voltage = std::stod(t[pos].value); } catch (...) {}
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            } else if (t[pos].value == "temperature" && pos + 2 < t.size()) {
+                pos += 2;
+                try { entry.temperature = std::stod(t[pos].value); } catch (...) {}
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            } else if (t[pos].value == "delay_factor" && pos + 2 < t.size()) {
+                pos += 2;
+                try { entry.delay_factor = std::stod(t[pos].value); } catch (...) {}
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            } else if (t[pos].value == "power_factor" && pos + 2 < t.size()) {
+                pos += 2;
+                try { entry.power_factor = std::stod(t[pos].value); } catch (...) {}
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            } else {
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::COLON) {
+                    pos++;
+                    if (pos < t.size()) pos++;
+                    if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+                }
+            }
+        }
+        if (pos < t.size() && t[pos].type == Token::RBRACE) pos++;
+        cell.dvfs_table.push_back(entry);
+    }
+    return pos;
+}
+
+// Parse NLPM table: nlpm(tmpl) { index_1(...); index_2(...); values(...); }
+size_t sf::LibertyLibrary::parse_nlpm_table(const std::vector<Token>& t, size_t pos,
+                                             NlpmTable& table) {
+    std::string tmpl_name;
+    if (pos < t.size() && t[pos].type == Token::LPAREN) {
+        pos++;
+        if (pos < t.size()) { tmpl_name = t[pos].value; pos++; }
+        if (pos < t.size() && t[pos].type == Token::RPAREN) pos++;
+    }
+    if (!tmpl_name.empty()) {
+        auto it = table_templates.find(tmpl_name);
+        if (it != table_templates.end()) {
+            table.input_transition = it->second.index_1;
+            table.output_capacitance = it->second.index_2;
+        }
+    }
+    if (pos < t.size() && t[pos].type == Token::LBRACE) {
+        pos++;
+        while (pos < t.size() && t[pos].type != Token::RBRACE) {
+            if (t[pos].value == "index_1" || t[pos].value == "index_2") {
+                bool is_idx1 = (t[pos].value == "index_1");
+                pos++;
+                std::string vals_str;
+                if (pos < t.size() && t[pos].type == Token::LPAREN) {
+                    pos++;
+                    while (pos < t.size() && t[pos].type != Token::RPAREN) {
+                        if (!vals_str.empty()) vals_str += ",";
+                        vals_str += t[pos].value;
+                        pos++;
+                    }
+                    if (pos < t.size()) pos++;
+                } else if (pos < t.size() && t[pos].type == Token::COLON) {
+                    pos++;
+                    if (pos < t.size()) { vals_str = t[pos].value; pos++; }
+                }
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+                auto nums = parse_number_list(vals_str);
+                if (is_idx1) table.input_transition = nums;
+                else table.output_capacitance = nums;
+            } else if (t[pos].value == "values") {
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::LPAREN) {
+                    pos++;
+                    while (pos < t.size() && t[pos].type != Token::RPAREN) {
+                        if (t[pos].type == Token::STRING || t[pos].type == Token::NUMBER ||
+                            t[pos].type == Token::IDENT) {
+                            auto row = parse_number_list(t[pos].value);
+                            if (!row.empty()) table.values.push_back(row);
+                        }
+                        pos++;
+                        if (pos < t.size() && t[pos].type == Token::COMMA) pos++;
+                    }
+                    if (pos < t.size()) pos++;
+                }
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            } else {
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::COLON) {
+                    pos++;
+                    if (pos < t.size()) pos++;
+                    if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+                }
+            }
+        }
+        if (pos < t.size() && t[pos].type == Token::RBRACE) pos++;
+    }
+    return pos;
+}
+
+// Parse cap_table() { index_1(...); values(...); }
+size_t sf::LibertyLibrary::parse_cap_table(const std::vector<Token>& t, size_t pos,
+                                            CapTable& table) {
+    if (pos < t.size() && t[pos].type == Token::LPAREN) {
+        while (pos < t.size() && t[pos].type != Token::RPAREN) pos++;
+        if (pos < t.size()) pos++;
+    }
+    if (pos < t.size() && t[pos].type == Token::LBRACE) {
+        pos++;
+        while (pos < t.size() && t[pos].type != Token::RBRACE) {
+            if (t[pos].value == "index_1") {
+                pos++;
+                std::string vals_str;
+                if (pos < t.size() && t[pos].type == Token::LPAREN) {
+                    pos++;
+                    while (pos < t.size() && t[pos].type != Token::RPAREN) {
+                        if (!vals_str.empty()) vals_str += ",";
+                        vals_str += t[pos].value;
+                        pos++;
+                    }
+                    if (pos < t.size()) pos++;
+                } else if (pos < t.size() && t[pos].type == Token::COLON) {
+                    pos++;
+                    if (pos < t.size()) { vals_str = t[pos].value; pos++; }
+                }
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+                table.input_transition = parse_number_list(vals_str);
+            } else if (t[pos].value == "values") {
+                pos++;
+                std::string vals_str;
+                if (pos < t.size() && t[pos].type == Token::LPAREN) {
+                    pos++;
+                    while (pos < t.size() && t[pos].type != Token::RPAREN) {
+                        if (!vals_str.empty()) vals_str += ",";
+                        vals_str += t[pos].value;
+                        pos++;
+                    }
+                    if (pos < t.size()) pos++;
+                }
+                if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+                table.values = parse_number_list(vals_str);
+                if (!table.values.empty()) table.valid = true;
+            } else {
+                pos++;
+                if (pos < t.size() && t[pos].type == Token::COLON) {
+                    pos++;
+                    if (pos < t.size()) pos++;
+                    if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
                 }
             }
         }

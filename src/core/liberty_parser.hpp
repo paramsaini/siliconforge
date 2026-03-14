@@ -10,12 +10,39 @@
 
 namespace sf {
 
+// Noise immunity tables (DC noise margins)
+struct NoiseTable {
+    std::vector<double> input_net_transition;  // index 1
+    std::vector<double> total_output_net_cap;  // index 2
+    std::vector<std::vector<double>> noise_immunity_high; // dc noise margin high
+    std::vector<std::vector<double>> noise_immunity_low;  // dc noise margin low
+};
+
+// Non-Linear Power Model table
+struct NlpmTable {
+    std::vector<double> input_transition;
+    std::vector<double> output_capacitance;
+    std::vector<std::vector<double>> values;  // power in pJ
+    bool valid() const { return !input_transition.empty() && !output_capacitance.empty() && !values.empty(); }
+};
+
+// Pin capacitance as function of input transition (1D table alternative to scalar)
+struct CapTable {
+    std::vector<double> input_transition;
+    std::vector<double> values;  // capacitance per transition
+    bool valid = false;
+};
+
 struct LibertyPin {
     std::string name;
     std::string direction; // "input", "output", "inout"
     std::string function;  // Boolean function (e.g., "A & B", "!A")
     double capacitance = 0.0;
     double max_transition = 0.0;
+
+    NoiseTable noise;
+    NlpmTable internal_power_table;
+    CapTable cap_table;
 };
 
 // CCS (Composite Current Source) model — IEEE Liberty extension
@@ -101,6 +128,21 @@ struct LibertyLeakage {
     double value = 0.0;
 };
 
+// Electromigration limit per pin
+struct EmLimit {
+    double max_current_ma = 0.0;     // max DC current
+    double max_transition_ns = 0.0;  // max slew for EM
+    std::string pin_name;
+};
+
+// Supply noise / DVFS derating entry
+struct DvfsEntry {
+    double voltage = 0.0;
+    double temperature = 0.0;
+    double delay_factor = 1.0;    // multiplier on delay
+    double power_factor = 1.0;    // multiplier on power
+};
+
 struct LibertyCell {
     std::string name;
     double area = 0.0;
@@ -109,6 +151,8 @@ struct LibertyCell {
     std::vector<LibertyTiming> timings;
     std::vector<LibertyPower> internal_powers;
     std::vector<LibertyLeakage> leakage_powers;
+    std::vector<EmLimit> em_limits;
+    std::vector<DvfsEntry> dvfs_table;
 
     // Quick lookup
     const LibertyPin* find_pin(const std::string& name) const;
@@ -173,6 +217,12 @@ private:
     size_t parse_ccs_table(const std::vector<Token>& tokens, size_t pos, CcsTable& table);
     size_t parse_ecsm_table(const std::vector<Token>& tokens, size_t pos, EcsmTable& table);
     size_t parse_lu_table_template(const std::vector<Token>& tokens, size_t pos);
+    size_t parse_noise_table(const std::vector<Token>& tokens, size_t pos,
+                             std::vector<std::vector<double>>& table_out);
+    size_t parse_em_limit(const std::vector<Token>& tokens, size_t pos, LibertyCell& cell);
+    size_t parse_dvfs_entry(const std::vector<Token>& tokens, size_t pos, LibertyCell& cell);
+    size_t parse_nlpm_table(const std::vector<Token>& tokens, size_t pos, NlpmTable& table);
+    size_t parse_cap_table(const std::vector<Token>& tokens, size_t pos, CapTable& table);
     size_t skip_group(const std::vector<Token>& tokens, size_t pos);
 
     // Helper: parse comma-separated numbers from a string like "0.01, 0.02, 0.05"
