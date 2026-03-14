@@ -140,6 +140,21 @@ struct CornerDerate {
     }
 };
 
+// Latch timing info for time-borrowing analysis
+// Reference: Sapatnekar, "Timing", Ch. 6 — Latch-based timing
+struct LatchTimingInfo {
+    double opening_edge = 0.0;   // when latch becomes transparent (ns)
+    double closing_edge = 0.0;   // when latch captures data (ns)
+    double borrow_limit = 0.0;   // max borrowable time (ns)
+    double borrowed_time = 0.0;  // actual borrowed time (ns)
+};
+
+// Voltage domain descriptor for multi-supply timing
+struct VoltageDomain {
+    std::string name;
+    double nominal_voltage = 1.0;  // V
+};
+
 struct TimingArc {
     NetId from;
     NetId to;
@@ -188,6 +203,10 @@ struct TimingPath {
     double crosstalk_delta = 0; // Crosstalk-induced delay change (ns)
     double path_sigma = 0;      // POCV: RSS path sigma (ns)
     bool pba_valid = false;     // Whether PBA was computed for this path
+
+    // Latch timing
+    bool is_latch_path = false;         // endpoint is a DLATCH
+    LatchTimingInfo latch_info;         // latch timing details
 };
 
 struct StaResult {
@@ -278,11 +297,37 @@ public:
         xtalk_.miller_factor = miller;
     }
 
+    // --- Latch Timing Configuration ---
+    void set_latch_timing_enabled(bool enable) { latch_timing_enabled_ = enable; }
+    void set_latch_info(GateId latch_id, const LatchTimingInfo& info) {
+        latch_info_[latch_id] = info;
+    }
+
+    // --- Multi-Supply-Domain Timing ---
+    void set_voltage_domains(const std::vector<VoltageDomain>& domains) {
+        voltage_domains_.clear();
+        for (auto& d : domains) voltage_domains_[d.name] = d;
+    }
+    void set_cell_domain(const std::string& cell_name, const std::string& domain_name) {
+        cell_domain_map_[cell_name] = domain_name;
+    }
+    void set_level_shifter_delay(double delay_ns) { level_shifter_delay_ = delay_ns; }
+    void set_voltage_scaling_alpha(double alpha) { voltage_scaling_alpha_ = alpha; }
+
     // Get timing for a specific net
     const PinTiming& timing(NetId net) const { return pin_timing_.at(net); }
 
     // Apply SDC constraints (false paths, multicycle paths, I/O delays)
     void set_sdc_constraints(const SdcConstraints& sdc) { sdc_ = &sdc; }
+
+    // ── IR Drop Voltage Derating ─────────────────────────────────────────
+    // Apply per-cell voltage derating from IR drop analysis results.
+    // Delay scales as (V_nominal / V_actual)^alpha where alpha ≈ 1.3
+    // (MOSFET velocity saturation model, alpha-power law).
+    // Reference: Sakurai & Newton, "Alpha-Power Law MOSFET Model", JSSC 1990
+    void apply_ir_drop_derating(const std::unordered_map<std::string, double>& cell_voltage_map);
+    void set_ir_drop_alpha(double alpha) { ir_drop_alpha_ = alpha; }
+    void set_ir_drop_nominal_voltage(double v_nominal) { ir_drop_nominal_v_ = v_nominal; }
 
     // Run STA for a specific corner derate (used by MCMM)
     StaResult analyze_corner(double clock_period, int num_paths, const CornerDerate& d);
@@ -392,6 +437,21 @@ private:
     // SI-aware analysis
     bool si_enabled_ = false;
 
+    // IR drop voltage derating (alpha-power law)
+    std::unordered_map<std::string, double> ir_drop_voltage_map_; // cell_name → actual voltage (V)
+    double ir_drop_alpha_ = 1.3;          // alpha exponent (velocity saturation)
+    double ir_drop_nominal_v_ = 1.0;      // nominal supply voltage (V)
+
+    // Latch timing state
+    bool latch_timing_enabled_ = false;
+    std::unordered_map<GateId, LatchTimingInfo> latch_info_;
+
+    // Multi-supply-domain state
+    std::unordered_map<std::string, VoltageDomain> voltage_domains_;
+    std::unordered_map<std::string, std::string> cell_domain_map_; // cell_name → domain_name
+    double level_shifter_delay_ = 0.1;   // ns, default level-shifter penalty
+    double voltage_scaling_alpha_ = 1.3; // delay ~ (V_ref/V)^alpha
+
     // RC corner support
     std::vector<RcCorner> rc_corners_;
     std::string active_corner_;
@@ -438,6 +498,14 @@ private:
 
     // Incremental helpers
     std::vector<int> find_affected_cone(const std::vector<int>& changed);
+
+    // Latch timing helpers
+    std::vector<GateId> find_latches() const;
+    LatchTimingInfo compute_latch_edges(GateId latch_id, double clock_period) const;
+
+    // Multi-supply-domain helpers
+    double voltage_delay_scale(GateId gid) const;
+    double level_shifter_penalty(GateId from_gate, GateId to_gate) const;
 };
 
 // ── Multi-Clock Domain STA ───────────────────────────────────────────

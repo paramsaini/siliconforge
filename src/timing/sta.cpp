@@ -14,6 +14,8 @@ namespace sf {
 // === OCV/AOCV Effective Derate ===
 
 double StaEngine::effective_cell_derate(GateId gid) const {
+    // Base OCV/AOCV/POCV derate
+    double base_derate;
     if (ocv_mode_ == OcvMode::AOCV) {
         int depth = 1;
         auto it = gate_depth_.find(gid);
@@ -26,23 +28,31 @@ double StaEngine::effective_cell_derate(GateId gid) const {
         }
 
         if (analyzing_late_)
-            return aocv_table_.late_derate(depth, cell_type) * derate_.cell_derate * derate_.tv_scale();
+            base_derate = aocv_table_.late_derate(depth, cell_type) * derate_.cell_derate * derate_.tv_scale();
         else
-            return aocv_table_.early_derate(depth, cell_type) * derate_.early_cell * derate_.tv_scale();
-    }
-    if (ocv_mode_ == OcvMode::POCV) {
-        // POCV: base derate is 1.0, path-level sigma applied later via PBA
-        // At gate level, use 1.0 (mean) — the statistical adjustment happens per-path
-        return (analyzing_late_ ? derate_.cell_derate : derate_.early_cell) * derate_.tv_scale();
-    }
-    if (ocv_mode_ == OcvMode::OCV) {
+            base_derate = aocv_table_.early_derate(depth, cell_type) * derate_.early_cell * derate_.tv_scale();
+    } else if (ocv_mode_ == OcvMode::POCV) {
+        base_derate = (analyzing_late_ ? derate_.cell_derate : derate_.early_cell) * derate_.tv_scale();
+    } else if (ocv_mode_ == OcvMode::OCV) {
         if (analyzing_late_)
-            return derate_.cell_derate * ocv_late_cell_ * derate_.tv_scale();
+            base_derate = derate_.cell_derate * ocv_late_cell_ * derate_.tv_scale();
         else
-            return derate_.early_cell * ocv_early_cell_ * derate_.tv_scale();
+            base_derate = derate_.early_cell * ocv_early_cell_ * derate_.tv_scale();
+    } else {
+        base_derate = (analyzing_late_ ? derate_.cell_derate : derate_.early_cell) * derate_.tv_scale();
     }
-    // NONE: use base corner derate
-    return (analyzing_late_ ? derate_.cell_derate : derate_.early_cell) * derate_.tv_scale();
+
+    // Apply IR drop voltage derating: delay_scaled = delay * (V_nom / V_actual)^alpha
+    if (!ir_drop_voltage_map_.empty() && gid >= 0 &&
+        static_cast<size_t>(gid) < nl_.num_gates()) {
+        auto vit = ir_drop_voltage_map_.find(nl_.gate(gid).name);
+        if (vit != ir_drop_voltage_map_.end() && vit->second > 0) {
+            double v_ratio = ir_drop_nominal_v_ / vit->second;
+            base_derate *= std::pow(v_ratio, ir_drop_alpha_);
+        }
+    }
+
+    return base_derate;
 }
 
 double StaEngine::effective_wire_derate(GateId gid) const {
@@ -70,6 +80,16 @@ double StaEngine::effective_wire_derate(GateId gid) const {
     return (analyzing_late_ ? derate_.wire_derate : derate_.early_wire) * derate_.tv_scale();
 }
 
+// === IR Drop Voltage Derating ===
+
+void StaEngine::apply_ir_drop_derating(
+    const std::unordered_map<std::string, double>& cell_voltage_map) {
+    ir_drop_voltage_map_ = cell_voltage_map;
+    // Infer nominal voltage from corner derate if available, otherwise use stored default
+    if (derate_.ref_voltage > 0)
+        ir_drop_nominal_v_ = derate_.ref_voltage;
+}
+
 // === Gate Depth Computation (for AOCV) ===
 
 void StaEngine::compute_gate_depths() {
@@ -84,10 +104,18 @@ void StaEngine::compute_gate_depths() {
         auto& ff = nl_.gate(gid);
         if (ff.output >= 0) net_depth[ff.output] = 0;
     }
+    // Latch outputs are also depth-0 sources
+    if (latch_timing_enabled_) {
+        for (auto gid : find_latches()) {
+            auto& latch = nl_.gate(gid);
+            if (latch.output >= 0) net_depth[latch.output] = 0;
+        }
+    }
 
     for (auto gid : topo_) {
         auto& g = nl_.gate(gid);
-        if (g.type == GateType::DFF || g.type == GateType::INPUT ||
+        if (g.type == GateType::DFF || g.type == GateType::DLATCH ||
+            g.type == GateType::INPUT ||
             g.type == GateType::OUTPUT || g.output < 0)
             continue;
 
@@ -129,12 +157,12 @@ double StaEngine::gate_delay(GateId gid, double input_slew) const {
                     if (t.nldm_rise.valid() && t.nldm_fall.valid()) {
                         double d_rise = t.nldm_rise.interpolate(input_slew, load);
                         double d_fall = t.nldm_fall.interpolate(input_slew, load);
-                        return std::max(d_rise, d_fall) * eff_derate;
+                        return std::max(d_rise, d_fall) * eff_derate * voltage_delay_scale(gid);
                     }
                     double d = (t.cell_rise + t.cell_fall) / 2.0;
-                    if (d > 0) return d * slew_factor * eff_derate;
+                    if (d > 0) return d * slew_factor * eff_derate * voltage_delay_scale(gid);
                 }
-                if (cell->area > 0) return cell->area * 0.01 * slew_factor * eff_derate;
+                if (cell->area > 0) return cell->area * 0.01 * slew_factor * eff_derate * voltage_delay_scale(gid);
             }
         }
     }
@@ -151,9 +179,10 @@ double StaEngine::gate_delay(GateId gid, double input_slew) const {
         case GateType::XNOR:   base = 0.08; break;
         case GateType::MUX:    base = 0.06; break;
         case GateType::DFF:    base = 0.10; break;
+        case GateType::DLATCH: base = 0.08; break;
         default:               base = 0.05; break;
     }
-    return base * slew_factor * eff_derate;
+    return base * slew_factor * eff_derate * voltage_delay_scale(gid);
 }
 
 double StaEngine::output_slew(GateId gid, double input_slew, double load_cap) const {
@@ -286,14 +315,23 @@ void StaEngine::build_timing_graph() {
 
     for (auto gid : topo_) {
         auto& g = nl_.gate(gid);
-        if (g.type == GateType::DFF || g.type == GateType::INPUT ||
+        if (g.type == GateType::DFF || g.type == GateType::DLATCH ||
+            g.type == GateType::INPUT ||
             g.type == GateType::OUTPUT || g.output < 0) continue;
 
         double in_slew = 0.01;
         double gd = gate_delay(gid, in_slew);
         for (auto ni : g.inputs) {
             double wd = wire_delay(ni, g.output);
-            arcs_.push_back({ni, g.output, gd + wd, in_slew, gid});
+
+            // Level-shifter penalty when crossing voltage domains
+            double ls_penalty = 0;
+            if (!voltage_domains_.empty() && ni >= 0 && ni < (NetId)nl_.num_nets()) {
+                GateId drv = nl_.net(ni).driver;
+                if (drv >= 0) ls_penalty = level_shifter_penalty(drv, gid);
+            }
+
+            arcs_.push_back({ni, g.output, gd + wd + ls_penalty, in_slew, gid});
         }
     }
 
@@ -301,6 +339,15 @@ void StaEngine::build_timing_graph() {
         auto& ff = nl_.gate(gid);
         if (ff.output >= 0)
             arcs_.push_back({ff.clk, ff.output, gate_delay(gid), 0.01, gid});
+    }
+
+    // Build arcs for latches (analogous to DFFs but with enable-based timing)
+    if (latch_timing_enabled_) {
+        for (auto gid : find_latches()) {
+            auto& latch = nl_.gate(gid);
+            if (latch.output >= 0)
+                arcs_.push_back({latch.clk, latch.output, gate_delay(gid), 0.01, gid});
+        }
     }
 }
 
@@ -343,28 +390,58 @@ void StaEngine::forward_propagation(double input_arrival) {
         }
     }
 
+    // Latch outputs: data passes through when enable is active (time borrowing)
+    if (latch_timing_enabled_) {
+        for (auto gid : find_latches()) {
+            auto& latch = nl_.gate(gid);
+            if (latch.output >= 0) {
+                auto info = compute_latch_edges(gid, last_clock_period_);
+                double dq = gate_delay(gid, pi_slew);
+                double insertion = 0;
+                auto ci = clock_insertion_.find(gid);
+                if (ci != clock_insertion_.end()) insertion = ci->second;
+                auto& pt = pin_timing_[latch.output];
+                // Latch output arrival = opening_edge + D-to-Q delay
+                pt.arrival_rise = insertion + info.opening_edge + dq;
+                pt.arrival_fall = insertion + info.opening_edge + dq;
+                double load = net_load_cap(latch.output);
+                pt.slew_rise = output_slew(gid, pi_slew, load);
+                pt.slew_fall = pt.slew_rise;
+            }
+        }
+    }
+
     for (size_t i = 0; i < nl_.num_nets(); ++i)
         if (!pin_timing_.count(i)) pin_timing_[i] = {};
 
     // Propagate LATE (latest) arrivals for setup analysis
     for (auto gid : topo_) {
         auto& g = nl_.gate(gid);
-        if (g.type == GateType::DFF || g.type == GateType::INPUT ||
+        if (g.type == GateType::DFF || g.type == GateType::DLATCH ||
+            g.type == GateType::INPUT ||
             g.type == GateType::OUTPUT || g.output < 0) continue;
 
         double max_arr = 0;
         double worst_slew = pi_slew;
+        GateId worst_driver = -1;
         for (auto ni : g.inputs) {
             double arr = pin_timing_[ni].worst_arrival();
             if (arr > max_arr) {
                 max_arr = arr;
                 worst_slew = std::max(pin_timing_[ni].slew_rise, pin_timing_[ni].slew_fall);
+                worst_driver = nl_.net(ni).driver;
             }
         }
 
         double gd = gate_delay(gid, worst_slew);
         double wd = wire_delay(g.inputs.empty() ? -1 : g.inputs[0], g.output);
-        double out_arr = max_arr + gd + wd;
+
+        // Level-shifter penalty when crossing voltage domains
+        double ls_penalty = 0;
+        if (!voltage_domains_.empty() && worst_driver >= 0)
+            ls_penalty = level_shifter_penalty(worst_driver, gid);
+
+        double out_arr = max_arr + gd + wd + ls_penalty;
 
         auto& pt = pin_timing_[g.output];
         pt.arrival_rise = std::max(pt.arrival_rise, out_arr);
@@ -399,10 +476,25 @@ void StaEngine::hold_forward_propagation(double input_arrival) {
         }
     }
 
+    // Latch hold arrivals
+    if (latch_timing_enabled_) {
+        for (auto gid : find_latches()) {
+            auto& latch = nl_.gate(gid);
+            if (latch.output >= 0) {
+                auto info = compute_latch_edges(gid, last_clock_period_);
+                double dq_early = gate_delay(gid, pi_slew);
+                auto& pt = pin_timing_[latch.output];
+                pt.hold_arrival_rise = info.opening_edge + dq_early;
+                pt.hold_arrival_fall = info.opening_edge + dq_early;
+            }
+        }
+    }
+
     // Propagate MINIMUM (earliest) arrivals
     for (auto gid : topo_) {
         auto& g = nl_.gate(gid);
-        if (g.type == GateType::DFF || g.type == GateType::INPUT ||
+        if (g.type == GateType::DFF || g.type == GateType::DLATCH ||
+            g.type == GateType::INPUT ||
             g.type == GateType::OUTPUT || g.output < 0) continue;
 
         double min_arr = std::numeric_limits<double>::max();
@@ -474,9 +566,26 @@ void StaEngine::backward_propagation(double clock_period) {
         }
     }
 
+    // Latch setup: data must arrive before the closing edge minus setup time
+    if (latch_timing_enabled_) {
+        for (auto gid : find_latches()) {
+            auto& latch = nl_.gate(gid);
+            if (!latch.inputs.empty()) {
+                NetId d = latch.inputs[0];
+                auto info = compute_latch_edges(gid, clock_period);
+                // Setup check: data_arrival + setup_time <= closing_edge
+                // → required_time = closing_edge - setup_time
+                double req = info.closing_edge - setup_margin;
+                pin_timing_[d].required_rise = std::min(pin_timing_[d].required_rise, req);
+                pin_timing_[d].required_fall = std::min(pin_timing_[d].required_fall, req);
+            }
+        }
+    }
+
     for (int i = (int)topo_.size() - 1; i >= 0; --i) {
         auto& g = nl_.gate(topo_[i]);
-        if (g.type == GateType::DFF || g.type == GateType::INPUT ||
+        if (g.type == GateType::DFF || g.type == GateType::DLATCH ||
+            g.type == GateType::INPUT ||
             g.type == GateType::OUTPUT || g.output < 0) continue;
 
         double out_req = std::min(pin_timing_[g.output].required_rise,
@@ -518,6 +627,27 @@ void StaEngine::hold_backward_propagation() {
             pin_timing_[d].hold_required_fall = req;
         }
     }
+
+    // Latch hold: data_arrival >= opening_edge + hold_time
+    // → hold_required = opening_edge + hold_margin
+    if (latch_timing_enabled_) {
+        for (auto gid : find_latches()) {
+            auto& latch = nl_.gate(gid);
+            if (!latch.inputs.empty()) {
+                NetId d = latch.inputs[0];
+                auto info = compute_latch_edges(gid, last_clock_period_);
+                double clk_derate = 1.0;
+                if (ocv_mode_ == OcvMode::OCV)
+                    clk_derate = ocv_late_cell_;
+                else if (ocv_mode_ == OcvMode::AOCV)
+                    clk_derate = aocv_table_.late_derate(1);
+                double req = (info.opening_edge + hold_margin) * clk_derate;
+                pin_timing_[d].hold_required_rise = req;
+                pin_timing_[d].hold_required_fall = req;
+            }
+        }
+    }
+
     for (auto po : nl_.primary_outputs()) {
         pin_timing_[po].hold_required_rise = 0;
         pin_timing_[po].hold_required_fall = 0;
@@ -594,19 +724,32 @@ std::vector<TimingPath> StaEngine::extract_paths(int count, bool include_hold) {
 
     struct EndpointSlack {
         NetId net; double slack; std::string name; bool is_hold;
+        GateId latch_id = -1;  // >=0 if endpoint is a latch
     };
     std::vector<EndpointSlack> endpoints;
 
     for (auto po : nl_.primary_outputs()) {
         auto& pt = pin_timing_[po];
-        endpoints.push_back({po, pt.worst_slack(), nl_.net(po).name, false});
+        endpoints.push_back({po, pt.worst_slack(), nl_.net(po).name, false, -1});
     }
     for (auto gid : nl_.flip_flops()) {
         auto& ff = nl_.gate(gid);
         if (!ff.inputs.empty()) {
             NetId d = ff.inputs[0];
             auto& pt = pin_timing_[d];
-            endpoints.push_back({d, pt.worst_slack(), ff.name + "/D", false});
+            endpoints.push_back({d, pt.worst_slack(), ff.name + "/D", false, -1});
+        }
+    }
+
+    // Latch endpoints (setup)
+    if (latch_timing_enabled_) {
+        for (auto gid : find_latches()) {
+            auto& latch = nl_.gate(gid);
+            if (!latch.inputs.empty()) {
+                NetId d = latch.inputs[0];
+                auto& pt = pin_timing_[d];
+                endpoints.push_back({d, pt.worst_slack(), latch.name + "/D", false, gid});
+            }
         }
     }
 
@@ -616,7 +759,19 @@ std::vector<TimingPath> StaEngine::extract_paths(int count, bool include_hold) {
             if (!ff.inputs.empty()) {
                 NetId d = ff.inputs[0];
                 auto& pt = pin_timing_[d];
-                endpoints.push_back({d, pt.worst_hold_slack(), ff.name + "/D(hold)", true});
+                endpoints.push_back({d, pt.worst_hold_slack(), ff.name + "/D(hold)", true, -1});
+            }
+        }
+        // Latch hold endpoints
+        if (latch_timing_enabled_) {
+            for (auto gid : find_latches()) {
+                auto& latch = nl_.gate(gid);
+                if (!latch.inputs.empty()) {
+                    NetId d = latch.inputs[0];
+                    auto& pt = pin_timing_[d];
+                    endpoints.push_back({d, pt.worst_hold_slack(),
+                                         latch.name + "/D(hold)", true, gid});
+                }
             }
         }
     }
@@ -638,7 +793,8 @@ std::vector<TimingPath> StaEngine::extract_paths(int count, bool include_hold) {
             GateId drv = nl_.net(curr).driver;
             if (drv < 0) break;
             auto& g = nl_.gate(drv);
-            if (g.type == GateType::DFF || g.type == GateType::INPUT) {
+            if (g.type == GateType::DFF || g.type == GateType::DLATCH ||
+                g.type == GateType::INPUT) {
                 path.startpoint = g.name;
                 break;
             }
@@ -684,6 +840,23 @@ std::vector<TimingPath> StaEngine::extract_paths(int count, bool include_hold) {
         if (min_d >= 0 && path.is_hold) {
             // Hold slack = actual_delay - min_delay_constraint
             path.slack = path.delay - min_d;
+        }
+
+        // Latch time borrowing: if endpoint is a latch, compute borrowed time
+        GateId ep_latch = endpoints[p].latch_id;
+        if (latch_timing_enabled_ && ep_latch >= 0 && !path.is_hold) {
+            path.is_latch_path = true;
+            auto info = compute_latch_edges(ep_latch, last_clock_period_);
+            double data_arrival = pin_timing_[endpoints[p].net].worst_arrival();
+            // Time borrowing: if data arrives before closing edge, surplus
+            // can be lent to the downstream path
+            double surplus = info.closing_edge - data_arrival;
+            if (surplus > 0) {
+                double borrowed = std::min(surplus, info.borrow_limit);
+                info.borrowed_time = borrowed;
+                path.slack += borrowed;
+            }
+            path.latch_info = info;
         }
 
         paths.push_back(path);
@@ -736,6 +909,13 @@ StaResult StaEngine::analyze_corner(double clock_period, int num_paths, const Co
     for (auto gid : nl_.flip_flops()) {
         auto& ff = nl_.gate(gid);
         if (!ff.inputs.empty()) check_endpoint(ff.inputs[0]);
+    }
+    // Include latch endpoints
+    if (latch_timing_enabled_) {
+        for (auto gid : find_latches()) {
+            auto& latch = nl_.gate(gid);
+            if (!latch.inputs.empty()) check_endpoint(latch.inputs[0]);
+        }
     }
 
     // === Industrial STA passes ===
@@ -1955,6 +2135,79 @@ std::vector<StaEngine::Bottleneck> StaEngine::analyze_bottlenecks(int top_n) {
         bottlenecks.resize(top_n);
 
     return bottlenecks;
+}
+
+// ============================================================================
+// Latch Timing Helpers
+// ============================================================================
+
+std::vector<GateId> StaEngine::find_latches() const {
+    std::vector<GateId> latches;
+    for (size_t i = 0; i < nl_.num_gates(); ++i) {
+        if (nl_.gate(static_cast<GateId>(i)).type == GateType::DLATCH)
+            latches.push_back(static_cast<GateId>(i));
+    }
+    return latches;
+}
+
+LatchTimingInfo StaEngine::compute_latch_edges(GateId latch_id, double clock_period) const {
+    // Check for user-provided latch timing first
+    auto it = latch_info_.find(latch_id);
+    if (it != latch_info_.end())
+        return it->second;
+
+    // Default: assume a 50% duty-cycle clock
+    // Opening edge at 0 (rising edge → latch transparent)
+    // Closing edge at clock_period/2 (falling edge → latch opaque)
+    LatchTimingInfo info;
+    info.opening_edge = 0.0;
+    info.closing_edge = clock_period * 0.5;
+    // Borrow limit = transparent window (closing - opening), capped at half period
+    info.borrow_limit = info.closing_edge - info.opening_edge;
+    info.borrowed_time = 0.0;
+    return info;
+}
+
+// ============================================================================
+// Multi-Supply-Domain Timing Helpers
+// ============================================================================
+
+double StaEngine::voltage_delay_scale(GateId gid) const {
+    if (voltage_domains_.empty()) return 1.0;
+
+    auto& g = nl_.gate(gid);
+    auto cit = cell_domain_map_.find(g.name);
+    if (cit == cell_domain_map_.end()) return 1.0;
+
+    auto dit = voltage_domains_.find(cit->second);
+    if (dit == voltage_domains_.end()) return 1.0;
+
+    double v_domain = dit->second.nominal_voltage;
+    if (v_domain <= 0) return 1.0;
+
+    // delay_scaled = delay_nominal × (V_ref / V_domain)^alpha
+    // V_ref = corner reference voltage (from derate_)
+    double v_ref = derate_.ref_voltage;
+    if (v_ref <= 0) v_ref = 1.0;
+
+    return std::pow(v_ref / v_domain, voltage_scaling_alpha_);
+}
+
+double StaEngine::level_shifter_penalty(GateId from_gate, GateId to_gate) const {
+    if (voltage_domains_.empty()) return 0.0;
+
+    auto& gf = nl_.gate(from_gate);
+    auto& gt = nl_.gate(to_gate);
+
+    auto fit = cell_domain_map_.find(gf.name);
+    auto tit = cell_domain_map_.find(gt.name);
+
+    // Both must be mapped to a domain to check crossing
+    if (fit == cell_domain_map_.end() || tit == cell_domain_map_.end()) return 0.0;
+    if (fit->second == tit->second) return 0.0;
+
+    // Crossing voltage domains — apply level-shifter delay
+    return level_shifter_delay_;
 }
 
 } // namespace sf
