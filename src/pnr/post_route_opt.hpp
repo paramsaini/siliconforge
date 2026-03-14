@@ -173,6 +173,19 @@ public:
     };
     TimingEcoResult fix_timing_eco(double target_wns = 0.0);
 
+    // Hold-time violation fix — runs STA, inserts delay buffers, re-checks timing
+    struct HoldFixResult {
+        int num_violations_found = 0;   // hold violations detected by STA
+        int num_fixed = 0;              // violations successfully fixed
+        int num_buffers_inserted = 0;   // total delay buffers inserted
+        double hold_wns_before = 0;     // hold WNS before fix
+        double hold_wns_after = 0;      // hold WNS after fix
+        double setup_wns_after = 0;     // setup WNS after fix (ensure no degradation)
+        double time_ms = 0;
+        std::string message;
+    };
+    HoldFixResult fix_hold_violations();
+
     // Enhanced post-route optimization flow
     PostRouteResult optimize_full();
 

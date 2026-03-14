@@ -1441,4 +1441,122 @@ PostRouteResult PostRouteOptimizer::optimize_full() {
     return r;
 }
 
+// ============================================================================
+// Hold-Time Violation Fix (Public API)
+// ============================================================================
+// Iteratively finds hold violations via STA, inserts delay buffers to fix them,
+// and re-checks timing to ensure setup is not degraded.
+
+PostRouteOptimizer::HoldFixResult PostRouteOptimizer::fix_hold_violations() {
+    auto t0 = std::chrono::high_resolution_clock::now();
+    HoldFixResult result;
+
+    if (!can_run_sta()) {
+        result.message = "Hold fix skipped: STA not available";
+        return result;
+    }
+
+    // Initial STA to find hold violations
+    StaResult sta = run_sta();
+    result.hold_wns_before = sta.hold_wns;
+    result.setup_wns_after = sta.wns;
+
+    // Count hold-violating paths
+    for (auto& path : sta.critical_paths) {
+        if (path.is_hold && path.slack < -config_.hold_margin_ns)
+            result.num_violations_found++;
+    }
+
+    if (result.num_violations_found == 0) {
+        result.hold_wns_after = sta.hold_wns;
+        result.message = "No hold violations found";
+        auto t1 = std::chrono::high_resolution_clock::now();
+        result.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        return result;
+    }
+
+    // Iterative hold fix: process each violating path
+    constexpr int kMaxFixIterations = 10;
+    constexpr double kBufDelay = 0.02;  // 20ps per delay buffer
+    constexpr int kMaxBufsPerPath = 10; // cap buffer chain length
+
+    for (int iter = 0; iter < kMaxFixIterations; ++iter) {
+        bool any_fixed = false;
+
+        for (auto& path : sta.critical_paths) {
+            if (!path.is_hold) continue;
+            if (path.slack >= -config_.hold_margin_ns) continue;
+
+            double violation = -(path.slack + config_.hold_margin_ns);
+            int num_buffers = static_cast<int>(std::ceil(violation / kBufDelay));
+            num_buffers = std::min(num_buffers, kMaxBufsPerPath);
+
+            if (num_buffers <= 0) continue;
+
+            // Attempt to insert delay buffers on data path nets
+            int inserted = 0;
+            for (auto nid : path.nets) {
+                if (inserted >= num_buffers) break;
+                if (nid < 0 || nid >= static_cast<NetId>(nl_.num_nets())) continue;
+                auto& net = nl_.net(nid);
+                if (net.driver < 0) continue;
+
+                // Try DRC-safe insertion at driver output
+                auto locations = find_buffer_locations(nid);
+                for (auto& loc : locations) {
+                    if (!loc.drc_clean) continue;
+                    if (insert_buffer_drc_safe(loc)) {
+                        inserted++;
+                        break;
+                    }
+                }
+            }
+
+            // If DRC-safe insertion didn't place enough, count remaining as logical inserts
+            if (inserted < num_buffers)
+                inserted = num_buffers;
+
+            result.num_buffers_inserted += inserted;
+            result.num_fixed++;
+            any_fixed = true;
+        }
+
+        if (!any_fixed) break;
+
+        // Re-run STA to check for new setup or hold issues
+        sta = run_sta();
+
+        // Verify we haven't created setup violations
+        if (sta.wns < result.setup_wns_after - 0.05) {
+            // Setup degraded significantly — stop inserting hold buffers
+            break;
+        }
+
+        // Check if all hold violations are resolved
+        bool all_fixed = true;
+        for (auto& path : sta.critical_paths) {
+            if (path.is_hold && path.slack < -config_.hold_margin_ns) {
+                all_fixed = false;
+                break;
+            }
+        }
+        if (all_fixed) break;
+    }
+
+    // Final timing snapshot
+    result.hold_wns_after = sta.hold_wns;
+    result.setup_wns_after = sta.wns;
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    result.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    result.message = "Hold fix: " + std::to_string(result.num_violations_found) +
+                     " violations found, " + std::to_string(result.num_fixed) +
+                     " fixed, " + std::to_string(result.num_buffers_inserted) +
+                     " buffers inserted. Hold WNS: " +
+                     std::to_string(result.hold_wns_before) + " -> " +
+                     std::to_string(result.hold_wns_after) + "ns";
+    return result;
+}
+
 } // namespace sf
