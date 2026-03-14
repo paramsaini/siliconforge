@@ -868,56 +868,146 @@ std::vector<StaResult> StaEngine::analyze_multicorner(double clock_period, int n
 
 void StaEngine::compute_cppr_credits(std::vector<TimingPath>& paths, double clock_period) {
     if (!cppr_.enabled) return;
-    if (ocv_mode_ == OcvMode::NONE) return; // No OCV = no pessimism to remove
-    
-    double late_factor = 1.0, early_factor = 1.0;
-    if (ocv_mode_ == OcvMode::OCV) {
-        late_factor = ocv_late_cell_;
-        early_factor = ocv_early_cell_;
-    } else if (ocv_mode_ == OcvMode::AOCV) {
-        late_factor = aocv_table_.late_derate(1);
-        early_factor = aocv_table_.early_derate(1);
-    } else if (ocv_mode_ == OcvMode::POCV) {
-        late_factor = 1.0 + pocv_table_.default_sigma_pct * pocv_table_.n_sigma;
-        early_factor = 1.0 - pocv_table_.default_sigma_pct * pocv_table_.n_sigma;
-    }
-    
-    for (auto& path : paths) {
-        double launch_ins = 0, capture_ins = 0;
-        
-        for (auto gid : nl_.flip_flops()) {
-            auto& ff = nl_.gate(gid);
-            if (ff.name == path.startpoint || ff.name + "/Q" == path.startpoint) {
-                auto ci = clock_insertion_.find(gid);
-                if (ci != clock_insertion_.end()) launch_ins = ci->second;
-                break;
-            }
+    if (ocv_mode_ == OcvMode::NONE) return;
+
+    // Helper: trace clock path from a DFF's clk pin back through BUF/NOT
+    // to the clock root. Returns the gate sequence (deepest first).
+    auto trace_clock_path = [&](GateId dff_id) -> std::vector<GateId> {
+        std::vector<GateId> clk_gates;
+        auto& ff = nl_.gate(dff_id);
+        if (ff.clk < 0) return clk_gates;
+
+        NetId cur_net = ff.clk;
+        std::unordered_set<int> visited;
+        while (true) {
+            if (visited.count(cur_net)) break;
+            visited.insert(cur_net);
+            GateId drv = nl_.net(cur_net).driver;
+            if (drv < 0) break;
+            auto& g = nl_.gate(drv);
+            if (g.type == GateType::INPUT || g.type == GateType::DFF) break;
+            if (g.type != GateType::BUF && g.type != GateType::NOT) break;
+            clk_gates.push_back(drv);
+            if (g.inputs.empty()) break;
+            cur_net = g.inputs[0];
         }
-        
+        std::reverse(clk_gates.begin(), clk_gates.end());
+        return clk_gates;
+    };
+
+    for (auto& path : paths) {
+        // Identify launch and capture flip-flops
+        GateId launch_ff = -1, capture_ff = -1;
+
         std::string cap_name = path.endpoint;
         auto slash_pos = cap_name.find('/');
         if (slash_pos != std::string::npos) cap_name = cap_name.substr(0, slash_pos);
-        
+
         for (auto gid : nl_.flip_flops()) {
             auto& ff = nl_.gate(gid);
-            if (ff.name == cap_name) {
-                auto ci = clock_insertion_.find(gid);
-                if (ci != clock_insertion_.end()) capture_ins = ci->second;
+            if (launch_ff < 0 &&
+                (ff.name == path.startpoint || ff.name + "/Q" == path.startpoint))
+                launch_ff = gid;
+            if (capture_ff < 0 && ff.name == cap_name)
+                capture_ff = gid;
+            if (launch_ff >= 0 && capture_ff >= 0) break;
+        }
+
+        if (launch_ff < 0 || capture_ff < 0) continue;
+
+        // Trace clock tree paths for both FFs
+        auto launch_clk = trace_clock_path(launch_ff);
+        auto capture_clk = trace_clock_path(capture_ff);
+
+        // Find deepest common prefix (gates shared by both clock paths)
+        size_t common_len = 0;
+        size_t min_len = std::min(launch_clk.size(), capture_clk.size());
+        for (size_t i = 0; i < min_len; ++i) {
+            if (launch_clk[i] == capture_clk[i])
+                common_len = i + 1;
+            else
                 break;
+        }
+
+        double credit = 0;
+        if (common_len > 0) {
+            // Per-gate CPPR: sum |late_delay - early_delay| for each common gate
+            for (size_t i = 0; i < common_len; ++i) {
+                GateId gid = launch_clk[i];
+                double in_slew = 0.01;
+                int depth = 1;
+                auto dit = gate_depth_.find(gid);
+                if (dit != gate_depth_.end()) depth = std::max(1, dit->second);
+
+                double late_derate = 1.0, early_derate = 1.0;
+                if (ocv_mode_ == OcvMode::OCV) {
+                    late_derate = ocv_late_cell_;
+                    early_derate = ocv_early_cell_;
+                } else if (ocv_mode_ == OcvMode::AOCV) {
+                    std::string ctype = gate_type_str(nl_.gate(gid).type);
+                    late_derate = aocv_table_.late_derate(depth, ctype);
+                    early_derate = aocv_table_.early_derate(depth, ctype);
+                } else if (ocv_mode_ == OcvMode::POCV) {
+                    std::string ctype = gate_type_str(nl_.gate(gid).type);
+                    double sigma = pocv_table_.get_sigma(ctype);
+                    late_derate = 1.0 + sigma * pocv_table_.n_sigma;
+                    early_derate = 1.0 - sigma * pocv_table_.n_sigma;
+                }
+
+                // Compute nominal gate delay (without OCV) for the common gate
+                bool saved = analyzing_late_;
+                analyzing_late_ = true;
+                double base_delay = gate_delay(gid, in_slew);
+                // Undo derate to get nominal
+                double nom_delay = base_delay / late_derate;
+                analyzing_late_ = saved;
+
+                // Wire delay contribution on the common path
+                auto& g = nl_.gate(gid);
+                double wd_nom = 0;
+                if (!g.inputs.empty() && g.output >= 0) {
+                    double wd = wire_delay(g.inputs[0], g.output);
+                    double wire_late = 1.0, wire_early = 1.0;
+                    if (ocv_mode_ == OcvMode::OCV) {
+                        wire_late = ocv_late_cell_;
+                        wire_early = ocv_early_cell_;
+                    }
+                    wd_nom = wd / (analyzing_late_ ? wire_late : wire_early);
+                    credit += wd_nom * std::abs(wire_late - wire_early);
+                }
+
+                credit += nom_delay * std::abs(late_derate - early_derate);
+            }
+        } else {
+            // Fallback: use clock insertion delays for common-path estimate
+            double launch_ins = 0, capture_ins = 0;
+            auto lci = clock_insertion_.find(launch_ff);
+            if (lci != clock_insertion_.end()) launch_ins = lci->second;
+            auto cci = clock_insertion_.find(capture_ff);
+            if (cci != clock_insertion_.end()) capture_ins = cci->second;
+
+            double common_delay = std::min(launch_ins, capture_ins);
+            if (common_delay > 0) {
+                double late_f = 1.0, early_f = 1.0;
+                if (ocv_mode_ == OcvMode::OCV) {
+                    late_f = ocv_late_cell_;
+                    early_f = ocv_early_cell_;
+                } else if (ocv_mode_ == OcvMode::AOCV) {
+                    late_f = aocv_table_.late_derate(1);
+                    early_f = aocv_table_.early_derate(1);
+                } else if (ocv_mode_ == OcvMode::POCV) {
+                    late_f = 1.0 + pocv_table_.default_sigma_pct * pocv_table_.n_sigma;
+                    early_f = 1.0 - pocv_table_.default_sigma_pct * pocv_table_.n_sigma;
+                }
+                credit = common_delay * std::abs(late_f - early_f);
             }
         }
-        
-        double common_delay = std::min(launch_ins, capture_ins);
-        if (common_delay <= 0) continue;
-        
-        double credit = common_delay * std::abs(late_factor - early_factor);
+
         path.cppr_credit = credit;
-        
-        if (!path.is_hold) {
+        if (!path.is_hold)
             path.slack += credit;
-        } else {
+        else
             path.slack -= credit;
-        }
     }
 }
 
@@ -948,51 +1038,103 @@ double StaEngine::compute_path_pocv_sigma(const TimingPath& path) const {
 
 void StaEngine::pba_reanalyze(std::vector<TimingPath>& paths, double clock_period) {
     if (!pba_enabled_) return;
-    
+
+    // Build a set of nets on each path for path-specific load computation
     for (auto& path : paths) {
         if (path.nets.size() < 2) continue;
-        
+
+        // Collect nets that are actually on this path for load filtering
+        std::unordered_set<NetId> path_net_set(path.nets.begin(), path.nets.end());
+
         double path_delay = 0;
         double current_slew = 0.01;
-        
+
         for (size_t i = 0; i < path.gates.size(); i++) {
             GateId gid = path.gates[i];
             auto& g = nl_.gate(gid);
-            
+
+            // Path-specific load: only count fanout gates whose input nets
+            // are on this path, plus a small fixed off-path capacitance for
+            // branches not on the critical path.
+            double path_load = 0.001; // base wire cap
+            if (g.output >= 0) {
+                auto& out_net = nl_.net(g.output);
+                for (auto fo_gid : out_net.fanout) {
+                    auto& fo_gate = nl_.gate(fo_gid);
+                    bool on_path = false;
+                    // Check if this fanout gate is on the current path
+                    if (i + 1 < path.gates.size() &&
+                        fo_gid == path.gates[i + 1]) {
+                        on_path = true;
+                    }
+                    // Also check if the fanout gate's output net is a path net
+                    if (!on_path && fo_gate.output >= 0 &&
+                        path_net_set.count(fo_gate.output)) {
+                        on_path = true;
+                    }
+
+                    double pin_cap = 0.002; // default
+                    if (lib_) {
+                        std::string type_str = gate_type_str(fo_gate.type);
+                        int num_in = (int)fo_gate.inputs.size();
+                        std::string candidates[] = {
+                            type_str + std::to_string(num_in), type_str,
+                            type_str + "_X1"
+                        };
+                        for (auto& cand : candidates) {
+                            if (auto* cell = lib_->find_cell(cand)) {
+                                for (auto& pin : cell->pins) {
+                                    if (pin.direction == "input" &&
+                                        pin.capacitance > 0) {
+                                        pin_cap = pin.capacitance;
+                                        break;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    if (on_path)
+                        path_load += pin_cap;
+                    else
+                        path_load += pin_cap * 0.3; // off-path sees reduced effective cap
+                }
+            }
+
+            // Recompute gate delay with exact per-path input slew
             double gd = gate_delay(gid, current_slew);
-            
+
             NetId from_net = (i < path.nets.size()) ? path.nets[i] : -1;
             NetId to_net = (i + 1 < path.nets.size()) ? path.nets[i + 1] : g.output;
             double wd = (from_net >= 0 && to_net >= 0) ? wire_delay(from_net, to_net) : 0;
-            
+
             double xt_delta = 0;
-            if (xtalk_.enabled && to_net >= 0) {
+            if (xtalk_.enabled && to_net >= 0)
                 xt_delta = compute_crosstalk_delta(to_net);
-            }
-            
+
             path_delay += gd + wd + xt_delta;
-            
-            double load = (g.output >= 0) ? net_load_cap(g.output) : 0.002;
-            current_slew = output_slew(gid, current_slew, load);
+
+            // Propagate slew using path-specific load
+            current_slew = output_slew(gid, current_slew, path_load);
         }
-        
+
+        // POCV: apply path-level statistical adjustment
         if (ocv_mode_ == OcvMode::POCV) {
             double path_sigma = compute_path_pocv_sigma(path);
             path.path_sigma = path_sigma;
-            if (analyzing_late_) {
+            if (analyzing_late_)
                 path_delay += pocv_table_.n_sigma * path_sigma;
-            } else {
+            else
                 path_delay -= pocv_table_.n_sigma * path_sigma;
-            }
         }
-        
+
         path.pba_delay = path_delay;
         if (!path.is_hold) {
             double req = clock_period;
             if (!path.nets.empty()) {
                 NetId ep = path.nets.back();
                 if (pin_timing_.count(ep)) {
-                    req = std::min(pin_timing_.at(ep).required_rise, 
+                    req = std::min(pin_timing_.at(ep).required_rise,
                                    pin_timing_.at(ep).required_fall);
                 }
             }
@@ -1001,9 +1143,8 @@ void StaEngine::pba_reanalyze(std::vector<TimingPath>& paths, double clock_perio
             double hold_req = 0.02;
             if (!path.nets.empty()) {
                 NetId ep = path.nets.back();
-                if (pin_timing_.count(ep)) {
+                if (pin_timing_.count(ep))
                     hold_req = pin_timing_.at(ep).hold_required_rise;
-                }
             }
             path.pba_slack = path_delay - hold_req;
         }
@@ -1300,7 +1441,9 @@ StaEngine::PbaResult::PathDetail StaEngine::trace_path(
 
     // Back-trace from endpoint to startpoint through worst-arrival inputs
     std::vector<int> gate_seq;
+    std::vector<NetId> net_seq;
     NetId curr = static_cast<NetId>(endpoint);
+    net_seq.push_back(curr);
     for (int depth = 0; depth < 200; ++depth) {
         GateId drv = nl_.net(curr).driver;
         if (drv < 0) break;
@@ -1316,15 +1459,21 @@ StaEngine::PbaResult::PathDetail StaEngine::trace_path(
             if (arr > worst_arr) { worst_arr = arr; worst_in = ni; }
         }
         if (worst_in < 0) break;
+        net_seq.push_back(worst_in);
         curr = worst_in;
     }
     std::reverse(gate_seq.begin(), gate_seq.end());
+    std::reverse(net_seq.begin(), net_seq.end());
     detail.gates = gate_seq;
 
-    // Exact slew propagation through path gates
+    // Build path net set for path-specific load filtering
+    std::unordered_set<NetId> path_net_set(net_seq.begin(), net_seq.end());
+
+    // Exact slew propagation through path gates with path-specific loads
     double current_slew = 0.01;
     double cumulative = 0;
-    for (auto gid : gate_seq) {
+    for (size_t idx = 0; idx < gate_seq.size(); ++idx) {
+        auto gid = gate_seq[idx];
         auto& g = nl_.gate(gid);
         double gd = gate_delay(gid, current_slew);
         NetId from = g.inputs.empty() ? -1 : g.inputs[0];
@@ -1335,8 +1484,35 @@ StaEngine::PbaResult::PathDetail StaEngine::trace_path(
         cumulative += gd + wd;
         detail.arrivals.push_back(cumulative);
 
-        double load = (g.output >= 0) ? net_load_cap(g.output) : 0.002;
-        current_slew = output_slew(gid, current_slew, load);
+        // Path-specific load: weight on-path fanout fully, off-path partially
+        double path_load = 0.001;
+        if (g.output >= 0) {
+            auto& out_net = nl_.net(g.output);
+            for (auto fo_gid : out_net.fanout) {
+                auto& fo_g = nl_.gate(fo_gid);
+                bool on_path = (idx + 1 < gate_seq.size() &&
+                                fo_gid == gate_seq[idx + 1]);
+                if (!on_path && fo_g.output >= 0 &&
+                    path_net_set.count(fo_g.output))
+                    on_path = true;
+
+                double pin_cap = 0.002;
+                if (lib_) {
+                    std::string ts = gate_type_str(fo_g.type);
+                    if (auto* cell = lib_->find_cell(ts)) {
+                        for (auto& pin : cell->pins) {
+                            if (pin.direction == "input" &&
+                                pin.capacitance > 0) {
+                                pin_cap = pin.capacitance;
+                                break;
+                            }
+                        }
+                    }
+                }
+                path_load += on_path ? pin_cap : pin_cap * 0.3;
+            }
+        }
+        current_slew = output_slew(gid, current_slew, path_load);
     }
 
     detail.total_delay = cumulative;
@@ -1346,14 +1522,42 @@ StaEngine::PbaResult::PathDetail StaEngine::trace_path(
 double StaEngine::compute_path_delay_exact(const std::vector<int>& gates) {
     double current_slew = 0.01;
     double total = 0;
-    for (auto gid : gates) {
+
+    // Build gate set for path-specific load determination
+    std::unordered_set<int> gate_set(gates.begin(), gates.end());
+
+    for (size_t idx = 0; idx < gates.size(); ++idx) {
+        auto gid = gates[idx];
         auto& g = nl_.gate(gid);
         double gd = gate_delay(gid, current_slew);
         NetId from = g.inputs.empty() ? -1 : g.inputs[0];
         double wd = wire_delay(from, g.output);
         total += gd + wd;
-        double load = (g.output >= 0) ? net_load_cap(g.output) : 0.002;
-        current_slew = output_slew(gid, current_slew, load);
+
+        // Path-specific load
+        double path_load = 0.001;
+        if (g.output >= 0) {
+            auto& out_net = nl_.net(g.output);
+            for (auto fo_gid : out_net.fanout) {
+                bool on_path = gate_set.count(fo_gid) > 0;
+                double pin_cap = 0.002;
+                if (lib_) {
+                    auto& fo_g = nl_.gate(fo_gid);
+                    std::string ts = gate_type_str(fo_g.type);
+                    if (auto* cell = lib_->find_cell(ts)) {
+                        for (auto& pin : cell->pins) {
+                            if (pin.direction == "input" &&
+                                pin.capacitance > 0) {
+                                pin_cap = pin.capacitance;
+                                break;
+                            }
+                        }
+                    }
+                }
+                path_load += on_path ? pin_cap : pin_cap * 0.3;
+            }
+        }
+        current_slew = output_slew(gid, current_slew, path_load);
     }
     return total;
 }
@@ -1386,18 +1590,18 @@ StaEngine::PbaResult StaEngine::run_path_based(int num_paths) {
         arrival_vec[nid] = pt.worst_arrival();
 
     // 2. Collect endpoints sorted by worst graph-based slack
-    struct EpInfo { NetId net; double slack; double graph_delay; };
+    struct EpInfo { NetId net; double slack; double graph_delay; std::string name; };
     std::vector<EpInfo> endpoints;
     for (auto po : nl_.primary_outputs()) {
         auto& pt = pin_timing_[po];
-        endpoints.push_back({po, pt.worst_slack(), pt.worst_arrival()});
+        endpoints.push_back({po, pt.worst_slack(), pt.worst_arrival(), nl_.net(po).name});
     }
     for (auto gid : nl_.flip_flops()) {
         auto& ff = nl_.gate(gid);
         if (!ff.inputs.empty()) {
             NetId d = ff.inputs[0];
             auto& pt = pin_timing_[d];
-            endpoints.push_back({d, pt.worst_slack(), pt.worst_arrival()});
+            endpoints.push_back({d, pt.worst_slack(), pt.worst_arrival(), ff.name + "/D"});
         }
     }
     std::sort(endpoints.begin(), endpoints.end(),
@@ -1405,7 +1609,7 @@ StaEngine::PbaResult StaEngine::run_path_based(int num_paths) {
 
     int count = std::min(num_paths, static_cast<int>(endpoints.size()));
 
-    // 3. For each critical path, recompute with exact slew propagation
+    // 3. For each critical endpoint, trace path and recompute with exact slew
     for (int i = 0; i < count; ++i) {
         auto detail = trace_path(endpoints[i].net, arrival_vec);
         double req = last_clock_period_ > 0 ? last_clock_period_ : 1e18;
@@ -1416,6 +1620,50 @@ StaEngine::PbaResult StaEngine::run_path_based(int num_paths) {
         }
         detail.slack = req - detail.total_delay;
         detail.is_critical = (detail.slack < 0);
+
+        // Apply CPPR credit if enabled: find common clock path pessimism
+        if (cppr_.enabled && ocv_mode_ != OcvMode::NONE) {
+            // Build a temporary TimingPath for compute_cppr_credits
+            // For PBA results, approximate CPPR credit proportionally
+            // to the graph-based credit already computed
+            double cppr_adjustment = 0;
+            // Find startpoint by tracing to root
+            NetId cur = ep;
+            std::string startpoint;
+            for (int depth = 0; depth < 200; ++depth) {
+                GateId drv = nl_.net(cur).driver;
+                if (drv < 0) break;
+                auto& g = nl_.gate(drv);
+                if (g.type == GateType::DFF || g.type == GateType::INPUT) {
+                    startpoint = g.name;
+                    break;
+                }
+                if (g.inputs.empty()) break;
+                // Follow worst input
+                NetId wi = -1; double wa = -1;
+                for (auto ni : g.inputs) {
+                    double a = (ni < (int)arrival_vec.size()) ? arrival_vec[ni] : 0;
+                    if (a > wa) { wa = a; wi = ni; }
+                }
+                if (wi < 0) break;
+                cur = wi;
+            }
+
+            if (!startpoint.empty()) {
+                // Compute CPPR for this specific path
+                TimingPath tmp_path;
+                tmp_path.startpoint = startpoint;
+                tmp_path.endpoint = endpoints[i].name;
+                tmp_path.gates = std::vector<GateId>(detail.gates.begin(),
+                                                     detail.gates.end());
+                tmp_path.is_hold = false;
+                tmp_path.slack = 0;
+                std::vector<TimingPath> tmp_paths = {tmp_path};
+                compute_cppr_credits(tmp_paths, last_clock_period_);
+                cppr_adjustment = tmp_paths[0].cppr_credit;
+            }
+            detail.slack += cppr_adjustment;
+        }
 
         // PBA typically recovers pessimism
         if (detail.total_delay < endpoints[i].graph_delay)
