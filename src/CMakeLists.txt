@@ -18,9 +18,12 @@ add_library(siliconforge_lib STATIC
     frontend/sdc_parser.cpp
     frontend/sva_parser.cpp
     frontend/upf_parser.cpp
+    frontend/vhdl_parser.cpp
+    frontend/sv_elaborate.cpp
 
     # ── Synthesis ─────────────────────────────────────────────────────
     synth/aig_opt.cpp
+    synth/datapath.cpp
     synth/behavioral_synth.cpp
     synth/clock_gating.cpp
     synth/eco.cpp
@@ -79,6 +82,8 @@ add_library(siliconforge_lib STATIC
     pnr/power_plan.cpp
     pnr/metal_fill.cpp
     pnr/cell_insert.cpp
+    pnr/detailed_placer.cpp
+    pnr/multi_pattern.cpp
 
     # ── Timing & Power ────────────────────────────────────────────────
     timing/sta.cpp

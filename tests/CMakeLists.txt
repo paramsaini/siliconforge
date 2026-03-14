@@ -270,9 +270,13 @@ add_executable(test_phase68 test_phase68.cpp)
 target_link_libraries(test_phase68 PRIVATE siliconforge_lib)
 add_test(NAME Phase68Tests COMMAND test_phase68)
 
-add_executable(test_phase73 test_phase73.cpp)
-target_link_libraries(test_phase73 PRIVATE siliconforge_lib)
-add_test(NAME Phase73Tests COMMAND test_phase73)
+add_executable(test_phase69 test_phase69.cpp)
+target_link_libraries(test_phase69 PRIVATE siliconforge_lib)
+add_test(NAME Phase69Tests COMMAND test_phase69)
+
+add_executable(test_phase70 test_phase70.cpp)
+target_link_libraries(test_phase70 PRIVATE siliconforge_lib)
+add_test(NAME Phase70Tests COMMAND test_phase70)
 
 add_executable(test_phase71 test_phase71.cpp)
 target_link_libraries(test_phase71 PRIVATE siliconforge_lib)
@@ -282,9 +286,33 @@ add_executable(test_phase72 test_phase72.cpp)
 target_link_libraries(test_phase72 PRIVATE siliconforge_lib)
 add_test(NAME Phase72Tests COMMAND test_phase72)
 
+add_executable(test_phase73 test_phase73.cpp)
+target_link_libraries(test_phase73 PRIVATE siliconforge_lib)
+add_test(NAME Phase73Tests COMMAND test_phase73)
+
+add_executable(test_phase74 test_phase74.cpp)
+target_link_libraries(test_phase74 PRIVATE siliconforge_lib)
+add_test(NAME Phase74Tests COMMAND test_phase74)
+
 add_executable(test_phase75 test_phase75.cpp)
 target_link_libraries(test_phase75 PRIVATE siliconforge_lib)
 add_test(NAME Phase75Tests COMMAND test_phase75)
+
+add_executable(test_phase76 test_phase76.cpp)
+target_link_libraries(test_phase76 PRIVATE siliconforge_lib)
+add_test(NAME Phase76Tests COMMAND test_phase76)
+
+add_executable(test_phase77 test_phase77.cpp)
+target_link_libraries(test_phase77 PRIVATE siliconforge_lib)
+add_test(NAME Phase77Tests COMMAND test_phase77)
+
+add_executable(test_phase78 test_phase78.cpp)
+target_link_libraries(test_phase78 PRIVATE siliconforge_lib)
+add_test(NAME Phase78Tests COMMAND test_phase78)
+
+add_executable(test_phase79 test_phase79.cpp)
+target_link_libraries(test_phase79 PRIVATE siliconforge_lib)
+add_test(NAME Phase79Tests COMMAND test_phase79)
 
 add_executable(test_phase80 test_phase80.cpp)
 target_link_libraries(test_phase80 PRIVATE siliconforge_lib)
