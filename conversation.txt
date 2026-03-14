@@ -961,7 +961,8 @@ RULES (MUST FOLLOW):
   5. ASAN testing on all changes
   6. Update conversation.txt after work
   7. Never commit/push to GitHub — only provide commands
-  8. No Copilot identification in commits
+  8. No Copilot/AI identification anywhere — not in commits, not in code, not in comments, not in codebase at all
+  9. No Co-authored-by trailers in commits — commits must appear as sole author
 
 REFERENCE FILES:
   summary.txt — comprehensive RTL-to-GDSII flow technical summary
