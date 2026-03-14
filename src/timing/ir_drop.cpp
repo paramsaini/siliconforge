@@ -907,11 +907,117 @@ std::vector<IrEmHotspot> IrDropAnalyzer::check_em_limits(double max_current_dens
 
 // ── Enhanced IR drop run ─────────────────────────────────────────────
 
+// ── Frequency-domain PDN impedance analysis ──────────────────────────
+// Models the PDN as a series RLC circuit (package) in parallel with decap.
+// Sweeps frequency logarithmically and computes Z(f) = |R + j(wL - 1/wC)|.
+
+FreqDomainPdnResult IrDropAnalyzer::analyze_pdn_impedance(const FreqDomainPdnConfig& cfg) {
+    FreqDomainPdnResult result;
+    int n_pts = std::max(2, cfg.num_points);
+    result.frequencies.resize(n_pts);
+    result.impedance_mag.resize(n_pts);
+    result.impedance_phase.resize(n_pts);
+
+    double log_start = std::log10(std::max(cfg.freq_start_hz, 1.0));
+    double log_stop  = std::log10(std::max(cfg.freq_stop_hz, cfg.freq_start_hz + 1.0));
+
+    // On-die grid resistance from config
+    double r_die = cfg_.sheet_resistance_mohm * 1e-3 * cfg_.grid_resolution;
+
+    double peak_z = 0.0;
+    double res_freq = 0.0;
+
+    for (int i = 0; i < n_pts; ++i) {
+        double log_f = log_start + (log_stop - log_start) * i / (n_pts - 1);
+        double f = std::pow(10.0, log_f);
+        double omega = 2.0 * M_PI * f;
+
+        result.frequencies[i] = f;
+
+        // Package branch: Z_pkg = R_pkg + j*omega*L_pkg
+        double r_pkg = cfg.include_package ? cfg.package_r : 0.0;
+        double l_pkg = cfg.include_package ? cfg.package_l : 0.0;
+        double z_pkg_real = r_pkg;
+        double z_pkg_imag = omega * l_pkg;
+
+        // Decap branch: Z_cap = 1 / (j*omega*C) = -j / (omega*C)
+        double z_cap_imag = (cfg.decap_c > 0 && omega > 0) ? -1.0 / (omega * cfg.decap_c) : 0.0;
+        // ESR of decap
+        double esr = cfg_.decap_esr_mohm * 1e-3;
+        double z_cap_real = esr;
+
+        // Die grid resistance (purely real)
+        double z_die_real = r_die;
+
+        // Total: package in series with (decap || die_grid)
+        // Parallel impedance of decap and die: Z_par = Z_cap * Z_die / (Z_cap + Z_die)
+        double zd_r = z_die_real, zd_i = 0.0;
+        double zc_r = z_cap_real, zc_i = z_cap_imag;
+        // Z_par = (zc * zd) / (zc + zd) in complex arithmetic
+        double sum_r = zc_r + zd_r;
+        double sum_i = zc_i + zd_i;
+        double sum_mag2 = sum_r * sum_r + sum_i * sum_i;
+        double prod_r = zc_r * zd_r - zc_i * zd_i;
+        double prod_i = zc_r * zd_i + zc_i * zd_r;
+        double par_r = (sum_mag2 > 0) ? (prod_r * sum_r + prod_i * sum_i) / sum_mag2 : 0.0;
+        double par_i = (sum_mag2 > 0) ? (prod_i * sum_r - prod_r * sum_i) / sum_mag2 : 0.0;
+
+        // Total impedance: Z_total = Z_pkg + Z_par
+        double zt_r = z_pkg_real + par_r;
+        double zt_i = z_pkg_imag + par_i;
+
+        double mag = std::sqrt(zt_r * zt_r + zt_i * zt_i);
+        double phase = std::atan2(zt_i, zt_r) * 180.0 / M_PI;
+
+        result.impedance_mag[i] = mag;
+        result.impedance_phase[i] = phase;
+
+        if (mag > peak_z) {
+            peak_z = mag;
+            res_freq = f;
+        }
+    }
+
+    result.peak_impedance = peak_z;
+    result.resonant_freq_hz = res_freq;
+    return result;
+}
+
+// ── Adaptive grid refinement ─────────────────────────────────────────
+
+void IrDropAnalyzer::set_adaptive_refinement(bool enable, int max_refinement_level) {
+    adaptive_refinement_ = enable;
+    max_refinement_level_ = std::max(1, max_refinement_level);
+}
+
 IrDropResult IrDropAnalyzer::run_enhanced() {
     auto t0 = std::chrono::high_resolution_clock::now();
 
     // Run standard analysis (also caches data)
     auto result = analyze();
+
+    // Adaptive grid refinement: re-run at higher resolution around hotspots
+    if (adaptive_refinement_ && !result.hotspots.empty()) {
+        int base_res = cfg_.grid_resolution;
+        for (int level = 1; level <= max_refinement_level_; ++level) {
+            int refined_res = base_res * (1 << level);  // double each level
+            if (refined_res > 128) break;               // cap at 128x128
+            auto refined = analyze(refined_res);
+            if (refined.worst_drop_mv > result.worst_drop_mv) {
+                result.worst_drop_mv = refined.worst_drop_mv;
+                result.avg_drop_mv = refined.avg_drop_mv;
+                result.median_drop_mv = refined.median_drop_mv;
+                result.hotspots = refined.hotspots;
+                result.num_hotspots = refined.num_hotspots;
+                result.num_critical = refined.num_critical;
+                result.nodes = refined.nodes;
+                result.drop_map = refined.drop_map;
+                result.voltage_map = refined.voltage_map;
+                result.grid_x = refined.grid_x;
+                result.grid_y = refined.grid_y;
+            }
+        }
+    }
 
     // Enable dynamic analysis
     bool saved_dynamic = cfg_.enable_dynamic;

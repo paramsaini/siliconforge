@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <cmath>
 
 namespace sf {
 
@@ -124,6 +125,15 @@ public:
     // Enhanced power run
     PowerResult run_enhanced();
 
+    // ── IR drop feedback to leakage power ────────────────────────────
+    // Derate leakage based on per-cell actual voltage:
+    // P_leak_derated = P_leak * exp(-alpha * (Vdd - V_actual) / Vt)
+    void apply_voltage_derating(const std::unordered_map<std::string, double>& cell_voltages);
+
+    // ── Temperature impact on leakage ────────────────────────────────
+    // Leakage doubles roughly every 10°C: P_leak(T) = P_leak(25) * 2^((T-25)/10)
+    void set_temperature(double temp_celsius);
+
 private:
     const Netlist& nl_;
     const LibertyLibrary* lib_;
@@ -147,6 +157,11 @@ private:
     double last_freq_mhz_ = 0;
     double last_vdd_ = 1.8;
     double last_default_activity_ = 0.1;
+
+    // Temperature and voltage derating state
+    double temperature_c_ = 25.0;
+    double leakage_temp_factor_ = 1.0;
+    std::unordered_map<std::string, double> voltage_derating_;  // cell_name -> derating factor
 
     double cell_leakage(GateId gid) const;
     double cell_dynamic(GateId gid, double freq, double vdd, double activity) const;

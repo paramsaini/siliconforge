@@ -2413,6 +2413,176 @@ int DrcEngine::load_rule_deck_string(const std::string& deck) {
 }
 
 // ── run_enhanced ─────────────────────────────────────────────────────
+
+// ── Context-dependent rule checking ──────────────────────────────────
+
+void DrcEngine::add_context_rule(const ContextRule& rule) {
+    context_rules.push_back(rule);
+}
+
+int DrcEngine::check_context_rules(DrcResult& r) {
+    int violations = 0;
+    for (auto& cr : context_rules) {
+        int layer = resolve_layer_name(cr.layer);
+        if (layer < 0) continue;
+
+        for (size_t i = 0; i < pd_.wires.size(); ++i) {
+            auto& wa = pd_.wires[i];
+            if (wa.layer != layer) continue;
+
+            for (size_t j = i + 1; j < pd_.wires.size(); ++j) {
+                auto& wb = pd_.wires[j];
+                if (wb.layer != layer) continue;
+
+                double sp = wires_spacing(wa, wb);
+                bool context_match = false;
+
+                if (cr.context == "parallel_run") {
+                    double prl = parallel_run_length(wa, wb);
+                    context_match = (prl >= cr.context_distance && cr.context_distance > 0);
+                } else if (cr.context == "end_of_line") {
+                    double eol_w = (cr.min_width > 0) ? cr.min_width : wa.width;
+                    context_match = is_eol(wa, eol_w) || is_eol(wb, eol_w);
+                } else if (cr.context == "corner") {
+                    bool a_horiz = std::abs(wa.end.y - wa.start.y) < std::abs(wa.end.x - wa.start.x);
+                    bool b_horiz = std::abs(wb.end.y - wb.start.y) < std::abs(wb.end.x - wb.start.x);
+                    context_match = (a_horiz != b_horiz) && (sp < cr.context_distance);
+                }
+
+                if (context_match && cr.spacing > 0 && sp < cr.spacing) {
+                    violations++;
+                    r.violations++;
+                    r.errors++;
+                    r.total_rules++;
+                    r.details.push_back({cr.name,
+                        "Context-dependent spacing violation (" + cr.context + "): " +
+                        std::to_string(sp) + " < " + std::to_string(cr.spacing),
+                        {std::min(wa.start.x, wb.start.x), std::min(wa.start.y, wb.start.y),
+                         std::max(wa.end.x, wb.end.x), std::max(wa.end.y, wb.end.y)},
+                        sp, cr.spacing, DrcViolation::ERROR});
+                }
+
+                if (context_match && cr.min_width > 0 &&
+                    (wa.width < cr.min_width || wb.width < cr.min_width)) {
+                    violations++;
+                    r.violations++;
+                    r.errors++;
+                    r.total_rules++;
+                    double actual_w = std::min(wa.width, wb.width);
+                    r.details.push_back({cr.name,
+                        "Context-dependent width violation (" + cr.context + "): " +
+                        std::to_string(actual_w) + " < " + std::to_string(cr.min_width),
+                        {std::min(wa.start.x, wb.start.x), std::min(wa.start.y, wb.start.y),
+                         std::max(wa.end.x, wb.end.x), std::max(wa.end.y, wb.end.y)},
+                        actual_w, cr.min_width, DrcViolation::ERROR});
+                }
+            }
+        }
+    }
+    return violations;
+}
+
+// ── Inter-layer rule checking ────────────────────────────────────────
+
+void DrcEngine::add_inter_layer_rule(const InterLayerRule& rule) {
+    inter_layer_rules.push_back(rule);
+}
+
+int DrcEngine::check_inter_layer_rules(DrcResult& r) {
+    int violations = 0;
+    for (auto& ilr : inter_layer_rules) {
+        int l1 = resolve_layer_name(ilr.layer1);
+        int l2 = resolve_layer_name(ilr.layer2);
+        if (l1 < 0 || l2 < 0) continue;
+
+        for (auto& wa : pd_.wires) {
+            if (wa.layer != l1) continue;
+
+            for (auto& wb : pd_.wires) {
+                if (wb.layer != l2) continue;
+
+                if (ilr.type == "spacing" && ilr.min_spacing > 0) {
+                    double sp = wires_spacing(wa, wb);
+                    if (sp < ilr.min_spacing) {
+                        violations++;
+                        r.violations++;
+                        r.errors++;
+                        r.total_rules++;
+                        r.details.push_back({"INTERLAYER." + ilr.layer1 + "." + ilr.layer2,
+                            "Inter-layer spacing violation: " + std::to_string(sp) +
+                            " < " + std::to_string(ilr.min_spacing),
+                            {std::min(wa.start.x, wb.start.x), std::min(wa.start.y, wb.start.y),
+                             std::max(wa.end.x, wb.end.x), std::max(wa.end.y, wb.end.y)},
+                            sp, ilr.min_spacing, DrcViolation::ERROR});
+                    }
+                } else if (ilr.type == "enclosure" && ilr.min_enclosure > 0) {
+                    // Check if wire on l1 encloses wire on l2 with sufficient margin
+                    Rect ra(std::min(wa.start.x, wa.end.x) - wa.width/2,
+                            std::min(wa.start.y, wa.end.y) - wa.width/2,
+                            std::max(wa.start.x, wa.end.x) + wa.width/2,
+                            std::max(wa.start.y, wa.end.y) + wa.width/2);
+                    Rect rb(std::min(wb.start.x, wb.end.x) - wb.width/2,
+                            std::min(wb.start.y, wb.end.y) - wb.width/2,
+                            std::max(wb.start.x, wb.end.x) + wb.width/2,
+                            std::max(wb.start.y, wb.end.y) + wb.width/2);
+                    // Check overlap: only check enclosure if they overlap
+                    bool overlaps = !(ra.x1 < rb.x0 || rb.x1 < ra.x0 ||
+                                      ra.y1 < rb.y0 || rb.y1 < ra.y0);
+                    if (overlaps) {
+                        double enc_left   = rb.x0 - ra.x0;
+                        double enc_right  = ra.x1 - rb.x1;
+                        double enc_bottom = rb.y0 - ra.y0;
+                        double enc_top    = ra.y1 - rb.y1;
+                        double min_enc = std::min({enc_left, enc_right, enc_bottom, enc_top});
+                        if (min_enc < ilr.min_enclosure) {
+                            violations++;
+                            r.violations++;
+                            r.errors++;
+                            r.total_rules++;
+                            r.details.push_back({"INTERLAYER_ENC." + ilr.layer1 + "." + ilr.layer2,
+                                "Inter-layer enclosure violation: " + std::to_string(min_enc) +
+                                " < " + std::to_string(ilr.min_enclosure),
+                                {ra.x0, ra.y0, ra.x1, ra.y1},
+                                min_enc, ilr.min_enclosure, DrcViolation::ERROR});
+                        }
+                    }
+                } else if (ilr.type == "extension" && ilr.min_enclosure > 0) {
+                    // Extension: l1 must extend past l2 by min_enclosure
+                    Rect ra(std::min(wa.start.x, wa.end.x) - wa.width/2,
+                            std::min(wa.start.y, wa.end.y) - wa.width/2,
+                            std::max(wa.start.x, wa.end.x) + wa.width/2,
+                            std::max(wa.start.y, wa.end.y) + wa.width/2);
+                    Rect rb(std::min(wb.start.x, wb.end.x) - wb.width/2,
+                            std::min(wb.start.y, wb.end.y) - wb.width/2,
+                            std::max(wb.start.x, wb.end.x) + wb.width/2,
+                            std::max(wb.start.y, wb.end.y) + wb.width/2);
+                    bool overlaps = !(ra.x1 < rb.x0 || rb.x1 < ra.x0 ||
+                                      ra.y1 < rb.y0 || rb.y1 < ra.y0);
+                    if (overlaps) {
+                        double ext_left   = rb.x0 - ra.x0;
+                        double ext_right  = ra.x1 - rb.x1;
+                        double ext_bottom = rb.y0 - ra.y0;
+                        double ext_top    = ra.y1 - rb.y1;
+                        double max_ext = std::max({ext_left, ext_right, ext_bottom, ext_top});
+                        if (max_ext < ilr.min_enclosure) {
+                            violations++;
+                            r.violations++;
+                            r.errors++;
+                            r.total_rules++;
+                            r.details.push_back({"INTERLAYER_EXT." + ilr.layer1 + "." + ilr.layer2,
+                                "Inter-layer extension violation: " + std::to_string(max_ext) +
+                                " < " + std::to_string(ilr.min_enclosure),
+                                {ra.x0, ra.y0, ra.x1, ra.y1},
+                                max_ext, ilr.min_enclosure, DrcViolation::ERROR});
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return violations;
+}
+
 DrcResult DrcEngine::run_enhanced() {
     auto t0 = std::chrono::high_resolution_clock::now();
     build_spatial_index();
@@ -2449,6 +2619,18 @@ DrcResult DrcEngine::run_enhanced() {
     check_temp_variant(r);
 
     // ── New enhanced checks ──────────────────────────────────────────
+
+    // Context-dependent rules
+    {
+        int ctx_viols = check_context_rules(r);
+        r.context_rule_violations = ctx_viols;
+    }
+
+    // Inter-layer interaction rules
+    {
+        int il_viols = check_inter_layer_rules(r);
+        r.inter_layer_violations = il_viols;
+    }
 
     // Via enclosure
     {

@@ -280,6 +280,16 @@ PowerResult PowerAnalyzer::analyze(double clock_freq_mhz, double supply_voltage,
         // Leakage scales with V² for subthreshold
         leakage_mw *= (cell_vdd / supply_voltage) * (cell_vdd / supply_voltage);
 
+        // Apply temperature scaling: P_leak(T) = P_leak(25) * 2^((T-25)/10)
+        leakage_mw *= leakage_temp_factor_;
+
+        // Apply voltage derating from IR drop feedback
+        std::string cell_name = g.name.empty() ? ("g" + std::to_string(gid)) : g.name;
+        auto vd_it = voltage_derating_.find(cell_name);
+        if (vd_it != voltage_derating_.end()) {
+            leakage_mw *= vd_it->second;
+        }
+
         double dynamic_mw = cell_dynamic(gid, clock_freq_mhz, cell_vdd, cell_activity);
         double internal_mw = dynamic_mw * 0.15;
 
@@ -1048,6 +1058,32 @@ PowerResult PowerAnalyzer::run_enhanced() {
                      " rtl_est=" + std::to_string(rtl.total_mw) +
                      " states=" + std::to_string(states.size()) + ")";
     return result;
+}
+
+// ── Voltage derating for leakage power ───────────────────────────────
+// Derate leakage based on IR-drop-reduced supply voltage per cell.
+// P_leak_derated = P_leak * exp(-alpha * (Vdd - V_actual) / Vt)
+// where alpha ≈ 1.0 (subthreshold slope factor), Vt ≈ 26mV at 25°C.
+
+void PowerAnalyzer::apply_voltage_derating(const std::unordered_map<std::string, double>& cell_voltages) {
+    constexpr double alpha = 1.0;  // subthreshold slope factor
+    double vt = 0.026 * (temperature_c_ + 273.15) / 298.15;  // thermal voltage scaled by temperature
+
+    voltage_derating_.clear();
+    for (auto& [cell_name, v_actual] : cell_voltages) {
+        double v_drop = last_vdd_ - v_actual;
+        if (v_drop < 0) v_drop = 0;
+        double factor = std::exp(-alpha * v_drop / vt);
+        voltage_derating_[cell_name] = factor;
+    }
+}
+
+// ── Temperature impact on leakage ────────────────────────────────────
+// Leakage doubles roughly every 10°C: P_leak(T) = P_leak(25) * 2^((T-25)/10)
+
+void PowerAnalyzer::set_temperature(double temp_celsius) {
+    temperature_c_ = temp_celsius;
+    leakage_temp_factor_ = std::pow(2.0, (temp_celsius - 25.0) / 10.0);
 }
 
 } // namespace sf

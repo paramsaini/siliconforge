@@ -14,6 +14,7 @@
 #include <vector>
 #include <functional>
 #include <utility>
+#include <cmath>
 
 namespace sf {
 
@@ -193,6 +194,26 @@ struct IrEmHotspot {
     double limit_ma_per_um;            // EM limit
 };
 
+// ── Frequency-domain PDN impedance analysis ──────────────────────────────
+
+struct FreqDomainPdnConfig {
+    double freq_start_hz = 1e3;
+    double freq_stop_hz = 1e9;
+    int num_points = 100;       // log-spaced
+    bool include_package = true;
+    double package_r = 0.01;    // ohms
+    double package_l = 0.5e-9;  // henries
+    double decap_c = 100e-9;    // farads
+};
+
+struct FreqDomainPdnResult {
+    std::vector<double> frequencies;
+    std::vector<double> impedance_mag;
+    std::vector<double> impedance_phase;
+    double resonant_freq_hz = 0.0;
+    double peak_impedance = 0.0;
+};
+
 class IrDropAnalyzer {
 public:
     IrDropAnalyzer(const PhysicalDesign& pd, double vdd = 1.8, double total_current_ma = 100)
@@ -231,6 +252,12 @@ public:
 
     IrDropResult run_enhanced();
 
+    // ── Frequency-domain PDN impedance analysis ──────────────────────
+    FreqDomainPdnResult analyze_pdn_impedance(const FreqDomainPdnConfig& cfg = {});
+
+    // ── Adaptive grid refinement for hotspot regions ─────────────────
+    void set_adaptive_refinement(bool enable, int max_refinement_level = 3);
+
 private:
     const PhysicalDesign& pd_;
     IrDropConfig cfg_;
@@ -241,6 +268,10 @@ private:
     int last_grid_n_ = 0;
     double last_cell_w_ = 0, last_cell_h_ = 0;
     std::vector<std::vector<double>> last_current_map_;
+
+    // Adaptive refinement settings
+    bool adaptive_refinement_ = false;
+    int max_refinement_level_ = 3;
 
     // Power pad generation
     void generate_pads(int grid_res);

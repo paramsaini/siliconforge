@@ -169,6 +169,31 @@ struct DrcResult {
     int antenna_per_layer_violations = 0;
     int min_area_enhanced_violations = 0;
     int waived_violations = 0;
+
+    // Context-dependent and inter-layer rule violation counts
+    int context_rule_violations = 0;
+    int inter_layer_violations = 0;
+};
+
+// ── Context-dependent rules ──────────────────────────────────────────────
+
+struct ContextRule {
+    std::string name;
+    std::string layer;
+    double spacing = 0.0;
+    double min_width = 0.0;
+    std::string context;        // "parallel_run", "end_of_line", "corner"
+    double context_distance = 0.0;
+};
+
+// ── Layer-to-layer interaction rules ─────────────────────────────────────
+
+struct InterLayerRule {
+    std::string layer1;
+    std::string layer2;
+    double min_spacing = 0.0;
+    double min_enclosure = 0.0;
+    std::string type;           // "spacing", "enclosure", "extension"
 };
 
 class DrcEngine {
@@ -274,6 +299,16 @@ public:
 
     // ── Enhanced DRC run with all new checks ─────────────────────────
     DrcResult run_enhanced();
+
+    // ── Context-dependent rules ──────────────────────────────────────
+    std::vector<ContextRule> context_rules;
+    void add_context_rule(const ContextRule& rule);
+    int check_context_rules(DrcResult& r);
+
+    // ── Layer-to-layer interaction rules ─────────────────────────────
+    std::vector<InterLayerRule> inter_layer_rules;
+    void add_inter_layer_rule(const InterLayerRule& rule);
+    int check_inter_layer_rules(DrcResult& r);
 
 private:
     std::vector<ViaEnclosureRule> via_enclosure_rules_;
