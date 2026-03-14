@@ -957,4 +957,292 @@ RetimingEngine::SeqOptResult RetimingEngine::sequential_optimize(Netlist& nl, in
     return res;
 }
 
+// ============================================================================
+// Register Merging — remove redundant DFFs with identical D/CLK inputs
+// ============================================================================
+
+RetimingEngine::RegMergeResult RetimingEngine::merge_redundant_registers(Netlist& nl) {
+    RegMergeResult res;
+    const auto& dffs = nl.flip_flops();
+    res.registers_before = static_cast<int>(dffs.size());
+
+    if (dffs.size() < 2) {
+        res.registers_after = res.registers_before;
+        res.report = "RegMerge: fewer than 2 DFFs, nothing to merge";
+        return res;
+    }
+
+    // Build signature map: (D_net, CLK_net) → list of DFF gate IDs
+    // DFFs with identical D and CLK inputs are merge candidates
+    struct DffSig {
+        NetId d_net;
+        NetId clk_net;
+        bool operator==(const DffSig& o) const { return d_net == o.d_net && clk_net == o.clk_net; }
+    };
+    struct SigHash {
+        size_t operator()(const DffSig& s) const {
+            return std::hash<int64_t>()(
+                (static_cast<int64_t>(s.d_net) << 32) | static_cast<int64_t>(s.clk_net));
+        }
+    };
+
+    std::unordered_map<DffSig, std::vector<GateId>, SigHash> sig_map;
+
+    for (auto gid : dffs) {
+        auto& g = nl.gate(gid);
+        if (g.type != GateType::DFF) continue;
+        if (g.inputs.empty()) continue;
+
+        // DFF has D as first input, CLK stored in .clk
+        NetId d_net = g.inputs[0];
+        NetId clk_net = g.clk;
+
+        // Skip DFFs in the don't-retime set
+        if (dont_retime_.count(gid)) continue;
+
+        sig_map[{d_net, clk_net}].push_back(gid);
+    }
+
+    // For each group of DFFs with identical signatures, keep one and redirect others
+    const double dff_area = 6.0; // estimated DFF area in um²
+    int total_merged = 0;
+
+    for (auto& [sig, group] : sig_map) {
+        if (group.size() < 2) continue;
+
+        // Keep the first DFF as the "survivor"
+        GateId survivor = group[0];
+        NetId survivor_q = nl.gate(survivor).output;
+
+        for (size_t i = 1; i < group.size(); ++i) {
+            GateId dup = group[i];
+            auto& dup_gate = nl.gate(dup);
+            NetId dup_q = dup_gate.output;
+
+            // Redirect all fanout of the duplicate Q net to the survivor Q net
+            if (dup_q >= 0 && survivor_q >= 0) {
+                auto& dup_net = nl.net(dup_q);
+                std::vector<GateId> fanout_copy = dup_net.fanout;
+                for (auto fanout_gid : fanout_copy) {
+                    auto& fg = nl.gate(fanout_gid);
+                    for (auto& inp : fg.inputs) {
+                        if (inp == dup_q) inp = survivor_q;
+                    }
+                }
+            }
+
+            // Deactivate the duplicate DFF (mark as BUF with no inputs)
+            dup_gate.type = GateType::BUF;
+            dup_gate.inputs.clear();
+            dup_gate.clk = -1;
+            total_merged++;
+        }
+    }
+
+    res.merges_performed = total_merged;
+    res.registers_after = res.registers_before - total_merged;
+    res.area_saved = total_merged * dff_area;
+
+    std::cout << "[Retiming] RegMerge: " << res.registers_before << " DFFs -> "
+              << res.registers_after << " DFFs (" << total_merged
+              << " merged, " << res.area_saved << " um² saved)\n";
+
+    res.report = "RegMerge: " + std::to_string(total_merged) + " redundant DFFs merged, "
+               + std::to_string(res.registers_before) + " -> "
+               + std::to_string(res.registers_after) + " registers, "
+               + std::to_string(res.area_saved) + " um² area saved";
+    return res;
+}
+
+// ============================================================================
+// Pipeline Balancing — equalize combinational depth between register stages
+// ============================================================================
+
+RetimingEngine::RegBalanceResult RetimingEngine::balance_pipeline(Netlist& nl, int target_stages) {
+    RegBalanceResult res;
+
+    const auto& dffs = nl.flip_flops();
+    if (dffs.empty()) {
+        res.report = "PipeBalance: no DFFs in design";
+        return res;
+    }
+
+    // Build a combinational depth map from PIs and DFF outputs (stage boundaries)
+    // to the next DFF inputs (next stage boundary)
+    std::unordered_map<GateId, int> gate_depth; // gate -> comb depth from nearest upstream reg
+    std::unordered_set<NetId> stage_starts;      // nets that start a comb stage (PI or DFF Q)
+
+    // Mark PI nets and DFF Q outputs as stage start boundaries
+    for (auto pi : nl.primary_inputs()) stage_starts.insert(pi);
+    for (auto gid : dffs) {
+        auto& g = nl.gate(gid);
+        if (g.output >= 0) stage_starts.insert(g.output);
+    }
+
+    // Topological traversal to compute depth of each comb gate
+    auto topo = nl.topo_order();
+    for (auto gid : topo) {
+        auto& g = nl.gate(gid);
+        if (g.type == GateType::DFF || g.type == GateType::INPUT) {
+            gate_depth[gid] = 0;
+            continue;
+        }
+        int max_input_depth = 0;
+        for (auto inp_net : g.inputs) {
+            if (stage_starts.count(inp_net)) {
+                // Directly driven by stage boundary — depth = 1
+                max_input_depth = std::max(max_input_depth, 1);
+            } else {
+                // Check driver gate depth
+                auto& n = nl.net(inp_net);
+                if (n.driver >= 0 && gate_depth.count(n.driver)) {
+                    max_input_depth = std::max(max_input_depth, gate_depth[n.driver] + 1);
+                } else {
+                    max_input_depth = std::max(max_input_depth, 1);
+                }
+            }
+        }
+        gate_depth[gid] = max_input_depth;
+    }
+
+    // Compute per-stage depths: for each DFF, its D-input depth is the stage depth
+    std::vector<int> stage_depths;
+    for (auto gid : dffs) {
+        auto& g = nl.gate(gid);
+        if (g.inputs.empty()) continue;
+        NetId d_net = g.inputs[0];
+        auto& dn = nl.net(d_net);
+        int depth = 0;
+        if (dn.driver >= 0 && gate_depth.count(dn.driver)) {
+            depth = gate_depth[dn.driver];
+        }
+        stage_depths.push_back(std::max(depth, 1));
+    }
+
+    if (stage_depths.empty()) {
+        res.report = "PipeBalance: no measurable pipeline stages";
+        return res;
+    }
+
+    res.stages_before = static_cast<int>(stage_depths.size());
+
+    // Compute imbalance: max stage depth vs. average
+    int max_depth = *std::max_element(stage_depths.begin(), stage_depths.end());
+    int min_depth = *std::min_element(stage_depths.begin(), stage_depths.end());
+    double avg_depth = 0;
+    for (int d : stage_depths) avg_depth += d;
+    avg_depth /= static_cast<double>(stage_depths.size());
+
+    double imbalance = (max_depth > 0) ? static_cast<double>(max_depth - min_depth) / max_depth : 0;
+
+    std::cout << "[Retiming] PipeBalance: " << stage_depths.size() << " stages, depth range ["
+              << min_depth << ", " << max_depth << "], avg=" << avg_depth
+              << ", imbalance=" << (imbalance * 100) << "%\n";
+
+    // If imbalance ≤ 20%, no redistribution needed
+    if (imbalance <= 0.20) {
+        res.stages_balanced = res.stages_before;
+        res.throughput_improvement_pct = 0;
+        res.report = "PipeBalance: stages balanced (imbalance " +
+                     std::to_string(static_cast<int>(imbalance * 100)) + "% <= 20%)";
+        return res;
+    }
+
+    // Determine target depth per stage
+    int tgt = (target_stages > 0) ? target_stages : static_cast<int>(std::ceil(avg_depth));
+    if (tgt < 1) tgt = 1;
+
+    // Use retiming to redistribute: for each overly deep stage, attempt
+    // forward retiming to push registers deeper; for shallow stages,
+    // attempt backward retiming to pull registers earlier
+    build_graph(nl);
+    if (nodes_.empty() || edges_.empty()) {
+        res.report = "PipeBalance: could not build retiming graph";
+        return res;
+    }
+
+    detect_clock_gating(nl);
+    detect_reset_paths(nl);
+    freeze_dont_retime_cells();
+
+    double original_cp = compute_critical_path();
+    if (original_cp <= 0) {
+        res.report = "PipeBalance: zero critical path";
+        return res;
+    }
+
+    // Target period: scale to equalize stages (reduce max depth impact)
+    double target_period = original_cp * (avg_depth / max_depth);
+    target_period = std::max(target_period, avg_depth); // floor to average
+
+    // Reset r-values and attempt retiming to the balanced target
+    for (auto& n : nodes_) n.r_val = 0;
+    bool feasible = compute_retiming_values(target_period);
+    int balanced_count = 0;
+
+    if (feasible) {
+        int changes = apply_retiming(nl);
+        if (changes > 0) {
+            // Recompute stage depths after retiming
+            gate_depth.clear();
+            auto topo2 = nl.topo_order();
+            stage_starts.clear();
+            for (auto pi : nl.primary_inputs()) stage_starts.insert(pi);
+            for (auto gid2 : nl.flip_flops()) {
+                auto& g2 = nl.gate(gid2);
+                if (g2.output >= 0) stage_starts.insert(g2.output);
+            }
+            for (auto gid2 : topo2) {
+                auto& g2 = nl.gate(gid2);
+                if (g2.type == GateType::DFF || g2.type == GateType::INPUT) {
+                    gate_depth[gid2] = 0;
+                    continue;
+                }
+                int mxd = 0;
+                for (auto inp_net : g2.inputs) {
+                    if (stage_starts.count(inp_net)) {
+                        mxd = std::max(mxd, 1);
+                    } else {
+                        auto& nn = nl.net(inp_net);
+                        if (nn.driver >= 0 && gate_depth.count(nn.driver))
+                            mxd = std::max(mxd, gate_depth[nn.driver] + 1);
+                        else
+                            mxd = std::max(mxd, 1);
+                    }
+                }
+                gate_depth[gid2] = mxd;
+            }
+
+            // Recompute post-balance max depth
+            int new_max = 0;
+            for (auto gid2 : nl.flip_flops()) {
+                auto& g2 = nl.gate(gid2);
+                if (g2.inputs.empty()) continue;
+                auto& dn2 = nl.net(g2.inputs[0]);
+                int d = (dn2.driver >= 0 && gate_depth.count(dn2.driver))
+                        ? gate_depth[dn2.driver] : 1;
+                new_max = std::max(new_max, d);
+            }
+
+            balanced_count = static_cast<int>(nl.flip_flops().size());
+            double new_throughput = (new_max > 0) ? 1.0 / new_max : 0;
+            double old_throughput = (max_depth > 0) ? 1.0 / max_depth : 0;
+            if (old_throughput > 0)
+                res.throughput_improvement_pct =
+                    (new_throughput - old_throughput) / old_throughput * 100.0;
+        }
+    }
+
+    res.stages_balanced = (balanced_count > 0) ? balanced_count : res.stages_before;
+
+    std::cout << "[Retiming] PipeBalance: redistribution "
+              << (feasible ? "succeeded" : "infeasible")
+              << ", throughput improvement: " << res.throughput_improvement_pct << "%\n";
+
+    res.report = "PipeBalance: " + std::to_string(res.stages_before) + " stages, imbalance "
+               + std::to_string(static_cast<int>(imbalance * 100)) + "% -> balanced"
+               + ", throughput +" + std::to_string(static_cast<int>(res.throughput_improvement_pct)) + "%";
+    return res;
+}
+
 } // namespace sf

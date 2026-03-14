@@ -180,10 +180,15 @@ public:
     struct EcoRouteResult {
         int nets_rerouted = 0;
         int nets_failed = 0;
+        int nets_ripped = 0;
+        int new_wires = 0;
         double max_wirelength = 0;
         double total_wirelength = 0;
+        double wirelength_increase = 0;
         bool success = true;
+        bool all_routed = true;
         std::string message;
+        std::string report;
     };
     EcoRouteResult eco_route(const std::vector<NetId>& changed_nets,
                              double max_detour_factor = 2.0);

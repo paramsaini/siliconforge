@@ -134,6 +134,25 @@ public:
     };
     SeqOptResult sequential_optimize(Netlist& nl, int max_iter = 5);
 
+    // Register merging — remove redundant DFFs
+    struct RegMergeResult {
+        int registers_before = 0;
+        int registers_after = 0;
+        int merges_performed = 0;
+        double area_saved = 0;
+        std::string report;
+    };
+    RegMergeResult merge_redundant_registers(Netlist& nl);
+
+    // Pipeline balancing — equalize comb depth between stages
+    struct RegBalanceResult {
+        int stages_before = 0;
+        int stages_balanced = 0;
+        double throughput_improvement_pct = 0;
+        std::string report;
+    };
+    RegBalanceResult balance_pipeline(Netlist& nl, int target_stages = 0);
+
 private:
     RetimingConfig config_;
     const LibertyLibrary* lib_ = nullptr;
