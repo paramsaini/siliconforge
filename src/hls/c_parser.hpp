@@ -74,6 +74,18 @@ struct PipelineStage {
     int initiation_interval = 1;
 };
 
+// Array type for HLS
+struct HlsArrayType {
+    std::string element_type;
+    int size = 0;
+};
+
+// Struct type for HLS
+struct HlsStructType {
+    std::string name;
+    std::vector<std::pair<std::string, std::string>> fields; // name, type
+};
+
 // HLS scheduling and synthesis configuration
 struct HlsConfig {
     int target_clock_mhz = 100;
@@ -106,14 +118,22 @@ class CParser {
 public:
     std::vector<CfgBlock> parse(const std::string& source);
 
+    // Access parsed type information
+    const std::vector<HlsArrayType>& array_types() const { return array_types_; }
+    const std::vector<HlsStructType>& struct_types() const { return struct_types_; }
+
 private:
     int id_counter_ = 0;
     int block_counter_ = 0;
+    std::vector<HlsArrayType> array_types_;
+    std::vector<HlsStructType> struct_types_;
     std::vector<std::string> tokenize(const std::string& src) const;
     int parse_block(const std::vector<std::string>& tokens, size_t& i,
                     std::vector<CfgBlock>& blocks, std::map<std::string,int>& var_map);
     int parse_expr(const std::vector<std::string>& tokens, size_t& i,
                    CfgBlock& block, std::map<std::string,int>& var_map);
+    void parse_array_decl(const std::vector<std::string>& tokens, size_t& i);
+    void parse_struct_decl(const std::vector<std::string>& tokens, size_t& i);
 };
 
 class HlsScheduler {

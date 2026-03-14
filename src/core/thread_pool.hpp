@@ -14,6 +14,8 @@
 
 namespace sf {
 
+enum class TaskPriority { LOW, NORMAL, HIGH, CRITICAL };
+
 class ThreadPool {
 public:
     explicit ThreadPool(unsigned num_threads = 0)
@@ -42,6 +44,14 @@ public:
     auto submit(F&& f, Args&&... args)
         -> std::future<std::invoke_result_t<F, Args...>>
     {
+        return submit_with_priority(TaskPriority::NORMAL, std::forward<F>(f), std::forward<Args>(args)...);
+    }
+
+    // Submit with explicit priority
+    template<typename F, typename... Args>
+    auto submit_with_priority(TaskPriority priority, F&& f, Args&&... args)
+        -> std::future<std::invoke_result_t<F, Args...>>
+    {
         using ReturnType = std::invoke_result_t<F, Args...>;
         auto task = std::make_shared<std::packaged_task<ReturnType()>>(
             std::bind(std::forward<F>(f), std::forward<Args>(args)...)
@@ -49,7 +59,7 @@ public:
         auto fut = task->get_future();
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);
-            tasks_.emplace([task]() { (*task)(); });
+            tasks_.push({static_cast<int>(priority), task_seq_++, [task]() { (*task)(); }});
         }
         cv_.notify_one();
         return fut;
@@ -81,18 +91,29 @@ private:
                 std::unique_lock<std::mutex> lock(queue_mutex_);
                 cv_.wait(lock, [this] { return stop_ || !tasks_.empty(); });
                 if (stop_ && tasks_.empty()) return;
-                task = std::move(tasks_.front());
+                task = std::move(tasks_.top().func);
                 tasks_.pop();
             }
             task();
         }
     }
 
+    struct PrioritizedTask {
+        int priority;       // higher = more urgent
+        uint64_t seq;       // tie-break: lower seq = earlier submission
+        std::function<void()> func;
+        bool operator<(const PrioritizedTask& o) const {
+            if (priority != o.priority) return priority < o.priority;
+            return seq > o.seq; // earlier tasks first
+        }
+    };
+
     std::vector<std::thread> workers_;
-    std::queue<std::function<void()>> tasks_;
+    std::priority_queue<PrioritizedTask> tasks_;
     std::mutex queue_mutex_;
     std::condition_variable cv_;
     bool stop_;
+    uint64_t task_seq_ = 0;
 };
 
 } // namespace sf

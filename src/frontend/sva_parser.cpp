@@ -158,11 +158,18 @@ std::shared_ptr<SvaNode> SvaParser::parse_binary(
 
 std::vector<SvaProperty> SvaParser::parse(const std::string& source) {
     std::vector<SvaProperty> props;
+    sequences_.clear();
     auto tokens = tokenize(source);
 
     size_t i = 0;
     while (i < tokens.size()) {
         bool is_assert = false, is_assume = false, is_cover = false;
+
+        // Recognize sequence declarations
+        if (tokens[i] == "sequence" && i + 1 < tokens.size()) {
+            parse_sequence_decl(tokens, i);
+            continue;
+        }
 
         if (tokens[i] == "assert" && i + 1 < tokens.size() && tokens[i+1] == "property") {
             is_assert = true; i += 2;
@@ -216,6 +223,36 @@ std::vector<SvaProperty> SvaParser::parse(const std::string& source) {
         if (prop.expr) props.push_back(prop);
     }
     return props;
+}
+
+void SvaParser::parse_sequence_decl(const std::vector<std::string>& tokens, size_t& pos) {
+    // sequence name (args) ; body ; endsequence
+    pos++; // skip 'sequence'
+    SvaSequence seq;
+    if (pos < tokens.size()) seq.name = tokens[pos++];
+
+    // Parse optional formal arguments in parentheses
+    if (pos < tokens.size() && tokens[pos] == "(") {
+        pos++;
+        while (pos < tokens.size() && tokens[pos] != ")") {
+            if (tokens[pos] != ",") seq.arguments.push_back(tokens[pos]);
+            pos++;
+        }
+        if (pos < tokens.size()) pos++; // skip ')'
+    }
+    if (pos < tokens.size() && tokens[pos] == ";") pos++;
+
+    // Collect expression body until endsequence
+    std::string expr;
+    while (pos < tokens.size() && tokens[pos] != "endsequence") {
+        if (tokens[pos] == ";") { pos++; continue; }
+        if (!expr.empty()) expr += " ";
+        expr += tokens[pos++];
+    }
+    if (pos < tokens.size()) pos++; // skip 'endsequence'
+
+    seq.expression = expr;
+    sequences_.push_back(std::move(seq));
 }
 
 } // namespace sf

@@ -60,6 +60,12 @@ private:
     // Industrial: arrays (name → {key → value})
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> arrays_;
 
+    // TCL dict storage
+    struct TclDict {
+        std::unordered_map<std::string, std::string> entries;
+    };
+    std::unordered_map<std::string, TclDict> dicts_;
+
     // Industrial: namespaces
     std::string current_ns_ = "::";
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> ns_vars_;
@@ -115,6 +121,8 @@ private:
     std::string cmd_namespace(const std::vector<std::string>& args);
     std::string cmd_global(const std::vector<std::string>& args);
     std::string cmd_upvar(const std::vector<std::string>& args);
+    std::string cmd_uplevel(const std::vector<std::string>& args);
+    std::string cmd_dict(const std::vector<std::string>& args);
     std::string cmd_unset(const std::vector<std::string>& args);
     std::string cmd_concat(const std::vector<std::string>& args);
     std::string cmd_eval_cmd(const std::vector<std::string>& args);

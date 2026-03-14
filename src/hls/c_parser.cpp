@@ -221,8 +221,59 @@ std::vector<CfgBlock> CParser::parse(const std::string& source) {
     std::vector<CfgBlock> blocks;
     std::map<std::string, int> var_map;
     size_t i = 0;
+
+    // Pre-scan for struct and array declarations
+    while (i < tokens.size()) {
+        if (tokens[i] == "struct") {
+            parse_struct_decl(tokens, i);
+            continue;
+        }
+        // Detect array declarations: type name [ size ]
+        if (i + 3 < tokens.size() && tokens[i + 2] == "[") {
+            parse_array_decl(tokens, i);
+            continue;
+        }
+        break;
+    }
+
     parse_block(tokens, i, blocks, var_map);
     return blocks;
+}
+
+void CParser::parse_array_decl(const std::vector<std::string>& tokens, size_t& i) {
+    // type name [ size ] ;
+    HlsArrayType arr;
+    arr.element_type = tokens[i]; i++;
+    i++; // skip name
+    if (i < tokens.size() && tokens[i] == "[") i++;
+    if (i < tokens.size()) {
+        try { arr.size = std::stoi(tokens[i]); } catch (...) { arr.size = 0; }
+        i++;
+    }
+    if (i < tokens.size() && tokens[i] == "]") i++;
+    if (i < tokens.size() && tokens[i] == ";") i++;
+    array_types_.push_back(std::move(arr));
+}
+
+void CParser::parse_struct_decl(const std::vector<std::string>& tokens, size_t& i) {
+    // struct name { type1 field1 ; type2 field2 ; } ;
+    i++; // skip 'struct'
+    HlsStructType st;
+    if (i < tokens.size()) st.name = tokens[i++];
+    if (i < tokens.size() && tokens[i] == "{") i++;
+    while (i < tokens.size() && tokens[i] != "}") {
+        if (i + 1 < tokens.size() && tokens[i] != ";") {
+            std::string ftype = tokens[i++];
+            std::string fname = tokens[i++];
+            st.fields.emplace_back(fname, ftype);
+            if (i < tokens.size() && tokens[i] == ";") i++;
+        } else {
+            i++;
+        }
+    }
+    if (i < tokens.size() && tokens[i] == "}") i++;
+    if (i < tokens.size() && tokens[i] == ";") i++;
+    struct_types_.push_back(std::move(st));
 }
 
 // ============================================================================

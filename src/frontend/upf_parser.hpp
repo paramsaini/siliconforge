@@ -95,6 +95,16 @@ struct PowerStateTable {
     std::vector<PowerState> states;
 };
 
+// ── Advanced isolation with multi-supply ─────────────────────────────────
+
+struct UpfIsolationStrategy {
+    std::string name;
+    std::string domain;
+    std::string isolation_signal;
+    std::string clamp_value;       // "0", "1", "latch", "high_impedance"
+    std::string location;          // "parent", "self", "fanout"
+};
+
 // ── Top-level UPF data model ────────────────────────────────────────────
 
 struct UpfDesign {
@@ -107,6 +117,7 @@ struct UpfDesign {
     std::vector<LevelShifter> level_shifters;
     std::vector<RetentionStrategy> retentions;
     std::vector<PowerStateTable> state_tables;
+    std::vector<UpfIsolationStrategy> advanced_isolations;
     std::vector<std::string> errors;
     std::vector<std::string> warnings;
 
@@ -158,6 +169,7 @@ private:
     void parse_add_power_state(const std::vector<std::string>& args, UpfDesign& upf, int line);
     void parse_create_pst(const std::vector<std::string>& args, UpfDesign& upf, int line);
     void parse_add_pst_state(const std::vector<std::string>& args, UpfDesign& upf, int line);
+    void parse_set_isolation_strategy(const std::vector<std::string>& args, UpfDesign& upf, int line);
 
     void error(UpfDesign& upf, int line, const std::string& msg);
     void warn(UpfDesign& upf, int line, const std::string& msg);

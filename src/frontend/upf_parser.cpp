@@ -507,6 +507,7 @@ UpfDesign UpfParser::parse_string(const std::string& content) {
         else if (name == "add_power_state")       parse_add_power_state(cmd.args, upf, cmd.line_number);
         else if (name == "create_pst")            parse_create_pst(cmd.args, upf, cmd.line_number);
         else if (name == "add_pst_state")         parse_add_pst_state(cmd.args, upf, cmd.line_number);
+        else if (name == "set_isolation_strategy") parse_set_isolation_strategy(cmd.args, upf, cmd.line_number);
         // Skip unknown commands gracefully
     }
     return upf;
@@ -977,6 +978,39 @@ void UpfChecker::check_netlist_coverage(const UpfDesign& upf, const Netlist& nl,
                              "' has no isolation strategy — signals crossing boundary"
                              " may be unprotected");
     }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  Advanced isolation strategy (multi-supply)
+// ════════════════════════════════════════════════════════════════════════
+
+void UpfParser::parse_set_isolation_strategy(const std::vector<std::string>& args,
+                                             UpfDesign& upf, int line) {
+    if (args.size() < 2) { error(upf, line, "set_isolation_strategy: missing name"); return; }
+    UpfIsolationStrategy strat;
+    strat.name = args[1];
+    strat.domain = get_flag(args, "-domain");
+    strat.isolation_signal = get_flag(args, "-isolation_signal");
+    strat.clamp_value = get_flag(args, "-clamp_value", "0");
+    strat.location = get_flag(args, "-location", "parent");
+
+    // Validate clamp_value
+    if (strat.clamp_value != "0" && strat.clamp_value != "1" &&
+        strat.clamp_value != "latch" && strat.clamp_value != "high_impedance") {
+        warn(upf, line, "set_isolation_strategy '" + strat.name +
+             "': unrecognized clamp_value '" + strat.clamp_value + "'");
+    }
+
+    // Validate location
+    if (strat.location != "parent" && strat.location != "self" && strat.location != "fanout") {
+        warn(upf, line, "set_isolation_strategy '" + strat.name +
+             "': unrecognized location '" + strat.location + "'");
+    }
+
+    if (strat.domain.empty())
+        warn(upf, line, "set_isolation_strategy '" + strat.name + "': no -domain specified");
+
+    upf.advanced_isolations.push_back(std::move(strat));
 }
 
 } // namespace sf

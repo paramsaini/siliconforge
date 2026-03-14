@@ -403,6 +403,8 @@ void TclInterp::register_builtins() {
     register_command("namespace", [this](auto& a) { return cmd_namespace(a); });
     register_command("global", [this](auto& a) { return cmd_global(a); });
     register_command("upvar", [this](auto& a) { return cmd_upvar(a); });
+    register_command("uplevel", [this](auto& a) { return cmd_uplevel(a); });
+    register_command("dict", [this](auto& a) { return cmd_dict(a); });
     register_command("unset", [this](auto& a) { return cmd_unset(a); });
     register_command("concat", [this](auto& a) { return cmd_concat(a); });
     register_command("eval", [this](auto& a) { return cmd_eval_cmd(a); });
@@ -1061,6 +1063,82 @@ std::string TclInterp::cmd_upvar(const std::vector<std::string>& args) {
     std::string mine = args[idx + 1];
     // Copy the value (simplified — real TCL uses reference)
     vars_[mine] = get_var(other);
+    return "";
+}
+
+std::string TclInterp::cmd_uplevel(const std::vector<std::string>& args) {
+    // uplevel ?level? script
+    // Simplified: evaluate script in the caller's context
+    if (args.empty()) return "";
+    size_t idx = 0;
+    // Skip optional level argument
+    if (args.size() >= 2 && (args[0] == "1" || args[0] == "#0")) idx = 1;
+    std::string script;
+    for (size_t i = idx; i < args.size(); i++) {
+        if (!script.empty()) script += " ";
+        script += args[i];
+    }
+    return eval(script);
+}
+
+std::string TclInterp::cmd_dict(const std::vector<std::string>& args) {
+    if (args.empty()) return "";
+    const std::string& subcmd = args[0];
+
+    if (subcmd == "create") {
+        // dict create ?key value ...? — returns a dict variable name
+        // Usage: set d [dict create k1 v1 k2 v2]
+        // We store pairs in a flat string representation: "k1 v1 k2 v2"
+        std::string result;
+        for (size_t i = 1; i < args.size(); i++) {
+            if (!result.empty()) result += " ";
+            result += args[i];
+        }
+        return result;
+    }
+
+    if (subcmd == "get" && args.size() >= 3) {
+        // dict get dictValue key
+        auto items = tokenize(args[1]);
+        const std::string& key = args[2];
+        for (size_t i = 0; i + 1 < items.size(); i += 2) {
+            if (items[i] == key) return items[i + 1];
+        }
+        return "";
+    }
+
+    if (subcmd == "set" && args.size() >= 4) {
+        // dict set dictVariable key value
+        // Modify a dict stored in a variable
+        const std::string& varname = args[1];
+        const std::string& key = args[2];
+        const std::string& value = args[3];
+        std::string cur = has_var(varname) ? get_var(varname) : "";
+        auto items = tokenize(cur);
+        bool found = false;
+        for (size_t i = 0; i + 1 < items.size(); i += 2) {
+            if (items[i] == key) { items[i + 1] = value; found = true; break; }
+        }
+        if (!found) { items.push_back(key); items.push_back(value); }
+        std::string result;
+        for (size_t i = 0; i < items.size(); i++) {
+            if (i > 0) result += " ";
+            result += items[i];
+        }
+        set_var(varname, result);
+        return result;
+    }
+
+    if (subcmd == "exists" && args.size() >= 3) {
+        // dict exists dictValue key
+        auto items = tokenize(args[1]);
+        const std::string& key = args[2];
+        for (size_t i = 0; i + 1 < items.size(); i += 2) {
+            if (items[i] == key) return "1";
+        }
+        return "0";
+    }
+
     return "";
 }
 
