@@ -19,6 +19,7 @@ struct PowerResult {
     double internal_power_mw = 0;
     double clock_power_mw = 0;
     double glitch_power_mw = 0;    // spurious transition power
+    double short_circuit_power_mw = 0;  // mW — Isc during simultaneous PMOS/NMOS conduction
     double clock_freq_mhz = 0;
     double supply_voltage = 1.8;
     int num_cells = 0;
@@ -152,6 +153,7 @@ private:
     double net_capacitance(NetId nid) const;
     double glitch_activity(GateId gid, double base_activity) const;
     double gate_vdd(GateId gid, double default_vdd) const;
+    double cell_short_circuit(GateId gid, double freq, double vdd, double activity) const;
 };
 
 } // namespace sf

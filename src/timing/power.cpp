@@ -76,6 +76,54 @@ double PowerAnalyzer::gate_vdd(GateId gid, double default_vdd) const {
     return (it != voltage_domains_.end()) ? it->second : default_vdd;
 }
 
+// Short-circuit power: Isc during simultaneous PMOS/NMOS conduction on input transitions.
+// Model: P_sc = K_sc * Vdd * (slew_time / rise_time) * frequency * width_factor * activity
+double PowerAnalyzer::cell_short_circuit(GateId gid, double freq, double vdd, double activity) const {
+    constexpr double K_sc = 0.1; // empirical short-circuit constant
+    auto& g = nl_.gate(gid);
+    if (g.output < 0 || g.inputs.empty()) return 0;
+
+    // Width factor: scales with gate complexity (number of stacked transistors)
+    double width_factor = 1.0;
+    switch (g.type) {
+        case GateType::BUF:  case GateType::NOT:  width_factor = 1.0; break;
+        case GateType::AND:  case GateType::NAND:  width_factor = 1.0 + 0.2 * (g.inputs.size() - 1); break;
+        case GateType::OR:   case GateType::NOR:   width_factor = 1.0 + 0.2 * (g.inputs.size() - 1); break;
+        case GateType::XOR:  case GateType::XNOR:  width_factor = 1.8; break;
+        case GateType::MUX:                         width_factor = 2.0; break;
+        case GateType::DFF:                          width_factor = 0.5; break;
+        default: width_factor = 1.0; break;
+    }
+
+    // Slew time and rise time from Liberty data (fall back to defaults)
+    double slew_time = 0.1; // ns default
+    double rise_time = 0.05; // ns default
+    if (lib_) {
+        std::string type_str = gate_type_str(g.type);
+        int num_in = (int)g.inputs.size();
+        std::string candidates[] = {
+            type_str + std::to_string(num_in), type_str, type_str + "_X1"
+        };
+        for (auto& cand : candidates) {
+            if (auto* cell = lib_->find_cell(cand)) {
+                for (auto& t : cell->timings) {
+                    if (t.rise_transition > 0) slew_time = t.rise_transition;
+                    if (t.cell_rise > 0) rise_time = t.cell_rise;
+                    break;
+                }
+                break;
+            }
+        }
+    }
+    if (rise_time <= 0) rise_time = 0.05;
+    double slew_ratio = slew_time / rise_time;
+    slew_ratio = std::min(slew_ratio, 5.0); // cap extreme ratios
+
+    // P_sc = K_sc * Vdd * slew_ratio * freq_Hz * width_factor * activity  (in mW)
+    double p_sc = K_sc * vdd * slew_ratio * (freq * 1e6) * width_factor * activity;
+    return p_sc * 1e-9; // scale to mW (same convention as cell_dynamic)
+}
+
 double PowerAnalyzer::cell_dynamic(GateId gid, double freq, double vdd, double activity) const {
     auto& g = nl_.gate(gid);
     if (g.output < 0) return 0;
@@ -243,10 +291,14 @@ PowerResult PowerAnalyzer::analyze(double clock_freq_mhz, double supply_voltage,
             glitch_mw = glitch_alpha * c_load * cell_vdd * cell_vdd * clock_freq_mhz * 1e6 * 1e-9;
         }
 
+        // Short-circuit power (Isc)
+        double sc_mw = cell_short_circuit(gid, clock_freq_mhz, cell_vdd, cell_activity);
+
         result.static_power_mw += leakage_mw;
         result.switching_power_mw += dynamic_mw;
         result.internal_power_mw += internal_mw;
         result.glitch_power_mw += glitch_mw;
+        result.short_circuit_power_mw += sc_mw;
 
         // Clock power: DFF toggle + clock buffer estimation
         if (g.type == GateType::DFF) {
@@ -257,8 +309,8 @@ PowerResult PowerAnalyzer::analyze(double clock_freq_mhz, double supply_voltage,
 
         cell_powers.push_back({
             g.name.empty() ? ("g" + std::to_string(gid)) : g.name,
-            dynamic_mw + internal_mw + glitch_mw, leakage_mw,
-            dynamic_mw + internal_mw + leakage_mw + glitch_mw
+            dynamic_mw + internal_mw + glitch_mw + sc_mw, leakage_mw,
+            dynamic_mw + internal_mw + leakage_mw + glitch_mw + sc_mw
         });
         result.num_cells++;
     }
@@ -274,7 +326,7 @@ PowerResult PowerAnalyzer::analyze(double clock_freq_mhz, double supply_voltage,
     }
 
     result.dynamic_power_mw = result.switching_power_mw + result.internal_power_mw +
-                               result.glitch_power_mw;
+                               result.glitch_power_mw + result.short_circuit_power_mw;
     result.total_power_mw = result.dynamic_power_mw + result.static_power_mw +
                              result.clock_power_mw;
 
@@ -290,7 +342,8 @@ PowerResult PowerAnalyzer::analyze(double clock_freq_mhz, double supply_voltage,
                      "(dynamic: " + std::to_string(result.dynamic_power_mw) +
                      ", static: " + std::to_string(result.static_power_mw) +
                      ", clock: " + std::to_string(result.clock_power_mw) +
-                     ", glitch: " + std::to_string(result.glitch_power_mw) + ")";
+                     ", glitch: " + std::to_string(result.glitch_power_mw) +
+                     ", short_circuit: " + std::to_string(result.short_circuit_power_mw) + ")";
     return result;
 }
 
@@ -981,7 +1034,7 @@ PowerResult PowerAnalyzer::run_enhanced() {
 
     // Recalculate totals
     result.dynamic_power_mw = result.switching_power_mw + result.internal_power_mw +
-                               result.glitch_power_mw;
+                               result.glitch_power_mw + result.short_circuit_power_mw;
     result.total_power_mw = result.dynamic_power_mw + result.static_power_mw +
                              result.clock_power_mw;
 
@@ -990,6 +1043,7 @@ PowerResult PowerAnalyzer::run_enhanced() {
                      " stat=" + std::to_string(result.static_power_mw) +
                      " clk=" + std::to_string(result.clock_power_mw) +
                      " glitch=" + std::to_string(result.glitch_power_mw) +
+                     " short_circuit=" + std::to_string(result.short_circuit_power_mw) +
                      " mem=" + std::to_string(mem_total) +
                      " rtl_est=" + std::to_string(rtl.total_mw) +
                      " states=" + std::to_string(states.size()) + ")";
