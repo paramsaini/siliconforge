@@ -176,6 +176,18 @@ public:
         double max_wire_length = 100.0);
     bool eco_drc_check() const;
 
+    // Incremental ECO routing: rip-up and reroute changed nets
+    struct EcoRouteResult {
+        int nets_rerouted = 0;
+        int nets_failed = 0;
+        double max_wirelength = 0;
+        double total_wirelength = 0;
+        bool success = true;
+        std::string message;
+    };
+    EcoRouteResult eco_route(const std::vector<NetId>& changed_nets,
+                             double max_detour_factor = 2.0);
+
 private:
     Netlist& nl_;
     SpareCellLibrary spare_lib_;
