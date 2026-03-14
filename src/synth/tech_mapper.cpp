@@ -1445,6 +1445,11 @@ Netlist TechMapper::map_optimal(const IlpMapConfig& cfg) {
     double lambda = cfg.area_weight;
     Netlist best_nl;
     double best_cost = 1e18;
+    double prev_cost = 1e18;
+    int step_stall = 0;
+    int conv_stall = 0;
+    double step = cfg.lambda_step;
+    double ref_area = 1.0, ref_delay = 1.0;
 
     for (int iter = 0; iter < cfg.lagrangian_iterations; iter++) {
         // For each AIG node, find all matches and select by weighted cost
@@ -1501,8 +1506,47 @@ Netlist TechMapper::map_optimal(const IlpMapConfig& cfg) {
             best_nl = nl;
         }
 
-        // Lagrangian update: adjust lambda toward area/delay balance
-        lambda += cfg.lambda_step * (0.5 - lambda);
+        // Subgradient update: derive area and delay from cost decomposition
+        double total_area = 0.0;
+        for (auto& cm : filtered)
+            total_area += cm.cell->area;
+        double est_delay = (std::abs(1.0 - lambda) > 1e-12)
+            ? (total_cost - lambda * total_area) / (1.0 - lambda)
+            : total_area;
+
+        // Establish reference values on first iteration for normalization
+        if (iter == 0) {
+            ref_area = std::max(total_area, 1e-12);
+            ref_delay = std::max(est_delay, 1e-12);
+        }
+
+        double area_violation = total_area / ref_area - 1.0;
+        double delay_violation = est_delay / ref_delay - 1.0;
+        lambda += step * (area_violation - delay_violation);
+        if (lambda < 0.01) lambda = 0.01;
+        if (lambda > 0.99) lambda = 0.99;
+
+        // Adaptive step size: halve when cost stalls for 2 iterations
+        if (total_cost >= prev_cost) {
+            step_stall++;
+            if (step_stall >= 2) {
+                step *= 0.5;
+                step_stall = 0;
+            }
+        } else {
+            step_stall = 0;
+        }
+
+        // Convergence check: break if relative cost change is tiny for 2 rounds
+        double rel_change = std::abs(prev_cost - total_cost) / std::max(prev_cost, 1e-12);
+        if (rel_change < 1e-4 && iter > 0) {
+            conv_stall++;
+            if (conv_stall >= 2) break;
+        } else {
+            conv_stall = 0;
+        }
+
+        prev_cost = total_cost;
     }
 
     stats_.num_cells = (uint32_t)best_nl.num_gates();

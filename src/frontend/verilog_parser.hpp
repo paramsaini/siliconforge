@@ -13,6 +13,31 @@
 
 namespace sf {
 
+struct SpecifyPath {
+    std::string from_port;
+    std::string to_port;
+    bool is_full_path = true;    // (a => b) vs (a *> b)
+    bool is_posedge = false;
+    bool is_negedge = false;
+    double rise_delay = 0.0;     // ns
+    double fall_delay = 0.0;     // ns
+};
+
+struct SpecifyTimingCheck {
+    enum Type { SETUP, HOLD, RECOVERY, REMOVAL, WIDTH, PERIOD };
+    Type type = SETUP;
+    std::string data_port;
+    std::string ref_port;        // clock or reference signal
+    bool ref_edge_pos = true;    // posedge/negedge of reference
+    double limit_ns = 0.0;       // timing limit value
+};
+
+struct SpecifyBlock {
+    std::vector<SpecifyPath> paths;
+    std::vector<SpecifyTimingCheck> timing_checks;
+    std::unordered_map<std::string, double> specparams; // specparam name → value
+};
+
 struct VerilogParseResult {
     bool success = false;
     std::string module_name;
@@ -22,6 +47,7 @@ struct VerilogParseResult {
     int num_gates = 0;
     int num_ffs = 0;
     std::string error;
+    SpecifyBlock specify_block;
 };
 
 class VerilogParser {
@@ -198,6 +224,7 @@ private:
     size_t parse_function_def(const std::vector<Token>& t, size_t pos);
     size_t parse_task_def(const std::vector<Token>& t, size_t pos);
     size_t parse_generate_case(const std::vector<Token>& t, size_t pos, Netlist& nl, VerilogParseResult& r);
+    size_t parse_specify_block(const std::vector<Token>& t, size_t pos, VerilogParseResult& r);
     std::string preprocess(const std::string& src);
     int eval_const_expr(const std::vector<Token>& t, size_t& pos);
 

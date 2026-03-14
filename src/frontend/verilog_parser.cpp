@@ -2014,10 +2014,7 @@ size_t VerilogParser::parse_module(const std::vector<Token>& t, size_t pos, Netl
             }
         }
         else if (t[pos].type == Token::SPECIFY_KW) {
-            // Skip entire specify...endspecify block
-            pos++;
-            while (pos < t.size() && t[pos].type != Token::ENDSPECIFY_KW) pos++;
-            if (pos < t.size()) pos++;
+            pos = parse_specify_block(t, pos, r);
         }
         else if (t[pos].type == Token::DEFPARAM_KW) {
             // defparam instance.param = value;
@@ -2458,7 +2455,7 @@ VerilogParseResult VerilogParser::parse_string(const std::string& src, Netlist& 
 
 VerilogParseResult VerilogParser::parse_file(const std::string& filename, Netlist& nl) {
     std::ifstream f(filename);
-    if (!f.is_open()) return {false, "", 0, 0, 0, 0, 0, "Cannot open file: " + filename};
+    if (!f.is_open()) return {false, "", 0, 0, 0, 0, 0, "Cannot open file: " + filename, {}};
     std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     return parse_string(src, nl);
 }
@@ -5291,6 +5288,251 @@ std::vector<NetId> StructuralSynthesizer::synth_expr_bus(
         res.push_back(z);
     }
     return res;
+}
+
+// ─── Specify Block Parser ───────────────────────────────────────────────────
+
+size_t VerilogParser::parse_specify_block(const std::vector<Token>& t, size_t pos, VerilogParseResult& r) {
+    // pos points at SPECIFY_KW
+    pos++; // skip 'specify'
+
+    auto skip_to_semi = [&]() {
+        while (pos < t.size() && t[pos].type != Token::SEMI && t[pos].type != Token::ENDSPECIFY_KW)
+            pos++;
+        if (pos < t.size() && t[pos].type == Token::SEMI)
+            pos++;
+    };
+
+    auto parse_double = [&](double& out) -> bool {
+        if (pos >= t.size()) return false;
+        // Handle optional sign
+        double sign = 1.0;
+        if (pos < t.size() && (t[pos].type == Token::MINUS || t[pos].type == Token::PLUS)) {
+            if (t[pos].type == Token::MINUS) sign = -1.0;
+            pos++;
+        }
+        if (pos >= t.size() || t[pos].type != Token::NUMBER) return false;
+        try {
+            out = sign * std::stod(t[pos].value);
+        } catch (...) {
+            return false;
+        }
+        pos++;
+        return true;
+    };
+
+    // Check if next two tokens form '=>' (ASSIGN GT) or '*>' (STAR GT)
+    auto is_path_arrow = [&](size_t p, bool& full_path) -> bool {
+        if (p + 1 >= t.size()) return false;
+        if (t[p].type == Token::ASSIGN && t[p+1].type == Token::GT) {
+            full_path = true;
+            return true;
+        }
+        if (t[p].type == Token::STAR && t[p+1].type == Token::GT) {
+            full_path = false;
+            return true;
+        }
+        return false;
+    };
+
+    while (pos < t.size() && t[pos].type != Token::ENDSPECIFY_KW) {
+        // specparam declarations
+        if (t[pos].type == Token::IDENT && t[pos].value == "specparam") {
+            pos++; // skip 'specparam'
+            // Parse comma-separated list: name = value, name = value ;
+            while (pos < t.size() && t[pos].type != Token::SEMI && t[pos].type != Token::ENDSPECIFY_KW) {
+                if (t[pos].type != Token::IDENT) { skip_to_semi(); break; }
+                std::string name = t[pos].value;
+                pos++;
+                if (pos >= t.size() || t[pos].type != Token::ASSIGN) { skip_to_semi(); break; }
+                pos++; // skip '='
+                double val = 0.0;
+                if (!parse_double(val)) { skip_to_semi(); break; }
+                r.specify_block.specparams[name] = val;
+                if (pos < t.size() && t[pos].type == Token::COMMA) pos++; // skip comma
+            }
+            if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+        }
+        // Timing checks: $setup, $hold, $recovery, $removal, $width, $period
+        else if (t[pos].type == Token::IDENT && t[pos].value.size() > 1 && t[pos].value[0] == '$') {
+            std::string check_name = t[pos].value;
+            SpecifyTimingCheck chk;
+            bool valid = true;
+
+            if (check_name == "$setup") chk.type = SpecifyTimingCheck::SETUP;
+            else if (check_name == "$hold") chk.type = SpecifyTimingCheck::HOLD;
+            else if (check_name == "$recovery") chk.type = SpecifyTimingCheck::RECOVERY;
+            else if (check_name == "$removal") chk.type = SpecifyTimingCheck::REMOVAL;
+            else if (check_name == "$width") chk.type = SpecifyTimingCheck::WIDTH;
+            else if (check_name == "$period") chk.type = SpecifyTimingCheck::PERIOD;
+            else { skip_to_semi(); continue; }
+
+            pos++; // skip $check_name
+            if (pos >= t.size() || t[pos].type != Token::LPAREN) { skip_to_semi(); continue; }
+            pos++; // skip '('
+
+            // For $width/$period: ($width(posedge clk, limit);)
+            // For $setup/$hold etc.: ($setup(data, posedge clk, limit);) or ($setup(data, clk, limit);)
+            if (check_name == "$width" || check_name == "$period") {
+                // First arg: optional edge + signal
+                if (pos < t.size() && (t[pos].type == Token::POSEDGE || t[pos].type == Token::NEGEDGE)) {
+                    chk.ref_edge_pos = (t[pos].type == Token::POSEDGE);
+                    pos++;
+                }
+                if (pos < t.size() && t[pos].type == Token::IDENT) {
+                    chk.ref_port = t[pos].value;
+                    pos++;
+                } else { valid = false; }
+
+                if (valid && pos < t.size() && t[pos].type == Token::COMMA) {
+                    pos++; // skip ','
+                    if (!parse_double(chk.limit_ns)) valid = false;
+                }
+            } else {
+                // First arg: data signal
+                if (pos < t.size() && (t[pos].type == Token::POSEDGE || t[pos].type == Token::NEGEDGE))
+                    pos++; // skip optional edge on data
+                if (pos < t.size() && t[pos].type == Token::IDENT) {
+                    chk.data_port = t[pos].value;
+                    pos++;
+                } else { valid = false; }
+
+                // Skip optional bit-select on data
+                if (valid && pos < t.size() && t[pos].type == Token::LBRACKET) {
+                    while (pos < t.size() && t[pos].type != Token::RBRACKET) pos++;
+                    if (pos < t.size()) pos++;
+                }
+
+                if (valid && pos < t.size() && t[pos].type == Token::COMMA) pos++;
+                else valid = false;
+
+                // Second arg: optional edge + reference signal
+                if (valid && pos < t.size() && (t[pos].type == Token::POSEDGE || t[pos].type == Token::NEGEDGE)) {
+                    chk.ref_edge_pos = (t[pos].type == Token::POSEDGE);
+                    pos++;
+                }
+                if (valid && pos < t.size() && t[pos].type == Token::IDENT) {
+                    chk.ref_port = t[pos].value;
+                    pos++;
+                } else { valid = false; }
+
+                // Skip optional bit-select on ref
+                if (valid && pos < t.size() && t[pos].type == Token::LBRACKET) {
+                    while (pos < t.size() && t[pos].type != Token::RBRACKET) pos++;
+                    if (pos < t.size()) pos++;
+                }
+
+                if (valid && pos < t.size() && t[pos].type == Token::COMMA) pos++;
+                else valid = false;
+
+                // Third arg: timing limit
+                if (valid && !parse_double(chk.limit_ns)) valid = false;
+            }
+
+            // Skip to closing paren
+            while (pos < t.size() && t[pos].type != Token::RPAREN && t[pos].type != Token::SEMI
+                   && t[pos].type != Token::ENDSPECIFY_KW) pos++;
+            if (pos < t.size() && t[pos].type == Token::RPAREN) pos++;
+            if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+
+            if (valid) r.specify_block.timing_checks.push_back(chk);
+        }
+        // Path delay: starts with '('
+        else if (t[pos].type == Token::LPAREN) {
+            size_t start = pos;
+            pos++; // skip '('
+            SpecifyPath path;
+            bool valid = true;
+
+            // Optional edge specifier
+            if (pos < t.size() && (t[pos].type == Token::POSEDGE || t[pos].type == Token::NEGEDGE)) {
+                path.is_posedge = (t[pos].type == Token::POSEDGE);
+                path.is_negedge = (t[pos].type == Token::NEGEDGE);
+                pos++;
+            }
+
+            // Source port
+            if (pos < t.size() && t[pos].type == Token::IDENT) {
+                path.from_port = t[pos].value;
+                pos++;
+            } else { valid = false; }
+
+            // Skip optional bit-select
+            if (valid && pos < t.size() && t[pos].type == Token::LBRACKET) {
+                while (pos < t.size() && t[pos].type != Token::RBRACKET) pos++;
+                if (pos < t.size()) pos++;
+            }
+
+            // Arrow: '=>' or '*>'
+            bool full_path = true;
+            if (valid && is_path_arrow(pos, full_path)) {
+                path.is_full_path = full_path;
+                pos += 2; // skip arrow tokens
+            } else { valid = false; }
+
+            // Destination: either plain ident or '(' Q +: D ')'
+            if (valid && pos < t.size() && t[pos].type == Token::LPAREN) {
+                pos++; // skip inner '('
+                if (pos < t.size() && t[pos].type == Token::IDENT) {
+                    path.to_port = t[pos].value;
+                    pos++;
+                } else { valid = false; }
+                // Skip +: D or -: D or anything until inner ')'
+                while (pos < t.size() && t[pos].type != Token::RPAREN) pos++;
+                if (pos < t.size()) pos++; // skip inner ')'
+            } else if (valid && pos < t.size() && t[pos].type == Token::IDENT) {
+                path.to_port = t[pos].value;
+                pos++;
+                // Skip optional bit-select
+                if (pos < t.size() && t[pos].type == Token::LBRACKET) {
+                    while (pos < t.size() && t[pos].type != Token::RBRACKET) pos++;
+                    if (pos < t.size()) pos++;
+                }
+            } else { valid = false; }
+
+            // Skip to outer closing paren of path spec
+            while (pos < t.size() && t[pos].type != Token::RPAREN
+                   && t[pos].type != Token::SEMI && t[pos].type != Token::ENDSPECIFY_KW) pos++;
+            if (pos < t.size() && t[pos].type == Token::RPAREN) pos++;
+
+            // '=' followed by delay value(s)
+            if (valid && pos < t.size() && t[pos].type == Token::ASSIGN) {
+                pos++; // skip '='
+                if (pos < t.size() && t[pos].type == Token::LPAREN) {
+                    // ( rise, fall ) or ( rise, fall, turnoff )
+                    pos++; // skip '('
+                    if (!parse_double(path.rise_delay)) valid = false;
+                    if (valid && pos < t.size() && t[pos].type == Token::COMMA) {
+                        pos++;
+                        if (!parse_double(path.fall_delay)) valid = false;
+                    } else {
+                        path.fall_delay = path.rise_delay;
+                    }
+                    // Skip any remaining values (turnoff, etc.)
+                    while (pos < t.size() && t[pos].type != Token::RPAREN
+                           && t[pos].type != Token::SEMI && t[pos].type != Token::ENDSPECIFY_KW) pos++;
+                    if (pos < t.size() && t[pos].type == Token::RPAREN) pos++;
+                } else {
+                    // Single delay value
+                    if (!parse_double(path.rise_delay)) valid = false;
+                    path.fall_delay = path.rise_delay;
+                }
+            } else { valid = false; }
+
+            if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+            else skip_to_semi();
+
+            if (valid) r.specify_block.paths.push_back(path);
+        }
+        else {
+            // Unknown item inside specify block — skip to next semicolon
+            skip_to_semi();
+        }
+    }
+
+    // Skip 'endspecify'
+    if (pos < t.size() && t[pos].type == Token::ENDSPECIFY_KW) pos++;
+    return pos;
 }
 
 } // namespace sf
