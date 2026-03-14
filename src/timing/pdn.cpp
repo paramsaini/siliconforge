@@ -463,10 +463,10 @@ void PdnAnalyzer::set_package_model(const PdnPackageModel& pkg) {
 // ── Enhanced: Full Enhanced PDN Run ──────────────────────────────────
 
 PdnResult PdnAnalyzer::run_enhanced() {
-    // 1. Static analysis
+    // 1. Static analysis (spatial IR drop + EM checks)
     PdnResult r = analyze(10);
 
-    // 2. AC impedance profile
+    // 2. AC impedance profile (includes package model)
     auto ac = compute_ac_impedance();
 
     // 3. Target impedance check
@@ -482,6 +482,35 @@ PdnResult PdnAnalyzer::run_enhanced() {
     if (!ti.meets_target) {
         auto decap = optimize_decoupling(0);
         r.total_decap_nf += decap.total_capacitance_nf;
+    }
+
+    // 5. EM-aware IR hotspot fixing: auto-fix if IR drop or EM violations are bad
+    if (r.worst_drop_pct > cfg_.voltage_ripple_pct || r.em_violations > 0) {
+        IrFixConfig fix_cfg;
+        fix_cfg.target_drop_pct = cfg_.voltage_ripple_pct;
+        fix_cfg.max_iterations = 5;
+        fix_cfg.stripe_width = 2.0;
+        fix_cfg.stripe_r_per_um = 0.01;
+        auto fix = fix_ir_hotspots(fix_cfg);
+        if (fix.converged) {
+            // Re-run analysis with fixed stripes
+            PdnResult r2 = analyze(10);
+            r.worst_drop_mv = r2.worst_drop_mv;
+            r.worst_drop_pct = r2.worst_drop_pct;
+            r.avg_drop_mv = r2.avg_drop_mv;
+            r.em_violations = r2.em_violations;
+            r.worst_current_density = r2.worst_current_density;
+            r.nodes = r2.nodes;
+        }
+        r.message += " | IR-fix: " + fix.message;
+    }
+
+    // 6. Final EM signoff check
+    if (r.em_violations > 0) {
+        r.pi_signoff_pass = false;
+        r.pi_summary += " | EM FAIL (" + std::to_string(r.em_violations) + " violations, "
+                       "worst J=" + std::to_string(r.worst_current_density) +
+                       " mA/um, limit=" + std::to_string(cfg_.em_limit_ma_per_um) + ")";
     }
 
     r.message += " [enhanced]";
@@ -500,7 +529,8 @@ IrFixResult PdnAnalyzer::fix_ir_hotspots(IrFixConfig fix_cfg, int grid_res) {
     if (r.worst_drop_pct <= fix_cfg.target_drop_pct) {
         fix.converged = true;
         fix.final_drop_pct = r.worst_drop_pct;
-        fix.message = "IR drop already meets target";
+        fix.message = "IR drop already meets target"
+                      " (EM limit=" + std::to_string(cfg_.em_limit_ma_per_um) + " mA/um)";
         return fix;
     }
 
@@ -515,6 +545,7 @@ IrFixResult PdnAnalyzer::fix_ir_hotspots(IrFixConfig fix_cfg, int grid_res) {
         // Collect hotspot y-coords for horizontal stripes, x-coords for vertical
         bool add_horizontal = (fix.iterations % 2 == 1);
         std::vector<double> hotspot_coords;
+        std::vector<double> hotspot_currents;  // track current at each hotspot
 
         for (auto& node : r.nodes) {
             double node_drop = cfg_.vdd * 1000.0 - node.voltage * 1000.0;
@@ -523,24 +554,40 @@ IrFixResult PdnAnalyzer::fix_ir_hotspots(IrFixConfig fix_cfg, int grid_res) {
                 // Quantize to grid to avoid duplicate stripes
                 double quantized = std::round(coord * 10.0) / 10.0;
                 bool dup = false;
-                for (double c : hotspot_coords) {
-                    if (std::abs(c - quantized) < fix_cfg.stripe_width * 2) {
+                for (size_t k = 0; k < hotspot_coords.size(); ++k) {
+                    if (std::abs(hotspot_coords[k] - quantized) < fix_cfg.stripe_width * 2) {
+                        // Accumulate current for EM sizing
+                        hotspot_currents[k] = std::max(hotspot_currents[k], node.current_draw);
                         dup = true;
                         break;
                     }
                 }
-                if (!dup) hotspot_coords.push_back(quantized);
+                if (!dup) {
+                    hotspot_coords.push_back(quantized);
+                    hotspot_currents.push_back(node.current_draw);
+                }
             }
         }
 
         if (hotspot_coords.empty()) break;
 
-        // Add stripes at hotspot locations
-        for (double coord : hotspot_coords) {
+        // Add stripes at hotspot locations with EM-aware width sizing
+        for (size_t si = 0; si < hotspot_coords.size(); ++si) {
+            double coord = hotspot_coords[si];
+            double local_current = hotspot_currents[si];
+
+            // EM-aware width: ensure current density stays below EM limit
+            // J = I / width  =>  width_min = I / J_max
+            double em_min_width = (cfg_.em_limit_ma_per_um > 0)
+                ? local_current / cfg_.em_limit_ma_per_um : fix_cfg.stripe_width;
+            // Use the larger of user-specified width and EM-required width,
+            // with 20% margin for reliability
+            double stripe_w = std::max(fix_cfg.stripe_width, em_min_width * 1.2);
+
             PdnStripe stripe;
             stripe.direction = add_horizontal ? PdnStripe::HORIZONTAL : PdnStripe::VERTICAL;
             stripe.offset = coord;
-            stripe.width = fix_cfg.stripe_width;
+            stripe.width = stripe_w;
             stripe.layer = fix_cfg.stripe_layer;
             stripe.resistance_per_um = fix_cfg.stripe_r_per_um;
             cfg_.stripes.push_back(stripe);
@@ -560,7 +607,8 @@ IrFixResult PdnAnalyzer::fix_ir_hotspots(IrFixConfig fix_cfg, int grid_res) {
     fix.message = "IR fix: " + std::to_string(fix.stripes_added) + " stripes added over " +
                   std::to_string(fix.iterations) + " iterations, drop " +
                   std::to_string(fix.initial_drop_pct) + "% -> " +
-                  std::to_string(fix.final_drop_pct) + "%";
+                  std::to_string(fix.final_drop_pct) + "%" +
+                  " (EM limit=" + std::to_string(cfg_.em_limit_ma_per_um) + " mA/um)";
     if (fix.converged) fix.message += " (CONVERGED)";
     else fix.message += " (NOT CONVERGED)";
     return fix;

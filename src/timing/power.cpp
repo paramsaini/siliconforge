@@ -423,6 +423,201 @@ bool PowerAnalyzer::load_saif(const std::string& filename) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
+// Vectorless Toggle Rate Propagation
+// Reference: Najm, "Transition Density: A Stochastic Measure of
+//            Activity in Digital Circuits", DAC 1991
+// ══════════════════════════════════════════════════════════════════════
+
+// Propagate toggle rates through combinational logic in topological order.
+// Uses the transition-density model:
+//   AND:  TD(out) = sum_i( TD(i) * prod_{j!=i} P(j) )
+//   OR:   TD(out) = sum_i( TD(i) * prod_{j!=i} (1 - P(j)) )
+//   XOR:  TD(out) = sum( TD(i) )
+//   NOT/BUF: TD(out) = TD(in)
+//   DFF:  TD(out) = TD(d)  (synchronous capture)
+//
+// Static probability P(signal=1) is propagated alongside toggle density:
+//   AND:  P(out) = prod( P(i) )
+//   OR:   P(out) = 1 - prod( 1 - P(i) )
+//   XOR:  P(out) = sum(P(i)) - 2*prod(P(i))  (for 2-input)
+//   NOT:  P(out) = 1 - P(in)
+//   BUF:  P(out) = P(in)
+//   DFF:  P(out) = P(d)
+
+static void propagate_toggle_rates(
+    const Netlist& nl,
+    std::unordered_map<NetId, double>& activities,
+    const std::unordered_map<std::string, double>& user_static_probs,
+    double default_activity)
+{
+    std::unordered_map<NetId, double> static_prob;
+
+    // Initialize PIs
+    for (auto pi : nl.primary_inputs()) {
+        if (!activities.count(pi))
+            activities[pi] = default_activity;
+        // Look up user-specified static probability by net name
+        double sp = 0.5;
+        auto& name = nl.net(pi).name;
+        if (!name.empty()) {
+            auto it = user_static_probs.find(name);
+            if (it != user_static_probs.end()) sp = it->second;
+        }
+        static_prob[pi] = sp;
+    }
+
+    // Initialize FF outputs
+    for (auto gid : nl.flip_flops()) {
+        auto& ff = nl.gate(gid);
+        if (ff.output >= 0) {
+            if (!activities.count(ff.output))
+                activities[ff.output] = default_activity;
+            // DFF output probability from D input, default 0.5
+            double sp = 0.5;
+            if (!ff.inputs.empty()) {
+                auto it = static_prob.find(ff.inputs[0]);
+                if (it != static_prob.end()) sp = it->second;
+            }
+            static_prob[ff.output] = sp;
+        }
+    }
+
+    auto topo = nl.topo_order();
+
+    for (auto gid : topo) {
+        auto& g = nl.gate(gid);
+        if (g.type == GateType::INPUT || g.type == GateType::OUTPUT ||
+            g.type == GateType::DFF || g.output < 0)
+            continue;
+        // Skip nets with user-supplied activity (from VCD/SAIF)
+        if (activities.count(g.output)) {
+            if (!static_prob.count(g.output))
+                static_prob[g.output] = 0.5;
+            continue;
+        }
+
+        if (g.inputs.empty()) {
+            activities[g.output] = default_activity;
+            static_prob[g.output] = 0.5;
+            continue;
+        }
+
+        auto get_td = [&](NetId n) -> double {
+            auto it = activities.find(n);
+            return (it != activities.end()) ? it->second : default_activity;
+        };
+        auto get_sp = [&](NetId n) -> double {
+            auto it = static_prob.find(n);
+            return (it != static_prob.end()) ? it->second : 0.5;
+        };
+
+        double td_out = default_activity;
+        double sp_out = 0.5;
+
+        switch (g.type) {
+            case GateType::BUF:
+                td_out = get_td(g.inputs[0]);
+                sp_out = get_sp(g.inputs[0]);
+                break;
+
+            case GateType::NOT:
+                td_out = get_td(g.inputs[0]);
+                sp_out = 1.0 - get_sp(g.inputs[0]);
+                break;
+
+            case GateType::AND:
+            case GateType::NAND: {
+                // TD(out) = sum_i( TD(i) * prod_{j!=i} P(j) )
+                double sum_td = 0;
+                double prob_all = 1.0;
+                for (auto ni : g.inputs)
+                    prob_all *= get_sp(ni);
+                for (auto ni : g.inputs) {
+                    double p_i = get_sp(ni);
+                    double prod_others = (p_i > 0) ? prob_all / p_i : 0;
+                    sum_td += get_td(ni) * prod_others;
+                }
+                td_out = sum_td;
+                sp_out = prob_all;
+                if (g.type == GateType::NAND) sp_out = 1.0 - sp_out;
+                break;
+            }
+
+            case GateType::OR:
+            case GateType::NOR: {
+                // TD(out) = sum_i( TD(i) * prod_{j!=i} (1 - P(j)) )
+                double comp_all = 1.0;
+                for (auto ni : g.inputs)
+                    comp_all *= (1.0 - get_sp(ni));
+                double sum_td = 0;
+                for (auto ni : g.inputs) {
+                    double comp_i = 1.0 - get_sp(ni);
+                    double prod_others = (comp_i > 0) ? comp_all / comp_i : 0;
+                    sum_td += get_td(ni) * prod_others;
+                }
+                td_out = sum_td;
+                sp_out = 1.0 - comp_all;
+                if (g.type == GateType::NOR) sp_out = 1.0 - sp_out;
+                break;
+            }
+
+            case GateType::XOR:
+            case GateType::XNOR: {
+                // TD(out) = sum( TD(i) )  (toggle rates add for XOR)
+                double sum_td = 0;
+                for (auto ni : g.inputs)
+                    sum_td += get_td(ni);
+                td_out = sum_td;
+                // P(out) for 2-input XOR: P(a)(1-P(b)) + P(b)(1-P(a))
+                if (g.inputs.size() == 2) {
+                    double pa = get_sp(g.inputs[0]);
+                    double pb = get_sp(g.inputs[1]);
+                    sp_out = pa * (1.0 - pb) + pb * (1.0 - pa);
+                } else {
+                    sp_out = 0.5;
+                }
+                if (g.type == GateType::XNOR) sp_out = 1.0 - sp_out;
+                break;
+            }
+
+            case GateType::MUX: {
+                // MUX(sel, a, b): TD ≈ P(sel)*TD(a) + (1-P(sel))*TD(b) + |P(a)-P(b)|*TD(sel)
+                if (g.inputs.size() >= 3) {
+                    double td_s = get_td(g.inputs[0]);
+                    double td_a = get_td(g.inputs[1]);
+                    double td_b = get_td(g.inputs[2]);
+                    double ps = get_sp(g.inputs[0]);
+                    double pa = get_sp(g.inputs[1]);
+                    double pb = get_sp(g.inputs[2]);
+                    td_out = ps * td_a + (1.0 - ps) * td_b +
+                             std::abs(pa - pb) * td_s;
+                    sp_out = ps * pa + (1.0 - ps) * pb;
+                } else {
+                    double avg = 0;
+                    for (auto ni : g.inputs) avg += get_td(ni);
+                    td_out = avg / g.inputs.size();
+                    sp_out = 0.5;
+                }
+                break;
+            }
+
+            default: {
+                double avg = 0;
+                for (auto ni : g.inputs) avg += get_td(ni);
+                td_out = avg / g.inputs.size();
+                sp_out = 0.5;
+                break;
+            }
+        }
+
+        td_out = std::max(0.0, std::min(1.0, td_out));
+        sp_out = std::max(0.0, std::min(1.0, sp_out));
+        activities[g.output] = td_out;
+        static_prob[g.output] = sp_out;
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════
 // Enhanced Power Analysis
 // ══════════════════════════════════════════════════════════════════════
 
@@ -454,6 +649,11 @@ PowerAnalyzer::RtlPowerResult PowerAnalyzer::estimate_rtl_power() {
     double freq_mhz = freq_hz / 1e6;
     double vdd = last_vdd_ > 0 ? last_vdd_ : 1.8;
     double default_alpha = last_default_activity_ > 0 ? last_default_activity_ : 0.1;
+
+    // Run vectorless toggle rate propagation to fill in missing activities
+    std::unordered_map<std::string, double> sp;
+    if (has_activity_data_) sp = activity_data_.static_probs;
+    propagate_toggle_rates(nl_, activities_, sp, default_alpha);
 
     for (size_t gid = 0; gid < nl_.num_gates(); ++gid) {
         auto& g = nl_.gate(gid);
@@ -741,12 +941,43 @@ PowerResult PowerAnalyzer::run_enhanced() {
     double vdd = last_vdd_ > 0 ? last_vdd_ : 1.8;
     double default_alpha = last_default_activity_ > 0 ? last_default_activity_ : 0.1;
 
-    // Run standard analysis
+    // 0. Vectorless toggle rate propagation (fills missing activities)
+    std::unordered_map<std::string, double> sp;
+    if (has_activity_data_) sp = activity_data_.static_probs;
+    propagate_toggle_rates(nl_, activities_, sp, default_alpha);
+
+    // 1. Run standard analysis (uses propagated activities)
     auto result = analyze(freq_mhz, vdd, default_alpha);
 
-    // Augment with clock tree analysis
+    // 2. Clock tree power (dedicated analysis)
     auto clock_result = analyze_clock_power();
     result.clock_power_mw = clock_result.clock_network_mw;
+
+    // 3. RTL power estimation (early-stage cross-check)
+    auto rtl = estimate_rtl_power();
+
+    // 4. Memory power analysis
+    auto mem = analyze_memory_power();
+    double mem_total = 0;
+    for (auto& m : mem) mem_total += m.total_mw;
+
+    // 5. Power state analysis (UPF domains)
+    auto states = analyze_power_states();
+
+    // 6. Per-instance power reporting (for top-consumer refinement)
+    auto instances = report_instance_power();
+    if (!instances.empty()) {
+        result.top_consumers.clear();
+        int top_n = std::min(10, (int)instances.size());
+        for (int i = 0; i < top_n; ++i) {
+            result.top_consumers.push_back({
+                instances[i].name,
+                instances[i].switching_mw + instances[i].internal_mw,
+                instances[i].leakage_mw,
+                instances[i].total_mw
+            });
+        }
+    }
 
     // Recalculate totals
     result.dynamic_power_mw = result.switching_power_mw + result.internal_power_mw +
@@ -758,7 +989,10 @@ PowerResult PowerAnalyzer::run_enhanced() {
                      "(dyn=" + std::to_string(result.dynamic_power_mw) +
                      " stat=" + std::to_string(result.static_power_mw) +
                      " clk=" + std::to_string(result.clock_power_mw) +
-                     " glitch=" + std::to_string(result.glitch_power_mw) + ")";
+                     " glitch=" + std::to_string(result.glitch_power_mw) +
+                     " mem=" + std::to_string(mem_total) +
+                     " rtl_est=" + std::to_string(rtl.total_mw) +
+                     " states=" + std::to_string(states.size()) + ")";
     return result;
 }
 
