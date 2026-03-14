@@ -113,6 +113,15 @@ private:
             INC_OP,              // ++
             DEC_OP,              // --
             INSIDE_KW,           // inside
+            // SystemVerilog IEEE 1800 — Phase 5 tokens
+            WILDCARD_EQ,         // ==?
+            WILDCARD_NEQ,        // !=?
+            DO_KW,               // do
+            BREAK_KW,            // break
+            CONTINUE_KW,         // continue
+            FOREACH_KW,          // foreach
+            RETURN_KW,           // return
+            VOID_KW,             // void
             END
         };
         Type type;

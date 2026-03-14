@@ -204,6 +204,10 @@ std::vector<VerilogParser::Token> VerilogParser::tokenize(const std::string& src
             tokens.push_back({Token::CASE_EQ, "===", line}); i += 3;
         } else if (c == '!' && i+2 < src.size() && src[i+1] == '=' && src[i+2] == '=') {
             tokens.push_back({Token::CASE_NEQ, "!==", line}); i += 3;
+        } else if (c == '=' && i+2 < src.size() && src[i+1] == '=' && src[i+2] == '?') {
+            tokens.push_back({Token::WILDCARD_EQ, "==?", line}); i += 3;
+        } else if (c == '!' && i+2 < src.size() && src[i+1] == '=' && src[i+2] == '?') {
+            tokens.push_back({Token::WILDCARD_NEQ, "!=?", line}); i += 3;
         } else if (c == '*' && i+1 < src.size() && src[i+1] == '*') {
             tokens.push_back({Token::POWER_OP, "**", line}); i += 2;
         } else if (c == '~' && i+1 < src.size() && src[i+1] == '^') {
@@ -341,6 +345,13 @@ std::vector<VerilogParser::Token> VerilogParser::tokenize(const std::string& src
             else if (ident == "endinterface") tokens.push_back({Token::ENDINTERFACE_KW, ident, line});
             else if (ident == "modport") tokens.push_back({Token::MODPORT_KW, ident, line});
             else if (ident == "inside") tokens.push_back({Token::INSIDE_KW, ident, line});
+            // SystemVerilog IEEE 1800 — Phase 5 keywords
+            else if (ident == "do") tokens.push_back({Token::DO_KW, ident, line});
+            else if (ident == "break") tokens.push_back({Token::BREAK_KW, ident, line});
+            else if (ident == "continue") tokens.push_back({Token::CONTINUE_KW, ident, line});
+            else if (ident == "foreach") tokens.push_back({Token::FOREACH_KW, ident, line});
+            else if (ident == "return") tokens.push_back({Token::RETURN_KW, ident, line});
+            else if (ident == "void") tokens.push_back({Token::VOID_KW, ident, line});
             else tokens.push_back({Token::IDENT, ident, line});
         }
         else i++;
@@ -440,11 +451,12 @@ std::shared_ptr<AstNode> VerilogParser::parse_bitand(const std::vector<Token>& t
 std::shared_ptr<AstNode> VerilogParser::parse_equality(const std::vector<Token>& t, size_t& pos) {
     auto left = parse_relational(t, pos);
     while (pos < t.size() && (t[pos].type == Token::EQEQ || t[pos].type == Token::NEQ ||
-                               t[pos].type == Token::CASE_EQ || t[pos].type == Token::CASE_NEQ)) {
-        // Map === to == and !== to != for synthesis (4-value irrelevant in gate-level)
+                               t[pos].type == Token::CASE_EQ || t[pos].type == Token::CASE_NEQ ||
+                               t[pos].type == Token::WILDCARD_EQ || t[pos].type == Token::WILDCARD_NEQ)) {
+        // Map ===, ==? to == and !==, !=? to != for synthesis (X/Z don't-care irrelevant)
         std::string op;
-        if (t[pos].type == Token::CASE_EQ) op = "==";
-        else if (t[pos].type == Token::CASE_NEQ) op = "!=";
+        if (t[pos].type == Token::CASE_EQ || t[pos].type == Token::WILDCARD_EQ) op = "==";
+        else if (t[pos].type == Token::CASE_NEQ || t[pos].type == Token::WILDCARD_NEQ) op = "!=";
         else op = t[pos].value;
         pos++;
         auto right = parse_relational(t, pos);
@@ -705,6 +717,77 @@ std::shared_ptr<AstNode> VerilogParser::parse_primary(const std::vector<Token>& 
             auto node = AstNode::make(AstNodeType::NUMBER_LITERAL, std::to_string(w));
             node->int_val = w;
             return node;
+        }
+
+        // SV Phase 5: $countones(expr) — popcount (number of 1-bits)
+        // For synthesis: desugar to chain of bit additions
+        if (name == "$countones" && pos < t.size() && t[pos].type == Token::LPAREN) {
+            pos++; // skip (
+            auto inner = parse_expression(t, pos);
+            if (pos < t.size() && t[pos].type == Token::RPAREN) pos++;
+            // Build: bit[0] + bit[1] + ... + bit[N-1]
+            // Find width from bus_ranges_ if it's a simple signal
+            int w = 1;
+            if (inner->type == AstNodeType::WIRE_DECL) {
+                auto it = bus_ranges_.find(inner->value);
+                if (it != bus_ranges_.end())
+                    w = std::abs(it->second.first - it->second.second) + 1;
+            }
+            if (w > 1) {
+                auto sum = AstNode::make(AstNodeType::WIRE_DECL, inner->value + "[0]");
+                for (int b = 1; b < w; b++) {
+                    auto bit = AstNode::make(AstNodeType::WIRE_DECL, inner->value + "[" + std::to_string(b) + "]");
+                    auto add = AstNode::make(AstNodeType::BIN_OP, "+");
+                    add->add(sum); add->add(bit);
+                    sum = add;
+                }
+                return sum;
+            }
+            return inner; // 1-bit: countones is the bit itself
+        }
+
+        // SV Phase 5: $onehot(expr) — exactly one bit set
+        // For synthesis: (expr != 0) && (expr & (expr - 1)) == 0
+        if (name == "$onehot" && pos < t.size() && t[pos].type == Token::LPAREN) {
+            pos++;
+            auto inner = parse_expression(t, pos);
+            if (pos < t.size() && t[pos].type == Token::RPAREN) pos++;
+            // (inner != 0)
+            auto nz = AstNode::make(AstNodeType::BIN_OP, "!=");
+            nz->add(inner);
+            auto zero = AstNode::make(AstNodeType::NUMBER_LITERAL, "0"); zero->int_val = 0;
+            nz->add(zero);
+            // (inner & (inner - 1)) == 0
+            auto one = AstNode::make(AstNodeType::NUMBER_LITERAL, "1"); one->int_val = 1;
+            auto sub = AstNode::make(AstNodeType::BIN_OP, "-");
+            sub->add(inner); sub->add(one);
+            auto band = AstNode::make(AstNodeType::BIN_OP, "&");
+            band->add(inner); band->add(sub);
+            auto eq0 = AstNode::make(AstNodeType::BIN_OP, "==");
+            eq0->add(band);
+            auto zero2 = AstNode::make(AstNodeType::NUMBER_LITERAL, "0"); zero2->int_val = 0;
+            eq0->add(zero2);
+            auto result = AstNode::make(AstNodeType::BIN_OP, "&&");
+            result->add(nz); result->add(eq0);
+            return result;
+        }
+
+        // SV Phase 5: $onehot0(expr) — at most one bit set (zero or one-hot)
+        // For synthesis: (expr & (expr - 1)) == 0
+        if (name == "$onehot0" && pos < t.size() && t[pos].type == Token::LPAREN) {
+            pos++;
+            auto inner = parse_expression(t, pos);
+            if (pos < t.size() && t[pos].type == Token::RPAREN) pos++;
+            auto one = AstNode::make(AstNodeType::NUMBER_LITERAL, "1"); one->int_val = 1;
+            auto sub = AstNode::make(AstNodeType::BIN_OP, "-");
+            sub->add(inner); sub->add(one);
+            auto band = AstNode::make(AstNodeType::BIN_OP, "&");
+            band->add(inner); band->add(sub);
+            auto eq0 = AstNode::make(AstNodeType::BIN_OP, "==");
+            eq0->add(band);
+            auto zero = AstNode::make(AstNodeType::NUMBER_LITERAL, "0"); zero->int_val = 0;
+            eq0->add(zero);
+            return eq0;
         }
 
         // System tasks: $display, $finish, $stop, $write, $monitor, $readmemh, $readmemb, etc.
@@ -2800,6 +2883,108 @@ size_t VerilogParser::parse_statement(const std::vector<Token>& t, size_t pos, s
         }
         return pos;
     }
+    // SV Phase 5: do...while loop — do begin body end while(cond);
+    else if (t[pos].type == Token::DO_KW) {
+        pos++; // skip 'do'
+        // Find body extent
+        size_t body_start = pos;
+        size_t body_end = pos;
+        if (pos < t.size() && t[pos].type == Token::BEGIN_KW) {
+            int depth = 1; body_end = pos + 1;
+            while (body_end < t.size() && depth > 0) {
+                if (t[body_end].type == Token::BEGIN_KW) depth++;
+                if (t[body_end].type == Token::END_KW) depth--;
+                body_end++;
+            }
+        } else {
+            body_end = pos;
+            while (body_end < t.size() && t[body_end].type != Token::SEMI) body_end++;
+            if (body_end < t.size()) body_end++;
+        }
+        // Parse while(cond) after body
+        size_t after_body = body_end;
+        if (after_body < t.size() && t[after_body].type == Token::WHILE_KW) {
+            after_body++; // skip while
+            if (after_body < t.size() && t[after_body].type == Token::LPAREN) after_body++;
+            size_t cond_start = after_body;
+            auto cond_expr = parse_expression(t, after_body);
+            if (after_body < t.size() && t[after_body].type == Token::RPAREN) after_body++;
+            if (after_body < t.size() && t[after_body].type == Token::SEMI) after_body++;
+            // Execute body at least once, then unroll while condition holds
+            size_t bp = body_start;
+            bp = parse_statement(t, bp, parent);
+            if (cond_expr && cond_expr->type == AstNodeType::NUMBER_LITERAL) {
+                for (int iter = 0; iter < 1024 && cond_expr->int_val; iter++) {
+                    bp = body_start;
+                    bp = parse_statement(t, bp, parent);
+                    size_t cp = cond_start;
+                    cond_expr = parse_expression(t, cp);
+                }
+            }
+            return after_body;
+        }
+        return body_end;
+    }
+    // SV Phase 5: break / continue — skip for synthesis (inside loops only)
+    else if (t[pos].type == Token::BREAK_KW || t[pos].type == Token::CONTINUE_KW) {
+        pos++;
+        if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
+        return pos;
+    }
+    // SV Phase 5: foreach(array[i]) body — unroll using known array bounds
+    else if (t[pos].type == Token::FOREACH_KW) {
+        pos++; // skip foreach
+        std::string arr_name;
+        std::string iter_var;
+        if (pos < t.size() && t[pos].type == Token::LPAREN) pos++;
+        if (pos < t.size() && t[pos].type == Token::IDENT) {
+            arr_name = t[pos].value; pos++;
+        }
+        if (pos < t.size() && t[pos].type == Token::LBRACKET) {
+            pos++;
+            if (pos < t.size() && t[pos].type == Token::IDENT) {
+                iter_var = t[pos].value; pos++;
+            }
+            if (pos < t.size() && t[pos].type == Token::RBRACKET) pos++;
+        }
+        if (pos < t.size() && t[pos].type == Token::RPAREN) pos++;
+        // Determine bounds from memory_arrays_ or bus_ranges_
+        int lo = 0, hi = 0;
+        auto mit = memory_arrays_.find(arr_name);
+        if (mit != memory_arrays_.end()) {
+            lo = 0; hi = mit->second.second - 1; // depth
+        } else {
+            auto bit = bus_ranges_.find(arr_name);
+            if (bit != bus_ranges_.end()) {
+                lo = std::min(bit->second.first, bit->second.second);
+                hi = std::max(bit->second.first, bit->second.second);
+            }
+        }
+        // Find body extent
+        size_t body_start = pos;
+        size_t body_end = pos;
+        if (pos < t.size() && t[pos].type == Token::BEGIN_KW) {
+            int depth = 1; body_end = pos + 1;
+            while (body_end < t.size() && depth > 0) {
+                if (t[body_end].type == Token::BEGIN_KW) depth++;
+                if (t[body_end].type == Token::END_KW) depth--;
+                body_end++;
+            }
+        } else {
+            while (body_end < t.size() && t[body_end].type != Token::SEMI) body_end++;
+            if (body_end < t.size()) body_end++;
+        }
+        // Unroll
+        if (hi > lo && hi - lo < 1024 && !iter_var.empty()) {
+            for (int i = lo; i <= hi; i++) {
+                params_[iter_var] = i;
+                size_t bp = body_start;
+                bp = parse_statement(t, bp, parent);
+            }
+            params_.erase(iter_var);
+        }
+        return body_end;
+    }
     else if (t[pos].type == Token::BEGIN_KW) {
         return parse_statement_block(t, pos, parent);
     }
@@ -3103,9 +3288,17 @@ size_t VerilogParser::parse_for_loop(const std::vector<Token>& t, size_t pos, st
     pos++; // skip for
     if (pos < t.size() && t[pos].type == Token::LPAREN) pos++;
 
-    // Parse init: ident = expr
+    // Parse init: [type] ident = expr
     std::string var;
     int init_val = 0;
+    // SV Phase 5: skip type declaration in for-init (int i, integer j, etc.)
+    if (pos < t.size() && t[pos].type == Token::INTEGER_KW) {
+        pos++;
+    } else if (pos < t.size() && t[pos].type == Token::IDENT && is_sv_net_type(t[pos].value)) {
+        pos++;
+        if (pos < t.size() && t[pos].type == Token::SIGNED_KW) pos++;
+        if (pos < t.size() && t[pos].type == Token::LBRACKET) parse_bus_range(t, pos);
+    }
     if (pos < t.size() && t[pos].type == Token::IDENT) {
         var = t[pos].value; pos++;
         if (pos < t.size() && t[pos].type == Token::ASSIGN) { pos++;
@@ -3203,9 +3396,19 @@ size_t VerilogParser::parse_generate_for(const std::vector<Token>& t, size_t pos
     pos++; // skip for
     if (pos < t.size() && t[pos].type == Token::LPAREN) pos++;
 
-    // Parse init: ident = expr
+    // Parse init: [type] ident = expr
     std::string var;
     int init_val = 0;
+    // SV Phase 5: skip type declaration in for-init (genvar/int/integer)
+    if (pos < t.size() && t[pos].type == Token::INTEGER_KW) {
+        pos++;
+    } else if (pos < t.size() && t[pos].type == Token::GENVAR_KW) {
+        pos++;
+    } else if (pos < t.size() && t[pos].type == Token::IDENT && is_sv_net_type(t[pos].value)) {
+        pos++;
+        if (pos < t.size() && t[pos].type == Token::SIGNED_KW) pos++;
+        if (pos < t.size() && t[pos].type == Token::LBRACKET) parse_bus_range(t, pos);
+    }
     if (pos < t.size() && t[pos].type == Token::IDENT) {
         var = t[pos].value; pos++;
         if (pos < t.size() && t[pos].type == Token::ASSIGN) { pos++;
@@ -3362,18 +3565,59 @@ size_t VerilogParser::parse_function_def(const std::vector<Token>& t, size_t pos
     // Optional: 'automatic' keyword
     if (pos < t.size() && t[pos].type == Token::AUTOMATIC_KW) pos++;
 
-    // Optional return type: [signed] [range]
+    // SV Phase 5: void function — skip void keyword
+    bool is_void = false;
+    if (pos < t.size() && t[pos].type == Token::VOID_KW) {
+        is_void = true; pos++;
+    }
+
+    // Optional return type: [signed] [range] or SV type (logic, bit, int, etc.)
     if (pos < t.size() && t[pos].type == Token::SIGNED_KW) pos++;
     if (pos < t.size() && t[pos].type == Token::LBRACKET) {
         func.return_range = parse_bus_range(t, pos);
     }
     if (pos < t.size() && t[pos].type == Token::INTEGER_KW) pos++;
+    // SV: function logic [7:0] foo(...) or function int foo(...)
+    if (pos < t.size() && t[pos].type == Token::IDENT && is_sv_net_type(t[pos].value)) {
+        int tw = sv_type_width(t[pos].value);
+        pos++;
+        if (pos < t.size() && t[pos].type == Token::SIGNED_KW) pos++;
+        if (pos < t.size() && t[pos].type == Token::LBRACKET) {
+            func.return_range = parse_bus_range(t, pos);
+        } else if (tw > 1) {
+            func.return_range = {tw - 1, 0};
+        }
+    }
 
     // Function name
     std::string fname;
     if (pos < t.size() && t[pos].type == Token::IDENT) {
         fname = t[pos].value; pos++;
     }
+
+    // SV Phase 5: ANSI-style port list — function foo(input [7:0] a, input [7:0] b);
+    if (pos < t.size() && t[pos].type == Token::LPAREN) {
+        pos++; // skip (
+        while (pos < t.size() && t[pos].type != Token::RPAREN) {
+            // Skip direction keyword
+            if (pos < t.size() && t[pos].type == Token::IDENT &&
+                (t[pos].value == "input" || t[pos].value == "output" || t[pos].value == "inout"))
+                pos++;
+            // Skip type
+            if (pos < t.size() && t[pos].type == Token::IDENT && is_sv_net_type(t[pos].value))
+                pos++;
+            if (pos < t.size() && t[pos].type == Token::SIGNED_KW) pos++;
+            if (pos < t.size() && t[pos].type == Token::LBRACKET) parse_bus_range(t, pos);
+            // Parameter name
+            if (pos < t.size() && t[pos].type == Token::IDENT) {
+                func.param_names.push_back(t[pos].value);
+                pos++;
+            }
+            if (pos < t.size() && t[pos].type == Token::COMMA) pos++;
+        }
+        if (pos < t.size() && t[pos].type == Token::RPAREN) pos++;
+    }
+
     if (pos < t.size() && t[pos].type == Token::SEMI) pos++;
 
     // Parse inputs and body until endfunction
@@ -3394,17 +3638,25 @@ size_t VerilogParser::parse_function_def(const std::vector<Token>& t, size_t pos
         } else if (t[pos].type == Token::IDENT && is_sv_net_type(t[pos].value)) {            while (pos < t.size() && t[pos].type != Token::SEMI) pos++;
             if (pos < t.size()) pos++;
         } else if (t[pos].type == Token::BEGIN_KW) {
-            // Capture body tokens: find matching end, store assign expression
+            // Capture body tokens: find matching end, store assign/return expression
             pos++; // skip begin
             body_start = pos;
-            // Find the assignment expression in the function body
             while (pos < t.size() && t[pos].type != Token::END_KW) {
-                if (t[pos].type == Token::IDENT && t[pos].value == fname) {
-                    // fname = expr; — this is the return value assignment
+                // SV Phase 5: return expr; — capture as body expression
+                if (t[pos].type == Token::RETURN_KW) {
+                    pos++; // skip 'return'
+                    func.body_tokens.clear();
+                    while (pos < t.size() && t[pos].type != Token::SEMI) {
+                        func.body_tokens.push_back(t[pos]);
+                        pos++;
+                    }
+                    func.body_tokens.push_back({Token::END, "", 0});
+                    if (pos < t.size()) pos++;
+                } else if (t[pos].type == Token::IDENT && t[pos].value == fname) {
+                    // fname = expr; — Verilog-style return value assignment
                     pos++; // skip fname
                     if (pos < t.size() && t[pos].type == Token::ASSIGN) {
                         pos++; // skip =
-                        // Capture tokens until semicolon as the body expression
                         while (pos < t.size() && t[pos].type != Token::SEMI) {
                             func.body_tokens.push_back(t[pos]);
                             pos++;
@@ -3418,8 +3670,18 @@ size_t VerilogParser::parse_function_def(const std::vector<Token>& t, size_t pos
             }
             if (pos < t.size()) pos++; // skip end
         } else {
-            // Single-line function body: fname = expr;
-            if (t[pos].type == Token::IDENT && t[pos].value == fname) {
+            // Single-line function body: fname = expr; or return expr;
+            if (t[pos].type == Token::RETURN_KW) {
+                // SV Phase 5: return expr; without begin/end
+                pos++;
+                func.body_tokens.clear();
+                while (pos < t.size() && t[pos].type != Token::SEMI) {
+                    func.body_tokens.push_back(t[pos]);
+                    pos++;
+                }
+                func.body_tokens.push_back({Token::END, "", 0});
+                if (pos < t.size()) pos++;
+            } else if (t[pos].type == Token::IDENT && t[pos].value == fname) {
                 pos++;
                 if (pos < t.size() && t[pos].type == Token::ASSIGN) {
                     pos++;

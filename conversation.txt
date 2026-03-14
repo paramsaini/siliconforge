@@ -2144,3 +2144,109 @@ Total test phases: 52 (51 active + Phase44 SAT excluded from quick regression)
 PENDING COMMIT (not pushed — Rule 7):
   All Tier 0-3 + SV Phase 1-4 changes are local.
 ================================================================================
+
+================================================================================
+SESSION 18 — SystemVerilog Phase 5: Synthesis-Relevant Features
+================================================================================
+
+OBJECTIVE:
+  Complete SV Phase 5 — for(int i=...), return statement, void/automatic
+  functions, ANSI function ports, wildcard equality (==?/!=?), $countones/
+  $onehot/$onehot0, do...while, break/continue, foreach.
+
+RESEARCH (pre-implementation):
+  - Analyzed parse_for_loop (line 3114) and parse_generate_for (line 3214)
+  - Analyzed parse_function_def (line 3388): old-style ports only, no return/void
+  - Analyzed parse_equality (line 451): === and !== handled, no ==?/!=?
+  - Analyzed parse_primary system functions (lines 693-720): $signed/$clog2/$bits
+  - Confirmed memory_arrays_ is pair<int,int> (width, depth), not tuple
+  - Confirmed is_sv_net_type() covers int/logic/bit/byte/shortint/longint
+
+CHANGES MADE:
+
+1. Token types added (verilog_parser.hpp):
+   WILDCARD_EQ, WILDCARD_NEQ, DO_KW, BREAK_KW, CONTINUE_KW,
+   FOREACH_KW, RETURN_KW, VOID_KW
+
+2. Operator tokenization (verilog_parser.cpp ~line 206):
+   ==? → WILDCARD_EQ (3-char, after === check)
+   !=? → WILDCARD_NEQ (3-char, after !== check)
+
+3. Keyword tokenization (~line 354):
+   do, break, continue, foreach, return, void → respective token types
+
+4. Wildcard equality in parse_equality() (~line 451):
+   ==? maps to "==" and !=? maps to "!=" for synthesis
+   (X/Z don't-care bits irrelevant in gate-level netlist)
+
+5. for(int i=...) in parse_for_loop() (~line 3118):
+   Skip INTEGER_KW or is_sv_net_type() before variable name
+   Also handles signed keyword and optional [range]
+
+6. for(int i=...) in parse_generate_for() (~line 3230):
+   Same treatment + also skips GENVAR_KW
+
+7. return statement in parse_function_def():
+   - In begin/end body: RETURN_KW → capture tokens until SEMI as body_tokens
+   - Without begin/end: same treatment
+   - Takes priority over traditional fname = expr; assignment
+
+8. void function in parse_function_def():
+   - Skip VOID_KW before function name
+   - void functions stored normally (no return value, used as tasks)
+
+9. ANSI function port list in parse_function_def():
+   - After function name, if LPAREN detected, parse port list:
+     direction (input/output) + type (logic/bit/etc.) + name
+   - Populates func.param_names from ANSI port declarations
+
+10. SV return type in parse_function_def():
+    - function logic [7:0] foo(...) — handle SV type + range
+    - function int foo(...) — implicit 32-bit width
+
+11. $countones(expr) in parse_primary() (~line 722):
+    - Desugars to chain: bit[0] + bit[1] + ... + bit[N-1]
+    - Width determined from bus_ranges_
+
+12. $onehot(expr) in parse_primary() (~line 744):
+    - Desugars to: (expr != 0) && ((expr & (expr - 1)) == 0)
+    - Classic one-hot detection circuit
+
+13. $onehot0(expr) in parse_primary() (~line 765):
+    - Desugars to: (expr & (expr - 1)) == 0
+    - Zero or one-hot (at most one bit set)
+
+14. do...while in parse_statement() (~line 2886):
+    - Parse body first, then while(cond) after body
+    - Body executes at least once, then unrolls while condition holds
+    - Compile-time condition only (same as while loop)
+
+15. break/continue in parse_statement() (~line 2930):
+    - Skip for synthesis — only meaningful in simulation loops
+
+16. foreach in parse_statement() (~line 2935):
+    - foreach(array[i]) body — determine bounds from memory_arrays_
+    - Unroll iterations with params_[iter_var] = i
+    - Safety limit 1024 iterations
+
+BUILD: Zero errors, zero warnings.
+
+TESTS — test_phase53.cpp (22 tests):
+  Tests 1-3:   for(int/integer i=...) in generate and always
+  Tests 4-5:   Function with return (begin/end and without)
+  Test 6:      void function
+  Test 7:      automatic function
+  Tests 8-9:   ANSI function port list (classic and SV-style)
+  Tests 10-11: Wildcard equality ==? and !=?
+  Tests 12-14: $countones, $onehot, $onehot0
+  Tests 15-17: do...while, break, continue
+  Tests 18-22: Mixed scenarios (return+compound, ==?+always_ff, etc.)
+
+REGRESSION: 52/52 PASS (0.88s normal)
+ASAN:       52/52 PASS, zero memory errors (366.76s)
+
+Total test phases: 53 (52 active + Phase44 SAT excluded from quick regression)
+
+PENDING COMMIT (not pushed — Rule 7):
+  All Tier 0-3 + SV Phase 1-5 changes are local.
+================================================================================
