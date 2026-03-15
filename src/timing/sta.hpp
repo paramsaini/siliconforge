@@ -440,6 +440,9 @@ public:
     };
     PbaResult run_path_based(int num_paths = 100);
 
+    // Phase 2: Rebuild spatial wire grid (call after wires change)
+    void build_wire_spatial_grid();
+
     // ── SI-Aware Delay (Crosstalk) ───────────────────────────────────────
     struct SiDelay {
         int victim_net;
@@ -549,6 +552,28 @@ private:
 
     // Last clock period cached for incremental STA
     double last_clock_period_ = 0;
+
+    // Phase 2: Spatial grid for O(1) crosstalk aggressor lookup
+    // Grid cell size = max_coupling_distance (default 1.0 um)
+    // Each grid cell stores wire indices on that layer
+    struct WireGridKey {
+        int layer;
+        int gx, gy;  // grid cell coordinates
+        bool operator==(const WireGridKey& o) const {
+            return layer == o.layer && gx == o.gx && gy == o.gy;
+        }
+    };
+    struct WireGridHash {
+        size_t operator()(const WireGridKey& k) const {
+            size_t h = std::hash<int>()(k.layer);
+            h ^= std::hash<int>()(k.gx) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            h ^= std::hash<int>()(k.gy) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            return h;
+        }
+    };
+    std::unordered_map<WireGridKey, std::vector<size_t>, WireGridHash> wire_grid_;
+    double wire_grid_cell_size_ = 0;
+    bool wire_grid_built_ = false;
 
     // MCMM weighted scenario state
     std::vector<McmmWeightedScenario> mcmm_scenarios_;

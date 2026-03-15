@@ -343,6 +343,12 @@ private:
     struct B2BEdge { int i, j; double wx, wy; };
     std::vector<B2BEdge> build_b2b_model() const;
 
+    // Phase 2: Per-cell adjacency list for parallel matvec
+    // cell_adj_[cell_id] = list of {neighbor_id, wx, wy}
+    struct CellAdj { int nbr; double wx, wy; };
+    std::vector<std::vector<CellAdj>> cell_adj_;
+    void build_cell_adjacency(const std::vector<B2BEdge>& edges, int n);
+
     // Density bin grid
     struct DensityBin {
         double x0, y0, x1, y1;

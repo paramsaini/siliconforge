@@ -73,6 +73,20 @@ std::vector<AnalyticalPlacer::B2BEdge> AnalyticalPlacer::build_b2b_model() const
     return edges;
 }
 
+// Phase 2: Build per-cell adjacency list from edge list
+// Converts edge-centric representation to cell-centric for parallel matvec.
+// Each cell gets a list of {neighbor, wx, wy} so the matvec inner loop
+// has no write conflicts and is embarrassingly parallel.
+void AnalyticalPlacer::build_cell_adjacency(const std::vector<B2BEdge>& edges, int n) {
+    cell_adj_.assign(n, {});
+    for (auto& e : edges) {
+        if (e.i >= 0 && e.i < n && e.j >= 0 && e.j < n) {
+            cell_adj_[e.i].push_back({e.j, e.wx, e.wy});
+            cell_adj_[e.j].push_back({e.i, e.wx, e.wy});
+        }
+    }
+}
+
 // ── Conjugate Gradient solver ────────────────────────────────────────
 void AnalyticalPlacer::solve_quadratic_cg() {
     int n = (int)pd_.cells.size();
@@ -102,6 +116,9 @@ void AnalyticalPlacer::solve_quadratic_cg() {
     // Using a simple CG implementation for the sparse system
     auto edges = build_b2b_model();
 
+    // Phase 2: Build per-cell adjacency list for parallel matvec
+    build_cell_adjacency(edges, n);
+
     // Build diagonal and off-diagonal sums per cell
     std::vector<double> diag_x(n, 0), diag_y(n, 0);
     std::vector<double> rhs_x(n, 0), rhs_y(n, 0);
@@ -120,25 +137,22 @@ void AnalyticalPlacer::solve_quadratic_cg() {
         rhs_y[i] += anchor_w_[i] * anchor_y_[i];
     }
 
-    // Compute Ax for current x (matrix-vector product)
+    // Phase 2: Parallel matvec using per-cell adjacency list
+    // Each cell independently sums its neighbor contributions — no write conflicts
     auto matvec = [&](const std::vector<double>& vx, const std::vector<double>& vy,
                       std::vector<double>& out_x, std::vector<double>& out_y) {
-        std::fill(out_x.begin(), out_x.end(), 0);
-        std::fill(out_y.begin(), out_y.end(), 0);
-        // Edge accumulation (sequential — edge-wise has write conflicts)
-        for (auto& e : edges) {
-            out_x[e.i] += e.wx * (vx[e.i] - vx[e.j]);
-            out_x[e.j] += e.wx * (vx[e.j] - vx[e.i]);
-            out_y[e.i] += e.wy * (vy[e.i] - vy[e.j]);
-            out_y[e.j] += e.wy * (vy[e.j] - vy[e.i]);
-        }
-        // Anchor term (parallelizable — per-cell independent)
 #ifdef SF_HAS_OPENMP
         #pragma omp parallel for schedule(static) if(n > 500)
 #endif
         for (int i = 0; i < n; i++) {
-            out_x[i] += anchor_w_[i] * vx[i];
-            out_y[i] += anchor_w_[i] * vy[i];
+            double sx = 0, sy = 0;
+            for (auto& adj : cell_adj_[i]) {
+                sx += adj.wx * (vx[i] - vx[adj.nbr]);
+                sy += adj.wy * (vy[i] - vy[adj.nbr]);
+            }
+            // Anchor term
+            out_x[i] = sx + anchor_w_[i] * vx[i];
+            out_y[i] = sy + anchor_w_[i] * vy[i];
         }
     };
 
