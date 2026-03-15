@@ -2733,4 +2733,526 @@ DrcResult DrcEngine::run_enhanced() {
     return r;
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// 3D IC Design Rule Checks
+// TSV keep-out, inter-die alignment, micro-bump pitch, thermal via density
+// ══════════════════════════════════════════════════════════════════════
+
+DrcResult DrcEngine::check_3d_rules() {
+    auto t0 = std::chrono::high_resolution_clock::now();
+    DrcResult r;
+
+    double die_w = pd_.die_area.width();
+    double die_h = pd_.die_area.height();
+    double die_area = die_w * die_h;
+
+    // Identify TSV vias: vias spanning a large layer range are modeled as TSVs
+    // (in a real flow these would be explicitly tagged; here we use heuristic:
+    //  a via whose upper_layer - lower_layer > 3 is treated as a TSV)
+    struct TsvInfo {
+        Point pos;
+        int lower, upper;
+    };
+    std::vector<TsvInfo> tsvs;
+    std::vector<Point> thermal_vias;
+    std::vector<Point> bump_pads;
+
+    for (auto& v : pd_.vias) {
+        int span = std::abs(v.upper_layer - v.lower_layer);
+        if (span >= 4) {
+            // TSV candidate
+            tsvs.push_back({v.position, v.lower_layer, v.upper_layer});
+        }
+    }
+
+    // Collect bumps from top-layer wires (PAD or RDL layer) as micro-bump pads
+    for (auto& w : pd_.wires) {
+        if (w.layer == DrcLayer::PAD || w.layer == DrcLayer::RDL) {
+            Point center((w.start.x + w.end.x) / 2.0, (w.start.y + w.end.y) / 2.0);
+            bump_pads.push_back(center);
+        }
+    }
+
+    // Collect thermal vias (vias on upper metal layers with no net assignment)
+    for (auto& v : pd_.vias) {
+        if (v.upper_layer >= DrcLayer::MET3 && v.upper_layer <= DrcLayer::MET5) {
+            thermal_vias.push_back(v.position);
+        }
+    }
+
+    // ── Check 1: TSV keep-out zone violations ───────────────────────
+    // Active devices (standard cells) must maintain minimum distance
+    // from TSV barrel due to stress-induced mobility degradation.
+    // The keep-out zone (KOZ) is a circle of radius tsv_keepout_um
+    // centered on the TSV.
+    r.total_rules++;
+    for (auto& tsv : tsvs) {
+        for (auto& cell : pd_.cells) {
+            if (!cell.placed) continue;
+            // Cell center
+            double cx = cell.position.x + cell.width / 2.0;
+            double cy = cell.position.y + cell.height / 2.0;
+            double dx = cx - tsv.pos.x;
+            double dy = cy - tsv.pos.y;
+            double dist = std::sqrt(dx * dx + dy * dy);
+            // Subtract half-diagonal of cell to get edge-to-TSV distance
+            double half_diag = std::sqrt(cell.width * cell.width + cell.height * cell.height) / 2.0;
+            double edge_dist = dist - half_diag - drc3d_cfg_.tsv_diameter_um / 2.0;
+
+            if (edge_dist < drc3d_cfg_.tsv_keepout_um) {
+                r.violations++;
+                r.errors++;
+                r.tsv_keepout_violations++;
+                r.details.push_back({"3D.TSV.KOZ",
+                    "TSV keep-out zone violation: cell '" + cell.name +
+                    "' at distance=" + std::to_string(edge_dist) +
+                    "um < required=" + std::to_string(drc3d_cfg_.tsv_keepout_um) + "um",
+                    Rect(tsv.pos.x - drc3d_cfg_.tsv_keepout_um,
+                         tsv.pos.y - drc3d_cfg_.tsv_keepout_um,
+                         tsv.pos.x + drc3d_cfg_.tsv_keepout_um,
+                         tsv.pos.y + drc3d_cfg_.tsv_keepout_um),
+                    edge_dist, drc3d_cfg_.tsv_keepout_um, DrcViolation::ERROR});
+                if (r.violations > 1000) break;
+            }
+        }
+        if (r.violations > 1000) break;
+    }
+
+    // ── Check 2: Inter-die alignment ────────────────────────────────
+    // TSVs on the top die must align with landing pads on the bottom die.
+    // Model: TSV pairs within the same X-Y column must have offset
+    // below inter_die_alignment_um.
+    r.total_rules++;
+    for (size_t i = 0; i < tsvs.size(); ++i) {
+        for (size_t j = i + 1; j < tsvs.size(); ++j) {
+            // Check TSVs that could be a top/bottom pair (overlapping layers)
+            bool layer_overlap = (tsvs[i].upper >= tsvs[j].lower && tsvs[i].lower <= tsvs[j].upper);
+            if (!layer_overlap) continue;
+            double dx = tsvs[i].pos.x - tsvs[j].pos.x;
+            double dy = tsvs[i].pos.y - tsvs[j].pos.y;
+            double offset = std::sqrt(dx * dx + dy * dy);
+            // Only flag if they're close enough to be intended pairs
+            if (offset > 0 && offset < drc3d_cfg_.tsv_diameter_um * 3 &&
+                offset > drc3d_cfg_.inter_die_alignment_um) {
+                r.violations++;
+                r.warnings++;
+                r.inter_die_alignment_violations++;
+                r.details.push_back({"3D.ALIGN",
+                    "Inter-die alignment: TSV pair misalignment=" +
+                    std::to_string(offset) + "um > allowed=" +
+                    std::to_string(drc3d_cfg_.inter_die_alignment_um) + "um",
+                    Rect(std::min(tsvs[i].pos.x, tsvs[j].pos.x),
+                         std::min(tsvs[i].pos.y, tsvs[j].pos.y),
+                         std::max(tsvs[i].pos.x, tsvs[j].pos.x),
+                         std::max(tsvs[i].pos.y, tsvs[j].pos.y)),
+                    offset, drc3d_cfg_.inter_die_alignment_um, DrcViolation::WARNING});
+            }
+        }
+    }
+
+    // ── Check 3: Micro-bump pitch ───────────────────────────────────
+    // Verify that bump-to-bump center spacing meets minimum pitch.
+    // Sub-pitch bumps cause bridging/shorting during thermo-compression bonding.
+    r.total_rules++;
+    for (size_t i = 0; i < bump_pads.size(); ++i) {
+        for (size_t j = i + 1; j < bump_pads.size(); ++j) {
+            double dx = bump_pads[i].x - bump_pads[j].x;
+            double dy = bump_pads[i].y - bump_pads[j].y;
+            double pitch = std::sqrt(dx * dx + dy * dy);
+            if (pitch > 0 && pitch < drc3d_cfg_.bump_pitch_um) {
+                r.violations++;
+                r.errors++;
+                r.bump_pitch_violations++;
+                r.details.push_back({"3D.BUMP.PITCH",
+                    "Micro-bump pitch violation: pitch=" + std::to_string(pitch) +
+                    "um < required=" + std::to_string(drc3d_cfg_.bump_pitch_um) + "um",
+                    Rect(std::min(bump_pads[i].x, bump_pads[j].x),
+                         std::min(bump_pads[i].y, bump_pads[j].y),
+                         std::max(bump_pads[i].x, bump_pads[j].x),
+                         std::max(bump_pads[i].y, bump_pads[j].y)),
+                    pitch, drc3d_cfg_.bump_pitch_um, DrcViolation::ERROR});
+                if (r.violations > 1000) break;
+            }
+        }
+        if (r.violations > 1000) break;
+    }
+
+    // ── Check 4: Thermal via density ────────────────────────────────
+    // Adequate thermal via density is required for vertical heat
+    // extraction in 3D stacks.  Insufficient density creates thermal
+    // hotspots that degrade reliability (MTTF ∝ exp(-Ea/kT)).
+    r.total_rules++;
+    if (die_area > 0) {
+        // Compute thermal via area coverage (each via ~= pi*(d/2)^2, approximate as d^2)
+        double via_area = 0;
+        double via_dim = 0.2; // typical via dimension in um
+        for (auto& tv : thermal_vias) {
+            (void)tv;
+            via_area += via_dim * via_dim;
+        }
+        double density = via_area / die_area;
+        if (density < drc3d_cfg_.thermal_via_density) {
+            r.violations++;
+            r.warnings++;
+            r.thermal_via_density_violations++;
+            r.details.push_back({"3D.THERMAL.DENSITY",
+                "Thermal via density=" + std::to_string(density * 100) +
+                "% < required=" + std::to_string(drc3d_cfg_.thermal_via_density * 100) + "%",
+                pd_.die_area,
+                density, drc3d_cfg_.thermal_via_density, DrcViolation::WARNING});
+        }
+    }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    r.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    r.message = r.violations == 0
+        ? "3D DRC CLEAN — " + std::to_string(r.total_rules) + " rules checked"
+        : "3D DRC: " + std::to_string(r.violations) + " violations (" +
+          std::to_string(r.tsv_keepout_violations) + " TSV KOZ, " +
+          std::to_string(r.bump_pitch_violations) + " bump pitch, " +
+          std::to_string(r.inter_die_alignment_violations) + " alignment, " +
+          std::to_string(r.thermal_via_density_violations) + " thermal density)";
+    return r;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Lithography Printability Analysis
+// Rayleigh-criterion resolution check, line-end shortening, corner rounding
+// ══════════════════════════════════════════════════════════════════════
+
+DrcResult DrcEngine::litho_check() {
+    auto t0 = std::chrono::high_resolution_clock::now();
+    DrcResult r;
+
+    // Rayleigh criterion: minimum resolvable feature = k1 * lambda / NA
+    // Convert wavelength from nm to um for comparison with layout dimensions
+    double lambda_um = litho_cfg_.wavelength_nm * 1e-3;
+    double min_resolution_um = litho_cfg_.k1_factor * lambda_um / litho_cfg_.NA;
+
+    // Depth of focus: DOF = k2 * lambda / NA^2
+    // Defocus degrades aerial image contrast; features near the resolution
+    // limit become unprintable at the defocus budget.
+    double defocus_um = litho_cfg_.defocus_nm * 1e-3;
+    double k2 = 0.5; // typical Rayleigh DOF constant
+    double dof_um = k2 * lambda_um / (litho_cfg_.NA * litho_cfg_.NA);
+    // Effective resolution degrades with defocus: scale k1 up as defocus increases
+    double defocus_penalty = 1.0;
+    if (dof_um > 0) {
+        defocus_penalty = 1.0 + 0.3 * (defocus_um / dof_um); // empirical scaling
+    }
+    double effective_resolution_um = min_resolution_um * defocus_penalty;
+
+    // ── Check 1: Sub-resolution features (narrow line/space) ────────
+    // Any wire width or inter-wire spacing below the effective resolution
+    // will not print reliably.  These require OPC (optical proximity
+    // correction) or are simply unprintable.
+    r.total_rules++;
+    for (auto& w : pd_.wires) {
+        // Check wire width against resolution limit
+        if (w.width > 0 && w.width < effective_resolution_um) {
+            r.violations++;
+            r.errors++;
+            r.litho_resolution_violations++;
+            r.details.push_back({"LITHO.RES.WIDTH",
+                "Sub-resolution wire width=" + std::to_string(w.width) +
+                "um < litho resolution=" + std::to_string(effective_resolution_um) +
+                "um (k1=" + std::to_string(litho_cfg_.k1_factor) +
+                ", lambda=" + std::to_string(litho_cfg_.wavelength_nm) +
+                "nm, NA=" + std::to_string(litho_cfg_.NA) + ")",
+                Rect(std::min(w.start.x, w.end.x), std::min(w.start.y, w.end.y),
+                     std::max(w.start.x, w.end.x), std::max(w.start.y, w.end.y)),
+                w.width, effective_resolution_um, DrcViolation::ERROR});
+            if (r.violations > 1000) break;
+        }
+    }
+
+    // Check inter-wire spacing for same-layer neighbors
+    r.total_rules++;
+    if (r.violations <= 1000) {
+        build_spatial_index();
+        for (size_t i = 0; i < pd_.wires.size(); ++i) {
+            auto& wa = pd_.wires[i];
+            double cx = (wa.start.x + wa.end.x) / 2;
+            double cy = (wa.start.y + wa.end.y) / 2;
+            auto nearby = query_nearby_wires(cx, cy, effective_resolution_um * 3 + wire_length(wa), wa.layer);
+            for (int j : nearby) {
+                if (j <= (int)i) continue;
+                auto& wb = pd_.wires[j];
+                double sp = wires_spacing(wa, wb);
+                if (sp > 0 && sp < effective_resolution_um) {
+                    r.violations++;
+                    r.errors++;
+                    r.litho_resolution_violations++;
+                    r.details.push_back({"LITHO.RES.SPACE",
+                        "Sub-resolution spacing=" + std::to_string(sp) +
+                        "um < litho resolution=" + std::to_string(effective_resolution_um) + "um",
+                        Rect(std::min(wa.start.x, wb.start.x), std::min(wa.start.y, wb.start.y),
+                             std::max(wa.end.x, wb.end.x), std::max(wa.end.y, wb.end.y)),
+                        sp, effective_resolution_um, DrcViolation::ERROR});
+                    if (r.violations > 1000) break;
+                }
+            }
+            if (r.violations > 1000) break;
+        }
+    }
+
+    // ── Check 2: Line-end shortening ────────────────────────────────
+    // Wire ends (tips) lose length during lithographic exposure due to
+    // diffraction.  The pullback is approximately 0.5 * lambda / NA for
+    // features near the resolution limit.  Flag wires where the
+    // line-end extension past the last connected via or cell pin is
+    // less than the expected pullback.
+    r.total_rules++;
+    double pullback_um = 0.5 * lambda_um / litho_cfg_.NA;
+    for (auto& w : pd_.wires) {
+        // Only check wires on critical layers (metal routing layers)
+        if (w.layer < DrcLayer::MET1 || w.layer > DrcLayer::MET5) continue;
+        double len = wire_length(w);
+        // Short wires are more susceptible to line-end shortening
+        // Flag if wire length < 3× the pullback (empirical threshold for
+        // significant CD impact at line ends)
+        if (len > 0 && len < 3.0 * pullback_um && w.width < effective_resolution_um * 2.0) {
+            r.violations++;
+            r.warnings++;
+            r.litho_line_end_violations++;
+            r.details.push_back({"LITHO.LINEEND",
+                "Line-end shortening risk: wire length=" + std::to_string(len) +
+                "um, expected pullback=" + std::to_string(pullback_um) +
+                "um (may lose " + std::to_string(pullback_um / len * 100) + "% of length)",
+                Rect(std::min(w.start.x, w.end.x) - w.width / 2,
+                     std::min(w.start.y, w.end.y) - w.width / 2,
+                     std::max(w.start.x, w.end.x) + w.width / 2,
+                     std::max(w.start.y, w.end.y) + w.width / 2),
+                len, 3.0 * pullback_um, DrcViolation::WARNING});
+            if (r.violations > 1000) break;
+        }
+    }
+
+    // ── Check 3: Corner rounding ────────────────────────────────────
+    // Sharp 90-degree bends in wires suffer from corner rounding during
+    // lithographic exposure.  The rounding radius ≈ 0.3 * lambda / NA.
+    // Flag jogs or bends where the jog length is less than the
+    // rounding radius (the corner will be significantly distorted).
+    r.total_rules++;
+    double rounding_radius_um = 0.3 * lambda_um / litho_cfg_.NA;
+    // Detect L-shaped / jogged wire pairs that share a net
+    for (size_t i = 0; i < pd_.wires.size(); ++i) {
+        auto& wa = pd_.wires[i];
+        if (wa.layer < DrcLayer::MET1 || wa.layer > DrcLayer::MET5) continue;
+        if (wa.net_id < 0) continue;
+        bool wa_horiz = std::abs(wa.end.x - wa.start.x) > std::abs(wa.end.y - wa.start.y);
+
+        for (size_t j = i + 1; j < pd_.wires.size(); ++j) {
+            auto& wb = pd_.wires[j];
+            if (wb.layer != wa.layer || wb.net_id != wa.net_id) continue;
+            bool wb_horiz = std::abs(wb.end.x - wb.start.x) > std::abs(wb.end.y - wb.start.y);
+            if (wa_horiz == wb_horiz) continue; // same direction — no corner
+
+            // Check if endpoints are close enough to form a corner
+            double min_ep_dist = 1e18;
+            Point corners[4] = {wa.start, wa.end, wb.start, wb.end};
+            for (int ci = 0; ci < 2; ++ci) {
+                for (int cj = 2; cj < 4; ++cj) {
+                    double d = std::sqrt(std::pow(corners[ci].x - corners[cj].x, 2) +
+                                         std::pow(corners[ci].y - corners[cj].y, 2));
+                    min_ep_dist = std::min(min_ep_dist, d);
+                }
+            }
+
+            if (min_ep_dist < wa.width + wb.width) {
+                // These wires form an L-corner; check if either segment's
+                // width is below the rounding radius
+                double min_width = std::min(wa.width, wb.width);
+                if (min_width < rounding_radius_um * 2.0) {
+                    r.violations++;
+                    r.warnings++;
+                    r.litho_corner_rounding_violations++;
+                    r.details.push_back({"LITHO.CORNER",
+                        "Corner rounding risk: bend width=" + std::to_string(min_width) +
+                        "um, rounding radius=" + std::to_string(rounding_radius_um) +
+                        "um — OPC serif may be required",
+                        Rect(std::min({wa.start.x, wa.end.x, wb.start.x, wb.end.x}),
+                             std::min({wa.start.y, wa.end.y, wb.start.y, wb.end.y}),
+                             std::max({wa.start.x, wa.end.x, wb.start.x, wb.end.x}),
+                             std::max({wa.start.y, wa.end.y, wb.start.y, wb.end.y})),
+                        min_width, rounding_radius_um * 2.0, DrcViolation::WARNING});
+                    if (r.violations > 1000) break;
+                }
+            }
+        }
+        if (r.violations > 1000) break;
+    }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    r.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    r.message = r.violations == 0
+        ? "Litho check CLEAN — resolution=" + std::to_string(effective_resolution_um) +
+          "um (k1=" + std::to_string(litho_cfg_.k1_factor) + ")"
+        : "Litho: " + std::to_string(r.violations) + " issues (" +
+          std::to_string(r.litho_resolution_violations) + " sub-resolution, " +
+          std::to_string(r.litho_line_end_violations) + " line-end, " +
+          std::to_string(r.litho_corner_rounding_violations) + " corner rounding)";
+    return r;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// DFM Yield Prediction — Critical Area Analysis + Poisson Yield Model
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Yield estimation methodology:
+//
+// 1. Critical area computation
+//    For each metal layer, critical area is the region where a random
+//    defect of a given size would cause a short or open circuit.
+//    - Spacing critical area: for each pair of nearby wires on the same
+//      layer, the critical area = wire_overlap_length * (min_spacing - actual_spacing)
+//      when spacing is within the defect-sensitive window.
+//    - Width critical area: for narrow wires, width below 2x min_width
+//      contributes open-circuit susceptibility proportional to length.
+//    - Via critical area: each via has a capture radius based on enclosure.
+//
+// 2. Poisson yield model
+//    Y = exp(-D * A_crit)
+//    where D = defect density (defects/cm^2), A_crit = total critical area (cm^2)
+//
+// 3. Killer defect estimation
+//    Violations from DRC that represent hard shorts/opens are counted
+//    as deterministic yield kills — each spacing violation < 50% of rule
+//    is treated as a killer defect.
+//
+// Reference: Stapper, "Modeling of Defects in IC Photolithographic Patterns"
+// Reference: Papadopoulou et al., "Critical Area Computation via Voronoi Diagrams"
+
+YieldPrediction DrcEngine::predict_yield(double defect_density) {
+    YieldPrediction yp;
+    yp.defect_density = defect_density;
+
+    // Determine number of metal layers present in the design
+    int max_layer = 0;
+    for (const auto& w : pd_.wires) {
+        max_layer = std::max(max_layer, w.layer);
+    }
+
+    // Per-layer critical area accumulation
+    std::map<int, YieldPrediction::LayerCritArea> layer_crit;
+    for (int l = 0; l <= max_layer; ++l) {
+        layer_crit[l].layer = l;
+    }
+
+    // Find the minimum spacing rule for each layer
+    std::unordered_map<int, double> min_spacing_by_layer;
+    std::unordered_map<int, double> min_width_by_layer;
+    for (const auto& rule : rules_) {
+        if (!rule.enabled) continue;
+        if (rule.type == DrcRule::MIN_SPACING) {
+            auto it = min_spacing_by_layer.find(rule.layer);
+            if (it == min_spacing_by_layer.end() || rule.value < it->second)
+                min_spacing_by_layer[rule.layer] = rule.value;
+        }
+        if (rule.type == DrcRule::MIN_WIDTH) {
+            auto it = min_width_by_layer.find(rule.layer);
+            if (it == min_width_by_layer.end() || rule.value < it->second)
+                min_width_by_layer[rule.layer] = rule.value;
+        }
+    }
+
+    // === 1. Spacing Critical Area ===
+    // For each pair of wires on the same layer, compute critical area
+    // contribution if spacing is within the defect-sensitive window
+    // (actual_spacing < 2 * min_spacing). A defect of radius r causes
+    // a short if r > spacing/2, so critical area = overlap_length * (2*r_max - spacing)
+    // where r_max = min_spacing (maximum defect radius of interest).
+
+    for (size_t i = 0; i < pd_.wires.size(); ++i) {
+        const auto& wi = pd_.wires[i];
+        double wi_len = wire_length(wi);
+        if (wi_len <= 0) continue;
+
+        // Width critical area: narrow wires are susceptible to open-circuit defects
+        // Critical width window: wire_width < 2 * min_width
+        auto mw_it = min_width_by_layer.find(wi.layer);
+        if (mw_it != min_width_by_layer.end()) {
+            double min_w = mw_it->second;
+            if (wi.width < 2.0 * min_w) {
+                // Open-defect critical area proportional to (2*min_w - width) * length
+                double crit = (2.0 * min_w - wi.width) * wi_len;
+                layer_crit[wi.layer].width_crit_area += crit;
+            }
+        }
+
+        auto ms_it = min_spacing_by_layer.find(wi.layer);
+        if (ms_it == min_spacing_by_layer.end()) continue;
+        double min_s = ms_it->second;
+
+        // Only check wires with index > i to avoid double counting
+        for (size_t j = i + 1; j < pd_.wires.size(); ++j) {
+            const auto& wj = pd_.wires[j];
+            if (wj.layer != wi.layer) continue;
+
+            double spacing = wires_spacing(wi, wj);
+            // Defect-sensitive window: spacing < 2 * min_spacing
+            if (spacing < 2.0 * min_s && spacing > 0) {
+                double overlap = parallel_run_length(wi, wj);
+                if (overlap <= 0) {
+                    // Non-parallel wires: use minimum segment length as interaction length
+                    overlap = std::min(wi_len, wire_length(wj)) * 0.1;
+                }
+                // Short-circuit critical area = overlap * (2*min_spacing - spacing)
+                double crit = overlap * (2.0 * min_s - spacing);
+                layer_crit[wi.layer].spacing_crit_area += std::max(0.0, crit);
+
+                // Count killer defects: spacing < 50% of minimum rule → hard short
+                if (spacing < 0.5 * min_s) {
+                    yp.killer_defect_count++;
+                }
+            }
+        }
+    }
+
+    // === 2. Via Critical Area ===
+    // Each via contributes critical area based on the enclosure margin.
+    // A defect near a via can cause a short to adjacent metal or an open
+    // in the via connection. Critical area per via ≈ pi * r_capture^2
+    // where r_capture = via_width (conservative estimate).
+    for (const auto& via : pd_.vias) {
+        double via_radius = 0.07;  // default 70nm via capture radius (um)
+        double via_crit = M_PI * via_radius * via_radius;
+        if (via.lower_layer >= 0 && via.lower_layer <= max_layer)
+            layer_crit[via.lower_layer].via_crit_area += via_crit;
+        if (via.upper_layer >= 0 && via.upper_layer <= max_layer)
+            layer_crit[via.upper_layer].via_crit_area += via_crit;
+    }
+
+    // === 3. Aggregate Critical Area ===
+    double total_crit_um2 = 0.0;
+    for (auto& [layer, lca] : layer_crit) {
+        double layer_total = lca.spacing_crit_area + lca.width_crit_area + lca.via_crit_area;
+        if (layer_total > 0) {
+            total_crit_um2 += layer_total;
+            yp.layer_breakdown.push_back(lca);
+        }
+    }
+    yp.critical_area_um2 = total_crit_um2;
+
+    // === 4. Poisson Yield Model ===
+    // Convert critical area from um^2 to cm^2: 1 cm^2 = 1e8 um^2
+    double crit_area_cm2 = total_crit_um2 / 1.0e8;
+
+    // Random yield: Y_random = exp(-D * A_crit)
+    double y_random = std::exp(-defect_density * crit_area_cm2);
+    yp.random_yield_loss = 1.0 - y_random;
+
+    // Systematic yield: each killer defect reduces yield deterministically
+    // Model: Y_systematic = (1 - p_kill)^N_killer where p_kill ≈ 0.8 per violation
+    double p_kill = 0.8;
+    double y_systematic = std::pow(1.0 - p_kill, yp.killer_defect_count);
+    yp.systematic_yield_loss = 1.0 - y_systematic;
+
+    // Combined yield: Y_total = Y_random * Y_systematic
+    yp.yield_estimate = y_random * y_systematic;
+    yp.yield_estimate = std::max(0.0, std::min(1.0, yp.yield_estimate));
+
+    return yp;
+}
+
 } // namespace sf

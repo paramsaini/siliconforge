@@ -12,12 +12,16 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <map>
 #include <utility>
 #include <limits>
 #include <cmath>
 #include <random>
 
 namespace sf {
+
+// Forward declarations
+class SdfReader;
 
 // OCV analysis mode
 enum class OcvMode { NONE, OCV, AOCV, POCV };
@@ -131,6 +135,22 @@ struct McmmWeightedScenario {
     std::string mode;            // functional mode name
     std::string corner;          // PVT corner name
     double guardband = 0.0;      // additional margin (ns)
+};
+
+// Chiplet-to-chiplet clock skew modeling for 2.5D/3D integration
+// Models inter-die clock distribution via silicon interposers (CoWoS, EMIB)
+// and micro-bump D2D interfaces.
+// Reference: TSMC CoWoS interconnect specs, Intel EMIB chiplet specs
+// Reference: Kannan et al., "Enabling Interposer-Based Disintegration of
+//            Multi-Core Processors", MICRO 2015
+struct ChipletSkewConfig {
+    double inter_chiplet_delay_ps = 50.0;   // base propagation delay across D2D PHY (ps)
+    double d2d_jitter_ps = 10.0;            // peak-to-peak jitter on D2D interface (ps)
+    double thermal_gradient_factor = 0.02;  // fractional delay change per degree C gradient
+    double interposer_loss_ps_per_mm = 5.0; // signal loss on Si interposer trace (ps/mm)
+    double micro_bump_delay_ps = 8.0;       // per-bump parasitic delay (ps)
+    int num_pll_stages = 2;                 // PLL stages in D2D clock recovery path
+    double pll_jitter_ps = 3.0;             // per-stage PLL jitter contribution (ps)
 };
 
 // Multi-corner derating factors with Temperature/Voltage scaling
@@ -354,11 +374,39 @@ public:
     void set_level_shifter_delay(double delay_ns) { level_shifter_delay_ = delay_ns; }
     void set_voltage_scaling_alpha(double alpha) { voltage_scaling_alpha_ = alpha; }
 
+    // ── Chiplet Skew Modeling ────────────────────────────────────────
+    // Assigns cells to chiplet IDs and adjusts clock arrivals at D2D boundaries.
+    // Inter-chiplet skew includes base propagation, D2D jitter, thermal gradient,
+    // interposer trace loss, micro-bump parasitics, and PLL jitter accumulation.
+    void set_chiplet_config(const ChipletSkewConfig& cfg) { chiplet_cfg_ = cfg; }
+    void assign_chiplet(const std::string& cell_name, int chiplet_id) {
+        cell_chiplet_map_[cell_name] = chiplet_id;
+    }
+    void set_chiplet_distance(int chiplet_a, int chiplet_b, double distance_mm) {
+        auto key = std::make_pair(std::min(chiplet_a, chiplet_b),
+                                  std::max(chiplet_a, chiplet_b));
+        chiplet_distances_[key] = distance_mm;
+    }
+    void set_chiplet_thermal_delta(int chiplet_id, double delta_c) {
+        chiplet_thermal_delta_[chiplet_id] = delta_c;
+    }
+    void apply_chiplet_skew();
+
     // Get timing for a specific net
     const PinTiming& timing(NetId net) const { return pin_timing_.at(net); }
 
     // Apply SDC constraints (false paths, multicycle paths, I/O delays)
     void set_sdc_constraints(const SdcConstraints& sdc) { sdc_ = &sdc; }
+
+    // ── SDF Back-Annotation ─────────────────────────────────────────
+    // Annotates cell delays from parsed SDF into the timing graph.
+    // Conditional delays are stored per-instance; during timing analysis,
+    // if the SDF condition matches the active mode, the conditional delay
+    // is used, otherwise the unconditional delay applies.
+    // Reference: IEEE Std 1497-2001, Section 5 — delay annotation semantics
+    void annotate_sdf(const SdfReader& reader);
+    void set_sdf_condition(const std::string& condition) { sdf_active_condition_ = condition; }
+    void clear_sdf_annotation() { sdf_cell_delays_.clear(); sdf_annotated_ = false; }
 
     // ── IR Drop Voltage Derating ─────────────────────────────────────────
     // Apply per-cell voltage derating from IR drop analysis results.
@@ -504,6 +552,27 @@ private:
 
     // MCMM weighted scenario state
     std::vector<McmmWeightedScenario> mcmm_scenarios_;
+
+    // Chiplet skew modeling state (2.5D/3D)
+    ChipletSkewConfig chiplet_cfg_;
+    std::unordered_map<std::string, int> cell_chiplet_map_;  // cell_name → chiplet_id
+    std::map<std::pair<int,int>, double> chiplet_distances_;  // (chiplet_a, chiplet_b) → mm
+    std::unordered_map<int, double> chiplet_thermal_delta_;   // chiplet_id → delta_C
+
+    // SDF back-annotation state
+    struct SdfAnnotatedDelay {
+        double unconditional_rise = 0.0;
+        double unconditional_fall = 0.0;
+        struct ConditionalEntry {
+            std::string condition;
+            double rise = 0.0;
+            double fall = 0.0;
+        };
+        std::vector<ConditionalEntry> conditionals;
+    };
+    std::unordered_map<std::string, SdfAnnotatedDelay> sdf_cell_delays_; // instance → delays
+    std::string sdf_active_condition_;
+    bool sdf_annotated_ = false;
 
     // Core STA steps
     void build_timing_graph();

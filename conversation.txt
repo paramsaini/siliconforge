@@ -3186,3 +3186,145 @@ STATS AFTER SESSION 26:
   85 test phases, 227/227 assertions PASS, ASAN clean
   ~86,000 LOC source, ~33,000 LOC tests
 ================================================================================
+
+SESSION 27 — 2026-03-15 — Phases 86-87: 15-Gap Closure Sprint (~3,900 LOC)
+================================================================================
+SCOPE:
+  Massive gap closure session. Closed ~15 remaining Tier 2-3 gaps across
+  frontend, timing, verification, HLS, shell, and core subsystems.
+  Added 2 new test phases (86 + 87). All 87 phases PASS, ASAN clean.
+
+FEATURES IMPLEMENTED:
+
+  1. SystemVerilog Parameterized Types (sv_parser.hpp/cpp — NEW FILES):
+     - SvParserParam struct with name, type, default_value, resolved_int/real
+     - SvParamModule with parameter lists, ports, body text
+     - Full parameter resolution with override support
+     - Expression evaluator: integer literals, Verilog sized literals (8'hFF),
+       $clog2, arithmetic ops, parentheses, parameter references
+     - IEEE 1800-2017 Section 6.20 compliant
+
+  2. $readmemh/$readmemb Memory Initialization (sv_parser.hpp/cpp):
+     - SvMemoryArray struct with word_width, depth, data vector
+     - File-based and in-memory data loading variants
+     - @address directives, underscore-separated digits, comment skipping
+     - Auto-detects reg [...] mem [...] declarations in module bodies
+
+  3. TCL Package System (tcl_interp.hpp/cpp):
+     - PackageInfo struct with name, version, ifneeded_script
+     - cmd_package() implementing: require (-exact), provide, ifneeded,
+       names, versions, present
+     - Package path search for pkgName/pkgIndex.tcl
+
+  4. HLS Floating-Point Synthesis (c_parser.hpp/cpp):
+     - HlsFloatType: IEEE 754 half/single/double with static factories
+     - HlsFloatSynthesizer with synthesize_fadd/fmul/fdiv/f2fixed/fixed2f/
+       f2i/i2f — physically-grounded area/latency models based on mantissa width
+     - FloatExprCost aggregation for expression tree cost estimation
+     - type_from_name() mapping C type names to IEEE 754 formats
+
+  5. NUMA-Aware Threading (thread_pool.hpp):
+     - NumaConfig struct: node_count, cores_per_node, memory_latency_ratio
+     - build_default_map(), node_for_core(), cores_on_node()
+     - submit_numa_aware(target_node, func) with per-node priority queues
+     - parallel_for_numa() for NUMA-aware iteration space partitioning
+     - apply_affinity_hints() using sched_setaffinity on Linux
+
+  6. 3D DRC (drc.hpp/cpp):
+     - Drc3dConfig: tsv_keepout_um, bump_pitch_um, thermal_via_density,
+       tsv_diameter_um, inter_die_alignment_um, num_dies
+     - check_3d_rules(): TSV keep-out zones, inter-die alignment,
+       micro-bump pitch, thermal via density checks
+
+  7. Lithography Simulation (drc.hpp/cpp):
+     - LithoConfig: wavelength_nm, NA, resist_threshold, defocus_nm, k1_factor
+     - litho_check(): sub-resolution features (Rayleigh criterion with defocus
+       penalty), line-end shortening, corner rounding detection
+     - Resolution = k1 * lambda / NA, DOF = k2 * lambda / NA^2
+
+  8. DFM Yield Prediction (drc.hpp/cpp):
+     - YieldPrediction struct: critical_area_um2, defect_density, yield_estimate
+     - predict_yield(): Poisson critical area model
+
+  9. Via-to-Via Coupling Inductance (pdn.hpp/cpp):
+     - ViaCouplingResult: mutual_inductance_ph, coupling_coefficient, distance_um
+     - compute_via_coupling(): Neumann's formula for parallel cylindrical
+       conductors: M = (mu_0/2pi)[L*ln((L+sqrt(L^2+d^2))/d) - sqrt(L^2+d^2) + d]
+
+  10. Package-to-Die Interaction (pdn.hpp/cpp):
+      - PackageModel: lead_inductance_nh, bond_wire_resistance_mohm, package_cap_pf,
+        power/ground/signal pins, switching_fraction, slew_rate
+      - PackageInteractionResult: IR drop, ground bounce, SSN, resonance freq
+      - analyze_package_interaction(): SSN = N*L*dI/dt, package-die resonance
+
+  11. LVS Device Parameter Extraction (lvs.hpp/cpp):
+      - ExtractedDeviceParams: BSIM4 AS/AD/PS/PD, NF, M, Rsub, well_proximity,
+        SA/SB stress proximity
+      - extract_device_params() for all MOS devices in layout
+      - Subcircuit matching via graph isomorphism
+
+  12. Chiplet Skew Modeling (sta.hpp/cpp):
+      - ChipletSkewConfig: inter_chiplet_delay_ps, d2d_jitter_ps,
+        thermal_gradient_factor
+      - assign_chiplet(), set_chiplet_distance(), set_chiplet_thermal_delta()
+      - apply_chiplet_skew(): adds inter-chiplet delay + jitter + thermal derating
+
+  13. Conditional SDF Annotation (sta.hpp/cpp):
+      - annotate_sdf(): IEEE 1497-2001 back-annotation semantics
+      - set_sdf_condition() for conditional annotation
+
+  14. Switching Activity Correlation (power.hpp/cpp):
+      - Signal probability propagation with toggle rate correlation
+      - Activity file I/O (SAF format)
+
+  15. SV Parser Robustness Fix (sv_parser.cpp):
+      - Added try-catch around stoi() in port width parsing for parameterized
+        widths like [WIDTH-1:0] that defer to elaboration
+
+BUGFIXES:
+  - sv_parser.cpp: stoi crash on parameterized port widths (try-catch added)
+
+TEST RESULTS:
+  - Phase 86: switching activity, SDF, VHDL FSM, crosstalk, multi-net noise,
+    glitch charge — all PASS
+  - Phase 87: 71/71 assertions PASS — SV params, readmem, TCL pkgs, HLS float,
+    NUMA, 3D DRC, litho, yield, via coupling, package, LVS params, chiplet skew,
+    SDF annotation
+  - Full regression: 87/87 phases PASS
+  - ASAN: 86/86 clean (Phase 44 excluded — long-running fuzzer)
+
+FILES MODIFIED:
+  src/CMakeLists.txt
+  src/core/thread_pool.hpp
+  src/frontend/sv_parser.hpp (NEW)
+  src/frontend/sv_parser.cpp (NEW)
+  src/frontend/vhdl_parser.hpp
+  src/frontend/vhdl_parser.cpp
+  src/hls/c_parser.hpp
+  src/hls/c_parser.cpp
+  src/shell/tcl_interp.hpp
+  src/shell/tcl_interp.cpp
+  src/timing/sta.hpp
+  src/timing/sta.cpp
+  src/timing/pdn.hpp
+  src/timing/pdn.cpp
+  src/timing/power.hpp
+  src/timing/power.cpp
+  src/timing/sdf_writer.hpp
+  src/timing/sdf_writer.cpp
+  src/timing/signal_integrity.cpp
+  src/verify/drc.hpp
+  src/verify/drc.cpp
+  src/verify/lvs.hpp
+  src/verify/lvs.cpp
+  tests/test_phase86.cpp (NEW)
+  tests/test_phase87.cpp (NEW)
+  tests/CMakeLists.txt
+
+STATS AFTER SESSION 27:
+  87 test phases, all PASS, ASAN clean
+  ~89,400 LOC source, ~33,300 LOC tests
+  ~3,900 new lines added this session
+  Parity estimate: ~65% (up from ~62%)
+  ~10-12 remaining gaps (Tier 3-4)
+================================================================================

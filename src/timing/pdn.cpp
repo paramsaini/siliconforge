@@ -614,4 +614,184 @@ IrFixResult PdnAnalyzer::fix_ir_hotspots(IrFixConfig fix_cfg, int grid_res) {
     return fix;
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// Via-to-Via Mutual Inductance (Neumann's Formula)
+//
+// For two parallel cylindrical conductors of length L separated by
+// center-to-center distance d:
+//
+//   M = (mu_0 * L) / (2 * pi) * [ln(2L/d) - 1 + d/L + ...]
+//
+// where mu_0 = 4*pi*1e-7 H/m.  This is the first-order Neumann
+// approximation valid when L >> d (typical for through-layer vias).
+//
+// For short vias where d ~ L, we use the more accurate form:
+//   M = (mu_0 / 2pi) * [L*ln((L + sqrt(L^2 + d^2))/d) - sqrt(L^2 + d^2) + d]
+//
+// Self-inductance of a single via (for coupling coefficient):
+//   L_self = (mu_0 * L) / (2 * pi) * [ln(2L/r) - 1 + r/(2L)]
+//   where r = via radius
+// ══════════════════════════════════════════════════════════════════════
+
+std::vector<ViaCouplingResult> PdnAnalyzer::compute_via_coupling(
+    double via_height_um, double max_distance_um) const {
+
+    std::vector<ViaCouplingResult> results;
+
+    // Physical constants
+    constexpr double mu_0 = 4.0 * M_PI * 1e-7; // H/m
+    // Convert dimensions to meters for the formula
+    double L = via_height_um * 1e-6;            // via height in meters
+    double r_via = 0.5e-6;                       // default via radius 0.5um
+
+    // Self-inductance of a single via (for coupling coefficient k = M/sqrt(L1*L2))
+    double ln_term_self = std::log(2.0 * L / r_via) - 1.0 + r_via / (2.0 * L);
+    double L_self_H = (mu_0 / (2.0 * M_PI)) * L * ln_term_self;
+    double L_self_ph = L_self_H * 1e12; // convert to picohenry
+
+    // Iterate over all via pairs in the physical design
+    const auto& vias = pd_.vias;
+    for (size_t i = 0; i < vias.size(); ++i) {
+        for (size_t j = i + 1; j < vias.size(); ++j) {
+            // Only consider vias on overlapping layer ranges (parallel conductors)
+            bool layer_overlap = (vias[i].upper_layer >= vias[j].lower_layer &&
+                                  vias[i].lower_layer <= vias[j].upper_layer);
+            if (!layer_overlap) continue;
+
+            double dx = (vias[i].position.x - vias[j].position.x) * 1e-6; // meters
+            double dy = (vias[i].position.y - vias[j].position.y) * 1e-6;
+            double d = std::sqrt(dx * dx + dy * dy);
+
+            // Skip if too far apart or coincident
+            double d_um = d * 1e6;
+            if (d_um > max_distance_um || d < 1e-12) continue;
+
+            // Neumann mutual inductance for parallel conductors
+            // M = (mu_0 / 2pi) * [L * ln((L + sqrt(L^2 + d^2)) / d) - sqrt(L^2 + d^2) + d]
+            double L2d2 = L * L + d * d;
+            double sqrt_L2d2 = std::sqrt(L2d2);
+            double M_H = (mu_0 / (2.0 * M_PI)) *
+                          (L * std::log((L + sqrt_L2d2) / d) - sqrt_L2d2 + d);
+            double M_ph = M_H * 1e12; // picohenry
+
+            // Coupling coefficient k = M / sqrt(L1 * L2)
+            // Both vias assumed identical: k = M / L_self
+            double k = (L_self_ph > 0) ? M_ph / L_self_ph : 0;
+            k = std::min(k, 1.0); // clamp to physical range
+
+            ViaCouplingResult vcr;
+            vcr.via_pair = {static_cast<int>(i), static_cast<int>(j)};
+            vcr.mutual_inductance_ph = M_ph;
+            vcr.coupling_coefficient = k;
+            vcr.distance_um = d_um;
+            results.push_back(vcr);
+        }
+    }
+
+    // Sort by coupling coefficient descending (strongest coupling first)
+    std::sort(results.begin(), results.end(),
+              [](const ViaCouplingResult& a, const ViaCouplingResult& b) {
+                  return a.coupling_coefficient > b.coupling_coefficient;
+              });
+
+    return results;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Package-to-Die Interaction Model
+//
+// Lumped RLC model of the package interconnect:
+//
+//   BGA ball → package trace → bond wire/bump → die pad
+//
+// IR drop on VDD rail:
+//   V_drop = I_total * (R_bond / N_power_pins)
+//
+// SSN (Simultaneous Switching Noise):
+//   V_ssn = N_switching * L_eff * dI/dt
+//   where L_eff = lead_inductance / N_ground_pins (parallel pins)
+//   and dI/dt = I_per_pin / t_rise = I_per_pin * slew_rate / V_swing
+//
+// Package-die resonance:
+//   f_res = 1 / (2*pi * sqrt(L_pkg * C_pkg))
+//   This resonance can amplify supply noise if it coincides with
+//   the clock frequency or its harmonics.
+// ══════════════════════════════════════════════════════════════════════
+
+PackageInteractionResult PdnAnalyzer::analyze_package_interaction(
+    const PackageModel& pkg) const {
+
+    PackageInteractionResult result;
+
+    // Effective resistance: parallel bond wires across all power pins
+    if (pkg.power_pins > 0) {
+        result.effective_pkg_resistance_mohm =
+            pkg.bond_wire_resistance_mohm / pkg.power_pins;
+    }
+
+    // Effective inductance: parallel leads across power pins
+    if (pkg.power_pins > 0) {
+        result.effective_pkg_inductance_nh =
+            pkg.lead_inductance_nh / pkg.power_pins;
+    }
+
+    // VDD-to-VSS loop inductance: power path inductance + ground return inductance
+    double l_vdd = (pkg.power_pins > 0) ? pkg.lead_inductance_nh / pkg.power_pins : pkg.lead_inductance_nh;
+    double l_vss = (pkg.ground_pins > 0) ? pkg.lead_inductance_nh / pkg.ground_pins : pkg.lead_inductance_nh;
+    result.total_loop_inductance_nh = l_vdd + l_vss;
+
+    // Package-level IR drop
+    // V_drop = I_total * R_eff
+    double total_current_ma = cfg_.total_current_ma;
+    result.pkg_ir_drop_mv = total_current_ma * result.effective_pkg_resistance_mohm * 1e-3;
+    // Convert mohm * mA = uV, so * 1e-3 for mV:
+    // Actually: I(A) * R(ohm) = V; I(mA) * R(mohm) = I*1e-3 * R*1e-3 = V*1e-6 = uV
+    // So mV = I(mA) * R(mohm) * 1e-3
+    result.pkg_ir_drop_mv = total_current_ma * result.effective_pkg_resistance_mohm * 1e-3;
+
+    // SSN computation
+    // Number of simultaneously switching outputs
+    int n_switching = static_cast<int>(pkg.signal_pins * pkg.switching_fraction);
+    if (n_switching < 1) n_switching = 1;
+
+    // dI/dt per pin: approximate as I_per_pin / t_rise
+    // t_rise = V_swing / slew_rate; for CMOS: V_swing ≈ VDD
+    double t_rise_ns = (pkg.slew_rate_v_per_ns > 0) ? cfg_.vdd / pkg.slew_rate_v_per_ns : 1.0;
+    double di_dt_per_pin = pkg.io_current_ma / t_rise_ns; // mA/ns = A/us
+
+    // Ground bounce: V_gnd = N_switching * L_gnd * dI/dt
+    // L in nH, dI/dt in mA/ns → V = L(nH) * dI/dt(mA/ns) = L*1e-9 * I*1e-3 / t*1e-9 = L*I/t * 1e-3 V
+    // → mV = L(nH) * dI/dt(mA/ns)
+    double l_ground_per_pin = (pkg.ground_pins > 0) ? pkg.lead_inductance_nh / pkg.ground_pins : pkg.lead_inductance_nh;
+    result.pkg_ground_bounce_mv = n_switching * l_ground_per_pin * di_dt_per_pin;
+
+    // Total SSN is the sum of VDD droop + ground bounce
+    double l_power_per_pin = (pkg.power_pins > 0) ? pkg.lead_inductance_nh / pkg.power_pins : pkg.lead_inductance_nh;
+    double vdd_droop_mv = n_switching * l_power_per_pin * di_dt_per_pin;
+    result.ssn_mv = vdd_droop_mv + result.pkg_ground_bounce_mv;
+
+    // Package-die resonance frequency
+    // f_res = 1 / (2*pi * sqrt(L_loop * C_pkg))
+    double l_loop_h = result.total_loop_inductance_nh * 1e-9;
+    double c_pkg_f = pkg.package_cap_pf * 1e-12;
+    if (l_loop_h > 0 && c_pkg_f > 0) {
+        double f_res_hz = 1.0 / (2.0 * M_PI * std::sqrt(l_loop_h * c_pkg_f));
+        result.resonance_freq_mhz = f_res_hz * 1e-6;
+    }
+
+    // Noise budget check: SSN should be < 10% of VDD for reliable operation
+    double noise_budget_mv = cfg_.vdd * 1000.0 * 0.10;
+    result.meets_noise_budget = result.ssn_mv < noise_budget_mv;
+
+    // Summary
+    result.summary = "Package IR drop: " + std::to_string(result.pkg_ir_drop_mv) + "mV, " +
+                     "Ground bounce: " + std::to_string(result.pkg_ground_bounce_mv) + "mV, " +
+                     "SSN: " + std::to_string(result.ssn_mv) + "mV (" +
+                     (result.meets_noise_budget ? "PASS" : "FAIL") +
+                     ", budget=" + std::to_string(noise_budget_mv) + "mV), " +
+                     "Resonance: " + std::to_string(result.resonance_freq_mhz) + "MHz, " +
+                     "Loop L: " + std::to_string(result.total_loop_inductance_nh) + "nH";
+    return result;
+}
+
 } // namespace sf

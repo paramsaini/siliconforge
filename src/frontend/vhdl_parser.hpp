@@ -41,6 +41,20 @@ struct VhdlGeneric {
     std::string default_value;
 };
 
+struct VhdlFsmInfo {
+    std::string state_signal;
+    int num_states = 0;
+    int num_transitions = 0;
+    bool synthesized = false;
+};
+
+struct VhdlIfBranch {
+    std::string cond_signal;
+    std::string cond_value;
+    std::string target;
+    std::string assign_value;
+};
+
 class VhdlParser {
 public:
     VhdlParseResult parse_string(const std::string& src, Netlist& nl);
@@ -51,6 +65,8 @@ public:
     const std::vector<VhdlPort>& ports() const { return ports_; }
     const std::vector<VhdlSignal>& signals() const { return signals_; }
     const std::vector<VhdlGeneric>& generics() const { return generics_; }
+
+    std::vector<VhdlFsmInfo> extract_vhdl_fsms() const;
 
 private:
     struct Token {

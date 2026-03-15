@@ -214,6 +214,23 @@ int CParser::parse_block(const std::vector<std::string>& tokens, size_t& i,
 }
 
 // ============================================================================
+// Float declaration parser
+// ============================================================================
+void CParser::parse_float_decl(const std::vector<std::string>& tokens, size_t& i) {
+    // float varname ; or double varname ; or half varname ;
+    std::string type_name = tokens[i]; i++;
+    if (i < tokens.size()) i++; // skip variable name
+    if (i < tokens.size() && tokens[i] == ";") i++;
+
+    HlsFloatType ft;
+    if (type_name == "float") ft = HlsFloatType::single();
+    else if (type_name == "double") ft = HlsFloatType::dbl();
+    else if (type_name == "half" || type_name == "__fp16") ft = HlsFloatType::half();
+    else ft = HlsFloatType::single();
+    float_types_.push_back(ft);
+}
+
+// ============================================================================
 // Parser entry point
 // ============================================================================
 std::vector<CfgBlock> CParser::parse(const std::string& source) {
@@ -222,11 +239,21 @@ std::vector<CfgBlock> CParser::parse(const std::string& source) {
     std::map<std::string, int> var_map;
     size_t i = 0;
 
-    // Pre-scan for struct and array declarations
+    // Pre-scan for struct, array, and float declarations
     while (i < tokens.size()) {
         if (tokens[i] == "struct") {
             parse_struct_decl(tokens, i);
             continue;
+        }
+        // Detect float/double/half declarations
+        if (tokens[i] == "float" || tokens[i] == "double" ||
+            tokens[i] == "half" || tokens[i] == "__fp16") {
+            // Check it's a declaration (next token is identifier, not operator)
+            if (i + 1 < tokens.size() && tokens[i + 1] != "(" &&
+                tokens[i + 1] != ")" && tokens[i + 1] != ";") {
+                parse_float_decl(tokens, i);
+                continue;
+            }
         }
         // Detect array declarations: type name [ size ]
         if (i + 3 < tokens.size() && tokens[i + 2] == "[") {
@@ -901,6 +928,169 @@ HlsResult HlsEnhanced::run_enhanced(const HlsConfig& cfg) {
 
     // Step 4: Synthesize using existing HlsSynthesizer
     return HlsSynthesizer::synthesize(cdfg_, cfg);
+}
+
+// ============================================================================
+// HlsFloatSynthesizer — IEEE 754 Floating-Point Unit Synthesis
+// Area/latency models based on published ASIC/FPGA implementation data.
+// Reference: Muller et al., "Handbook of Floating-Point Arithmetic" (Birkhauser)
+//            Jeong & Yoo, IEEE TCAD 2018 — FP unit area/power characterization
+// ============================================================================
+
+HlsFloatOpResult HlsFloatSynthesizer::synthesize_fadd(const HlsFloatType& fmt) {
+    HlsFloatOpResult r;
+    r.op = HlsFloatOpResult::FADD;
+
+    // FP add pipeline: (1) compare exponents & swap, (2) align mantissas,
+    // (3) add/subtract mantissas, (4) normalize (leading-zero detect + shift),
+    // (5) round (sticky/guard/round bits)
+    // Latency scales roughly as log2(mantissa_bits) for normalization
+    int norm_stages = 1;
+    if (fmt.mantissa_bits > 10) norm_stages = 2;
+    if (fmt.mantissa_bits > 23) norm_stages = 3;
+    r.latency_cycles = 3 + norm_stages; // swap+align, add, normalize, round
+
+    // Area: mantissa adder + barrel shifter + LZD + rounding logic
+    // Normalized to integer adder area = 1.0
+    double shifter_area = static_cast<double>(fmt.mantissa_bits) / 8.0;
+    double adder_area = static_cast<double>(fmt.mantissa_bits + 1) / 16.0;
+    double lzd_area = static_cast<double>(fmt.mantissa_bits) / 16.0;
+    r.area_estimate = shifter_area + adder_area + lzd_area + 1.5; // +1.5 for control/rounding
+
+    // FPGA: typically no dedicated DSP needed for FP add
+    r.dsp_blocks = 0;
+
+    r.rtl_module = "fp_add_" + std::to_string(fmt.width);
+    return r;
+}
+
+HlsFloatOpResult HlsFloatSynthesizer::synthesize_fmul(const HlsFloatType& fmt) {
+    HlsFloatOpResult r;
+    r.op = HlsFloatOpResult::FMUL;
+
+    // FP mul pipeline: (1) multiply mantissas (unsigned), (2) add exponents,
+    // (3) normalize (at most 1-bit shift), (4) round
+    // Mantissa multiplier dominates latency and area
+    int mul_stages = 1;
+    if (fmt.mantissa_bits > 10) mul_stages = 2;
+    if (fmt.mantissa_bits > 23) mul_stages = 3;
+    if (fmt.mantissa_bits > 52) mul_stages = 5;
+    r.latency_cycles = mul_stages + 2; // mul stages + exp_add + round
+
+    // Area: dominated by (mantissa+1) x (mantissa+1) multiplier
+    int m = fmt.mantissa_bits + 1;
+    double mul_area = static_cast<double>(m * m) / 256.0; // normalized
+    r.area_estimate = mul_area + 2.0; // +2 for exp adder, round, control
+
+    // FPGA: mantissa multiply maps to DSP blocks
+    // Xilinx DSP48 handles 25x18; larger needs multiple
+    r.dsp_blocks = std::max(1, (m + 17) / 18);
+
+    r.rtl_module = "fp_mul_" + std::to_string(fmt.width);
+    return r;
+}
+
+HlsFloatOpResult HlsFloatSynthesizer::synthesize_fdiv(const HlsFloatType& fmt) {
+    HlsFloatOpResult r;
+    r.op = HlsFloatOpResult::FDIV;
+
+    // FP div: iterative digit-recurrence (SRT radix-4) or Newton-Raphson
+    // SRT: ~mantissa_bits/2 cycles for radix-4
+    // Newton-Raphson: ~log2(mantissa_bits) iterations, each with multiply
+    int srt_cycles = (fmt.mantissa_bits + 1) / 2 + 2;
+    r.latency_cycles = srt_cycles + 2; // +2 for normalize and round
+
+    // Area: quotient digit selection table + partial remainder subtract + shift
+    double srt_area = static_cast<double>(fmt.mantissa_bits) / 4.0;
+    r.area_estimate = srt_area + 4.0; // +4 for control FSM, exp subtract, round
+
+    // FPGA: divider may use DSP for partial products in Newton-Raphson variant
+    r.dsp_blocks = (fmt.width >= 32) ? 2 : 1;
+
+    r.rtl_module = "fp_div_" + std::to_string(fmt.width);
+    return r;
+}
+
+HlsFloatOpResult HlsFloatSynthesizer::synthesize_f2fixed(const HlsFloatType& fmt) {
+    HlsFloatOpResult r;
+    r.op = HlsFloatOpResult::F2FIXED;
+
+    // Float-to-fixed: extract mantissa, shift by (exponent - bias - frac_bits)
+    // Single cycle for small formats, 2 for double
+    r.latency_cycles = (fmt.width <= 32) ? 2 : 3;
+
+    // Area: barrel shifter + sign extension
+    r.area_estimate = static_cast<double>(fmt.fixed_total()) / 8.0 + 1.0;
+    r.dsp_blocks = 0;
+
+    r.rtl_module = "fp2fixed_" + std::to_string(fmt.width) +
+                   "_" + std::to_string(fmt.fixed_int_bits) +
+                   "_" + std::to_string(fmt.fixed_frac_bits);
+    return r;
+}
+
+HlsFloatOpResult HlsFloatSynthesizer::synthesize_fixed2f(const HlsFloatType& fmt) {
+    HlsFloatOpResult r;
+    r.op = HlsFloatOpResult::FIXED2F;
+
+    // Fixed-to-float: leading-one detect on fixed value, shift to normalize,
+    // compute exponent = position + bias
+    r.latency_cycles = (fmt.width <= 32) ? 2 : 3;
+    r.area_estimate = static_cast<double>(fmt.fixed_total()) / 8.0 + 1.5;
+    r.dsp_blocks = 0;
+
+    r.rtl_module = "fixed2fp_" + std::to_string(fmt.fixed_int_bits) +
+                   "_" + std::to_string(fmt.fixed_frac_bits) +
+                   "_" + std::to_string(fmt.width);
+    return r;
+}
+
+HlsFloatOpResult HlsFloatSynthesizer::synthesize_f2i(const HlsFloatType& fmt) {
+    HlsFloatOpResult r;
+    r.op = HlsFloatOpResult::F2I;
+    r.latency_cycles = (fmt.width <= 32) ? 1 : 2;
+    r.area_estimate = static_cast<double>(fmt.mantissa_bits) / 8.0 + 1.0;
+    r.dsp_blocks = 0;
+    r.rtl_module = "fp2int_" + std::to_string(fmt.width);
+    return r;
+}
+
+HlsFloatOpResult HlsFloatSynthesizer::synthesize_i2f(const HlsFloatType& fmt) {
+    HlsFloatOpResult r;
+    r.op = HlsFloatOpResult::I2F;
+    r.latency_cycles = (fmt.width <= 32) ? 2 : 3;
+    r.area_estimate = static_cast<double>(fmt.mantissa_bits) / 8.0 + 1.5;
+    r.dsp_blocks = 0;
+    r.rtl_module = "int2fp_" + std::to_string(fmt.width);
+    return r;
+}
+
+HlsFloatType HlsFloatSynthesizer::type_from_name(const std::string& type_name) {
+    if (type_name == "float" || type_name == "float32" || type_name == "binary32")
+        return HlsFloatType::single();
+    if (type_name == "double" || type_name == "float64" || type_name == "binary64")
+        return HlsFloatType::dbl();
+    if (type_name == "half" || type_name == "__fp16" || type_name == "float16" || type_name == "binary16")
+        return HlsFloatType::half();
+    // Default: single precision
+    return HlsFloatType::single();
+}
+
+HlsFloatSynthesizer::FloatExprCost
+HlsFloatSynthesizer::estimate_cost(const std::vector<HlsFloatOpResult>& ops) {
+    FloatExprCost cost;
+    for (auto& op : ops) {
+        cost.total_latency = std::max(cost.total_latency, op.latency_cycles);
+        cost.total_area += op.area_estimate;
+        switch (op.op) {
+            case HlsFloatOpResult::FADD:
+            case HlsFloatOpResult::FSUB: cost.adders++; break;
+            case HlsFloatOpResult::FMUL: cost.multipliers++; break;
+            case HlsFloatOpResult::FDIV: cost.dividers++; break;
+            default: cost.converters++; break;
+        }
+    }
+    return cost;
 }
 
 } // namespace sf

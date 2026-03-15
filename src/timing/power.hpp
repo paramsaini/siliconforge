@@ -125,6 +125,20 @@ public:
     // Enhanced power run
     PowerResult run_enhanced();
 
+    // Gate-level switching activity correlation
+    // Tracks reconvergent fanout and input correlation to reduce pessimism
+    struct CorrelationResult {
+        int correlated_pairs = 0;       // pairs with correlation > threshold
+        int reconvergent_fanouts = 0;   // reconvergent fanout points detected
+        double avg_correlation = 0;     // average pairwise correlation
+        double power_reduction_pct = 0; // estimated power reduction from correlation
+    };
+    CorrelationResult analyze_activity_correlation(double threshold = 0.3);
+
+    // SAF (Switching Activity File) I/O
+    bool write_saf(const std::string& filename) const;
+    bool read_saf(const std::string& filename);
+
     // ── IR drop feedback to leakage power ────────────────────────────
     // Derate leakage based on per-cell actual voltage:
     // P_leak_derated = P_leak * exp(-alpha * (Vdd - V_actual) / Vt)

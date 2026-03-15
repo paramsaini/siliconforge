@@ -409,6 +409,7 @@ void TclInterp::register_builtins() {
     register_command("concat", [this](auto& a) { return cmd_concat(a); });
     register_command("eval", [this](auto& a) { return cmd_eval_cmd(a); });
     register_command("lmap", [this](auto& a) { return cmd_lmap(a); });
+    register_command("package", [this](auto& a) { return cmd_package(a); });
     register_command("break", [](auto&) -> std::string { throw std::string("break"); });
     register_command("continue", [](auto&) -> std::string { throw std::string("continue"); });
 }
@@ -1181,6 +1182,133 @@ std::string TclInterp::cmd_lmap(const std::vector<std::string>& args) {
         result += r;
     }
     return result;
+}
+
+// ── Package system ───────────────────────────────────────────────────
+// Reference: TCL 8.6 package command — require, provide, ifneeded, names, versions
+std::string TclInterp::cmd_package(const std::vector<std::string>& args) {
+    if (args.empty()) return "";
+    std::string subcmd = args[0];
+
+    if (subcmd == "require") {
+        // package require ?-exact? name ?version?
+        if (args.size() < 2) return "";
+        size_t idx = 1;
+        bool exact = false;
+        if (args[idx] == "-exact") { exact = true; idx++; }
+        if (idx >= args.size()) return "";
+        std::string pkg_name = args[idx++];
+        std::string req_version;
+        if (idx < args.size()) req_version = args[idx];
+
+        // Check if already provided
+        auto it = package_registry_.find(pkg_name);
+        if (it != package_registry_.end() && it->second.provided) {
+            if (!req_version.empty() && exact && it->second.version != req_version)
+                return "";
+            return it->second.version;
+        }
+
+        // Check if ifneeded script is registered
+        if (it != package_registry_.end() && !it->second.ifneeded_script.empty()) {
+            eval(it->second.ifneeded_script);
+            it = package_registry_.find(pkg_name);
+            if (it != package_registry_.end() && it->second.provided)
+                return it->second.version;
+        }
+
+        // Search package_path_ for package index or package file
+        for (auto& dir : package_path_) {
+            // Try sourcing dir/pkg_name/pkgIndex.tcl
+            std::string idx_path = dir + "/" + pkg_name + "/pkgIndex.tcl";
+            std::ifstream f(idx_path);
+            if (f.good()) {
+                f.close();
+                source_file(idx_path);
+                it = package_registry_.find(pkg_name);
+                if (it != package_registry_.end()) {
+                    if (!it->second.ifneeded_script.empty())
+                        eval(it->second.ifneeded_script);
+                    if (it->second.provided)
+                        return it->second.version;
+                }
+            }
+
+            // Try sourcing dir/pkg_name.tcl directly
+            std::string direct_path = dir + "/" + pkg_name + ".tcl";
+            std::ifstream f2(direct_path);
+            if (f2.good()) {
+                f2.close();
+                source_file(direct_path);
+                it = package_registry_.find(pkg_name);
+                if (it != package_registry_.end() && it->second.provided)
+                    return it->second.version;
+            }
+        }
+
+        return "";
+    }
+
+    if (subcmd == "provide") {
+        // package provide name ?version?
+        if (args.size() < 2) return "";
+        std::string pkg_name = args[1];
+        std::string version = (args.size() >= 3) ? args[2] : "1.0";
+        auto& info = package_registry_[pkg_name];
+        info.name = pkg_name;
+        info.version = version;
+        info.provided = true;
+        return version;
+    }
+
+    if (subcmd == "ifneeded") {
+        // package ifneeded name version ?script?
+        if (args.size() < 3) return "";
+        std::string pkg_name = args[1];
+        std::string version = args[2];
+        if (args.size() >= 4) {
+            auto& info = package_registry_[pkg_name];
+            info.name = pkg_name;
+            info.version = version;
+            info.ifneeded_script = args[3];
+            return "";
+        }
+        // Query mode: return the ifneeded script
+        auto it = package_registry_.find(pkg_name);
+        if (it != package_registry_.end())
+            return it->second.ifneeded_script;
+        return "";
+    }
+
+    if (subcmd == "names") {
+        // package names — return list of known packages
+        std::string result;
+        for (auto& [name, info] : package_registry_) {
+            if (!result.empty()) result += " ";
+            result += name;
+        }
+        return result;
+    }
+
+    if (subcmd == "versions") {
+        // package versions name
+        if (args.size() < 2) return "";
+        auto it = package_registry_.find(args[1]);
+        if (it != package_registry_.end())
+            return it->second.version;
+        return "";
+    }
+
+    if (subcmd == "present") {
+        // package present name — check if loaded
+        if (args.size() < 2) return "";
+        auto it = package_registry_.find(args[1]);
+        if (it != package_registry_.end() && it->second.provided)
+            return it->second.version;
+        return "";
+    }
+
+    return "";
 }
 
 // ── Register SiliconForge engine commands as TCL procedures ──────────

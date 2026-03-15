@@ -50,4 +50,26 @@ private:
     double nldm_delay(const std::string& cell_name, double slew, double load) const;
 };
 
+struct SdfCellDelay {
+    std::string instance;
+    std::string cell_type;
+    std::vector<SdfCondDelay> unconditional;
+    std::vector<SdfCondDelay> conditional;
+};
+
+class SdfReader {
+public:
+    explicit SdfReader(Netlist& nl) : nl_(nl) {}
+
+    bool parse(const std::string& sdf_content);
+    bool load(const std::string& filename);
+    const std::vector<SdfCellDelay>& cell_delays() const { return delays_; }
+    double lookup_delay(const std::string& instance, bool is_rise,
+                        const std::string& condition = "") const;
+
+private:
+    Netlist& nl_;
+    std::vector<SdfCellDelay> delays_;
+};
+
 } // namespace sf

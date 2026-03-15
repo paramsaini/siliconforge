@@ -51,6 +51,59 @@ public:
     };
     ExtractionResult extract_devices();
 
+    // Extended BSIM4-level device parameter extraction
+    // Beyond basic W/L, extracts source/drain geometry, finger count,
+    // multiplier, and substrate/well resistance parameters needed for
+    // accurate SPICE netlisting and post-layout simulation.
+    //
+    // Reference: BSIM4 Technical Manual, UC Berkeley (Chauhan et al.)
+    // Reference: Nagel, "SPICE2: A Computer Program to Simulate Semiconductor Circuits"
+    // Reference: Cao et al., "Modeling of Advanced MOSFET Parasitic Elements", TCAD 2001
+    struct ExtractedDeviceParams {
+        std::string instance_name;
+        std::string cell_type;
+
+        // Basic geometry (already extracted in W/L)
+        double w = 0.0;                // gate width per finger (um)
+        double l = 0.0;                // gate length (um)
+
+        // Source/drain area and perimeter (BSIM4: AS, AD, PS, PD)
+        // Critical for accurate junction capacitance and leakage modeling.
+        // AS/AD = source/drain diffusion area
+        // PS/PD = source/drain diffusion perimeter (includes STI edges)
+        double as_area = 0.0;          // source diffusion area (um^2)
+        double ad_area = 0.0;          // drain diffusion area (um^2)
+        double ps_perim = 0.0;         // source diffusion perimeter (um)
+        double pd_perim = 0.0;         // drain diffusion perimeter (um)
+
+        // Multi-finger and multiplier (BSIM4: NF, M)
+        // NF: number of gate fingers sharing source/drain
+        // M:  parallel instances (layout multiplier)
+        int nf = 1;                    // number of gate fingers
+        int m = 1;                     // instance multiplier
+
+        // Substrate resistance (BSIM4: RBPB, RBPS, RBPD)
+        // Well/substrate parasitic R from tap to device body terminal.
+        // Important for noise coupling and body effect accuracy.
+        double rsub = 0.0;            // substrate resistance to nearest tap (Ohm)
+        double well_proximity = 0.0;  // distance to nearest well edge (um)
+
+        // Derived effective dimensions
+        double w_eff() const { return w * nf * m; }   // total effective width
+        double sa = 0.0;              // source-side stress proximity (um) — LOD/STI effect
+        double sb = 0.0;              // drain-side stress proximity (um) — LOD/STI effect
+    };
+
+    struct ExtractedParamsResult {
+        std::vector<ExtractedDeviceParams> devices;
+        int total_extracted = 0;
+        int mos_extracted = 0;
+        int failed = 0;               // devices where extraction was incomplete
+    };
+
+    // Extract full BSIM4 parameters for all MOS devices in the layout
+    ExtractedParamsResult extract_device_params();
+
     // Subcircuit matching (graph isomorphism)
     struct SubcircuitMatch {
         std::string schematic_name;

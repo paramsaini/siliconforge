@@ -20,6 +20,7 @@ add_library(siliconforge_lib STATIC
     frontend/upf_parser.cpp
     frontend/vhdl_parser.cpp
     frontend/sv_elaborate.cpp
+    frontend/sv_parser.cpp
 
     # ── Synthesis ─────────────────────────────────────────────────────
     synth/aig_opt.cpp

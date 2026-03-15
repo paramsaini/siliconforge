@@ -59,35 +59,59 @@ double SignalIntegrityAnalyzer::coupling_cap(int net_a, int net_b) const {
     double total_coupling = 0;
     for (auto& wa : pd_.wires) {
         for (auto& wb : pd_.wires) {
-            if (wa.layer != wb.layer) continue;
+            // Same-layer (lateral) coupling
+            bool same_layer = (wa.layer == wb.layer);
+            // Cross-layer (vertical) coupling: adjacent layers only
+            bool cross_layer = (std::abs(wa.layer - wb.layer) == 1);
+            if (!same_layer && !cross_layer) continue;
+
             bool a_horiz = std::abs(wa.start.y - wa.end.y) < 0.01;
             bool b_horiz = std::abs(wb.start.y - wb.end.y) < 0.01;
-            if (a_horiz != b_horiz) continue;
 
             double spacing;
-            if (a_horiz) {
-                spacing = std::abs((wa.start.y + wa.end.y)/2 - (wb.start.y + wb.end.y)/2);
+            if (same_layer) {
+                if (a_horiz != b_horiz) continue;  // orthogonal same-layer: no parallel coupling
+                if (a_horiz)
+                    spacing = std::abs((wa.start.y + wa.end.y)/2 - (wb.start.y + wb.end.y)/2);
+                else
+                    spacing = std::abs((wa.start.x + wa.end.x)/2 - (wb.start.x + wb.end.x)/2);
             } else {
-                spacing = std::abs((wa.start.x + wa.end.x)/2 - (wb.start.x + wb.end.x)/2);
+                // Cross-layer: vertical spacing is ILD thickness (~0.3 um typical)
+                spacing = 0.3;
             }
 
             if (spacing > 0 && spacing < cfg_.coupling_distance_um) {
-                double overlap_len;
-                if (a_horiz) {
-                    double a_min = std::min(wa.start.x, wa.end.x);
-                    double a_max = std::max(wa.start.x, wa.end.x);
-                    double b_min = std::min(wb.start.x, wb.end.x);
-                    double b_max = std::max(wb.start.x, wb.end.x);
-                    overlap_len = std::max(0.0, std::min(a_max, b_max) - std::max(a_min, b_min));
+                // Compute parallel run length (overlap in dominant direction)
+                double overlap_len = 0;
+                if (same_layer) {
+                    if (a_horiz) {
+                        double a_min = std::min(wa.start.x, wa.end.x);
+                        double a_max = std::max(wa.start.x, wa.end.x);
+                        double b_min = std::min(wb.start.x, wb.end.x);
+                        double b_max = std::max(wb.start.x, wb.end.x);
+                        overlap_len = std::max(0.0, std::min(a_max, b_max) - std::max(a_min, b_min));
+                    } else {
+                        double a_min = std::min(wa.start.y, wa.end.y);
+                        double a_max = std::max(wa.start.y, wa.end.y);
+                        double b_min = std::min(wb.start.y, wb.end.y);
+                        double b_max = std::max(wb.start.y, wb.end.y);
+                        overlap_len = std::max(0.0, std::min(a_max, b_max) - std::max(a_min, b_min));
+                    }
                 } else {
-                    double a_min = std::min(wa.start.y, wa.end.y);
-                    double a_max = std::max(wa.start.y, wa.end.y);
-                    double b_min = std::min(wb.start.y, wb.end.y);
-                    double b_max = std::max(wb.start.y, wb.end.y);
-                    overlap_len = std::max(0.0, std::min(a_max, b_max) - std::max(a_min, b_min));
+                    // Cross-layer overlap: project both onto X then Y, take geometric mean
+                    double ax0 = std::min(wa.start.x, wa.end.x), ax1 = std::max(wa.start.x, wa.end.x);
+                    double bx0 = std::min(wb.start.x, wb.end.x), bx1 = std::max(wb.start.x, wb.end.x);
+                    double ox = std::max(0.0, std::min(ax1, bx1) - std::max(ax0, bx0));
+                    double ay0 = std::min(wa.start.y, wa.end.y), ay1 = std::max(wa.start.y, wa.end.y);
+                    double by0 = std::min(wb.start.y, wb.end.y), by1 = std::max(wb.start.y, wb.end.y);
+                    double oy = std::max(0.0, std::min(ay1, by1) - std::max(ay0, by0));
+                    overlap_len = std::max(ox, oy);
                 }
-                if (spacing > 0)
-                    total_coupling += 0.05 * overlap_len / spacing; // fF
+                if (overlap_len > 0 && spacing > 0) {
+                    // Coupling per-unit-length scaled by 1/spacing, cross-layer attenuated 0.6×
+                    double scale = same_layer ? 1.0 : 0.6;
+                    total_coupling += scale * 0.05 * overlap_len / spacing; // fF
+                }
             }
         }
     }
@@ -116,6 +140,8 @@ SiResult SignalIntegrityAnalyzer::analyze() {
         double worst_coupling = 0;
         double worst_cid = 0;
         int worst_agg = -1;
+        double noise_sq_sum = 0;   // RSS accumulator for multi-aggressor superposition
+        double total_cid = 0;      // sum of CID contributions from all aggressors
 
         for (int j = 0; j < (int)pd_.nets.size(); ++j) {
             if (i == j) continue;
@@ -153,11 +179,15 @@ SiResult SignalIntegrityAnalyzer::analyze() {
                                       av.aggressor_slew_ps);
             cid *= av.timing_overlap; // weight by overlap
             av.cid_ps = cid;
+            total_cid += cid;  // aggregate CID from all aggressors
 
             // Noise
             double noise = noise_voltage(av.effective_cap_ff, c_victim, cfg_.vdd);
             noise *= (av.timing_overlap > 0 ? av.timing_overlap : 1.0);
             av.noise_mv = noise * 1000.0;
+
+            // RSS noise superposition: σ_total² = Σσ_i²
+            noise_sq_sum += (noise * 1000.0) * (noise * 1000.0);
 
             // Glitch width ~ proportional to coupling ratio × slew
             av.glitch_width_ps = (c_victim > 0) ?
@@ -178,13 +208,16 @@ SiResult SignalIntegrityAnalyzer::analyze() {
         }
 
         if (worst_coupling > 0) {
+            // Use RSS noise (multi-aggressor superposition) instead of single worst
+            double rss_noise_mv = std::sqrt(noise_sq_sum);
+
             CrosstalkVictim v;
             v.net_id = i;
             v.net_name = pd_.nets[i].name;
             v.coupling_cap_ff = worst_coupling;
-            v.noise_mv = worst_noise * 1000;
-            v.delay_impact_ps = worst_coupling * 0.5; // legacy simplified
-            v.is_glitch_risk = worst_noise > noise_threshold;
+            v.noise_mv = rss_noise_mv;                 // RSS superposition
+            v.delay_impact_ps = total_cid;              // aggregated CID from all aggressors
+            v.is_glitch_risk = rss_noise_mv > noise_threshold * 1000.0;
 
             r.details.push_back(v);
             r.victims++;
@@ -325,34 +358,40 @@ std::vector<GlitchResult> SignalIntegrityAnalyzer::check_glitch_energy() {
     double ff_threshold_fj = 0.5;  // flip-flop capture energy threshold
 
     for (int v = 0; v < (int)pd_.nets.size(); ++v) {
-        double max_energy = 0;
+        double total_charge_fc = 0;  // accumulated charge across all aggressors (fC)
+        double total_energy_fj = 0;  // accumulated glitch energy (fJ)
+
+        double c_victim = cfg_.victim_base_cap_ff;
+        for (auto cid : pd_.nets[v].cell_ids) {
+            (void)cid;
+            c_victim += cfg_.pin_cap_ff;
+        }
+
         for (int a = 0; a < (int)pd_.nets.size(); ++a) {
             if (v == a) continue;
             double cc = coupling_cap(v, a);
             if (cc <= 0) continue;
 
-            double c_victim = cfg_.victim_base_cap_ff;
-            for (auto cid : pd_.nets[v].cell_ids) {
-                (void)cid;
-                c_victim += cfg_.pin_cap_ff;
-            }
-
-            double noise_v = noise_voltage(
-                effective_coupling(cc, cfg_.miller_factor, true), c_victim, cfg_.vdd);
+            double cc_eff = effective_coupling(cc, cfg_.miller_factor, true);
+            double noise_v = noise_voltage(cc_eff, c_victim, cfg_.vdd);
             double noise_mv = noise_v * 1000.0;
             double width_ps = (c_victim > 0) ? (cc / c_victim) * 50.0 * 0.5 : 0;
 
-            // Glitch energy = amplitude(mV) * width(ps) * coupling_cap(fF) * 1e-3 → fJ
+            // Charge injection: Q = Cc_eff × ΔV (fF × V = fC)
+            double charge = cc_eff * cfg_.vdd;  // worst-case full-swing aggressor
+            total_charge_fc += charge;
+
+            // Energy per aggressor: E = noise × width × Cc × 1e-3 → fJ
             double energy = noise_mv * width_ps * cc * 1e-3;
-            max_energy = std::max(max_energy, energy);
+            total_energy_fj += energy;  // superpose across all aggressors
         }
 
-        if (max_energy > 0) {
+        if (total_energy_fj > 0) {
             GlitchResult gr;
             gr.net_idx = v;
-            gr.glitch_energy_fj = max_energy;
+            gr.glitch_energy_fj = total_energy_fj;
             gr.threshold_fj = ff_threshold_fj;
-            gr.is_functional_failure = max_energy > ff_threshold_fj;
+            gr.is_functional_failure = total_energy_fj > ff_threshold_fj;
             result.push_back(gr);
         }
     }

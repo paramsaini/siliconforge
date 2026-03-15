@@ -66,6 +66,16 @@ private:
     };
     std::unordered_map<std::string, TclDict> dicts_;
 
+    // TCL package system (reference: Synopsys DC Shell / Cadence Innovus)
+    struct PackageInfo {
+        std::string name;
+        std::string version;
+        std::string ifneeded_script;  // script to source when package is required
+        bool provided = false;        // true after 'package provide'
+    };
+    std::unordered_map<std::string, PackageInfo> package_registry_;
+    std::vector<std::string> package_path_;  // search paths for package files
+
     // Industrial: namespaces
     std::string current_ns_ = "::";
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> ns_vars_;
@@ -127,6 +137,7 @@ private:
     std::string cmd_concat(const std::vector<std::string>& args);
     std::string cmd_eval_cmd(const std::vector<std::string>& args);
     std::string cmd_lmap(const std::vector<std::string>& args);
+    std::string cmd_package(const std::vector<std::string>& args);
 };
 
 } // namespace sf

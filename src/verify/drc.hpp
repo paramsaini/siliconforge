@@ -173,6 +173,17 @@ struct DrcResult {
     // Context-dependent and inter-layer rule violation counts
     int context_rule_violations = 0;
     int inter_layer_violations = 0;
+
+    // 3D IC rule violation counts
+    int tsv_keepout_violations = 0;
+    int inter_die_alignment_violations = 0;
+    int bump_pitch_violations = 0;
+    int thermal_via_density_violations = 0;
+
+    // Lithography violation counts
+    int litho_resolution_violations = 0;
+    int litho_line_end_violations = 0;
+    int litho_corner_rounding_violations = 0;
 };
 
 // ── Context-dependent rules ──────────────────────────────────────────────
@@ -194,6 +205,72 @@ struct InterLayerRule {
     double min_spacing = 0.0;
     double min_enclosure = 0.0;
     std::string type;           // "spacing", "enclosure", "extension"
+};
+
+// ── 3D IC Design Rule Configuration ─────────────────────────────────────
+// Rules for 2.5D/3D stacked die: through-silicon vias (TSVs), micro-bumps,
+// inter-die alignment, and thermal via density for vertical heat extraction.
+//
+// References:
+//   - ITRS 3D integration roadmap (keep-out zone scaling)
+//   - Lau, "3D IC Integration and Packaging", McGraw-Hill
+//   - JEDEC JC-14 bump pitch standards
+
+struct Drc3dConfig {
+    double tsv_keepout_um = 5.0;         // minimum exclusion zone around each TSV
+    double bump_pitch_um = 40.0;         // micro-bump center-to-center pitch
+    double thermal_via_density = 0.05;   // minimum thermal via density (fraction)
+    double tsv_diameter_um = 5.0;        // TSV barrel diameter
+    double inter_die_alignment_um = 1.0; // maximum tolerated die-to-die misalignment
+    double min_bump_diameter_um = 20.0;  // minimum micro-bump pad diameter
+    int num_dies = 2;                    // number of stacked dies
+};
+
+// ── Lithography Simulation Configuration ────────────────────────────────
+// Simplified aerial image simulation for printability analysis using
+// Rayleigh diffraction limit: resolution = k1 * lambda / NA.
+//
+// References:
+//   - Mack, "Fundamental Principles of Optical Lithography", Wiley
+//   - Wong, "Resolution Enhancement Techniques in Optical Lithography"
+//   - Rayleigh criterion for minimum resolvable feature
+
+struct LithoConfig {
+    double wavelength_nm = 193.0;        // exposure wavelength (193nm ArF immersion)
+    double NA = 1.35;                    // numerical aperture (immersion scanner)
+    double resist_threshold = 0.3;       // aerial image threshold (normalized)
+    double defocus_nm = 30.0;            // defocus budget
+    double k1_factor = 0.28;             // process k1 factor (0.25 = aggressive EUV, 0.5 = relaxed)
+    double sigma_outer = 0.9;            // illumination outer sigma (annular/dipole)
+    double sigma_inner = 0.6;            // illumination inner sigma
+};
+
+// DFM Yield Prediction based on DRC violation density
+// Uses Poisson yield model: Y = exp(-D * A_crit)
+// where D = defect density (defects/cm^2) and A_crit = critical area (cm^2)
+// Critical area computed from minimum spacing violations and wire density.
+//
+// Reference: Stapper, "Modeling of Defects in IC Photolithographic Patterns", IBM J. Res. 1984
+// Reference: Koren & Koren, "Defect Tolerant VLSI Circuits", IEEE Design & Test 1998
+// Reference: Papadopoulou et al., "Critical Area Computation via Voronoi Diagrams", TCAD 2000
+struct YieldPrediction {
+    double critical_area_um2 = 0.0;     // total critical area susceptible to defects
+    double defect_density = 0.5;        // defects per cm^2 (fab-specific, typical 0.1-2.0)
+    double yield_estimate = 1.0;        // predicted parametric yield [0, 1]
+    int killer_defect_count = 0;        // estimated killer defects from violation clustering
+
+    // Per-layer critical area breakdown
+    struct LayerCritArea {
+        int layer = 0;
+        double spacing_crit_area = 0.0;   // critical area from min-spacing near-violations
+        double width_crit_area = 0.0;     // critical area from narrow width segments
+        double via_crit_area = 0.0;       // critical area around via clusters
+    };
+    std::vector<LayerCritArea> layer_breakdown;
+
+    // Yield loss contributors
+    double systematic_yield_loss = 0.0; // from DRC violations (deterministic)
+    double random_yield_loss = 0.0;     // from defect density (stochastic)
 };
 
 class DrcEngine {
@@ -310,6 +387,28 @@ public:
     void add_inter_layer_rule(const InterLayerRule& rule);
     int check_inter_layer_rules(DrcResult& r);
 
+    // ── 3D IC design rule checks ────────────────────────────────────
+    // Validates 3D-specific manufacturing constraints for TSV-based
+    // stacked die integration, micro-bump interconnect, and thermal
+    // via placement density.
+    void set_3d_config(const Drc3dConfig& cfg) { drc3d_cfg_ = cfg; }
+    const Drc3dConfig& drc3d_config() const { return drc3d_cfg_; }
+    DrcResult check_3d_rules();
+
+    // ── DFM Yield Prediction ─────────────────────────────────────────
+    // Estimates parametric yield from critical area analysis and DRC
+    // violation density using the Poisson yield model.
+    // defect_density: defects/cm^2 (typical fab range: 0.1 for mature, 2.0 for early)
+    YieldPrediction predict_yield(double defect_density = 0.5);
+
+    // ── Lithography printability analysis ────────────────────────────
+    // Identifies features below the optical resolution limit (Rayleigh
+    // criterion), line-end shortening candidates, and corner rounding
+    // regions.  Uses k1*lambda/NA as the minimum resolvable feature.
+    void set_litho_config(const LithoConfig& cfg) { litho_cfg_ = cfg; }
+    const LithoConfig& litho_config() const { return litho_cfg_; }
+    DrcResult litho_check();
+
 private:
     std::vector<ViaEnclosureRule> via_enclosure_rules_;
     std::vector<DensityRule> density_rules_;
@@ -321,6 +420,8 @@ private:
     const PhysicalDesign& pd_;
     std::vector<DrcRule> rules_;
     DrcConfig config_;
+    Drc3dConfig drc3d_cfg_;
+    LithoConfig litho_cfg_;
 
     // Spatial index for O(n log n) neighbor queries
     struct GridCell { std::vector<int> wire_ids; std::vector<int> cell_ids; std::vector<int> via_ids; };

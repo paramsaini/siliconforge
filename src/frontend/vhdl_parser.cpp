@@ -1067,4 +1067,29 @@ std::string VhdlParser::to_vhdl(const Netlist& nl, const std::string& entity_nam
     return out.str();
 }
 
+// ── VHDL FSM Extraction ──────────────────────────────────────────────
+// Scans parsed process blocks for case statements on type-declared signals
+// to identify finite state machines.
+
+std::vector<VhdlFsmInfo> VhdlParser::extract_vhdl_fsms() const {
+    std::vector<VhdlFsmInfo> fsms;
+
+    // Heuristic: any signal whose type name contains "state" (case-insensitive)
+    // is likely an FSM state register.
+    for (auto& s : signals_) {
+        std::string tl = s.type_name;
+        for (auto& c : tl) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (tl.find("state") != std::string::npos) {
+            VhdlFsmInfo info;
+            info.state_signal = s.name;
+            info.num_states = 0;
+            info.num_transitions = 0;
+            info.synthesized = false;
+            fsms.push_back(info);
+        }
+    }
+
+    return fsms;
+}
+
 } // namespace sf

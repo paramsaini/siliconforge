@@ -1582,4 +1582,195 @@ LvsChecker::HierarchicalLvsResult LvsChecker::check_hierarchical() {
     return result;
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// BSIM4-Level Device Parameter Extraction
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Extends basic W/L extraction with full SPICE parameter set:
+//   - AS/AD: source/drain diffusion area from layout geometry
+//   - PS/PD: source/drain diffusion perimeter (STI-bounded)
+//   - NF:    gate finger count (multi-finger transistors)
+//   - M:     instance multiplier (parallel devices)
+//   - Rsub:  substrate resistance from tap proximity
+//
+// Computation methodology:
+//
+//   For a single-finger MOSFET with gate width W and length L:
+//     AS = AD = W * Ldiff  (where Ldiff = diffusion extension beyond gate)
+//     PS = PD = 2*(W + Ldiff)
+//
+//   For multi-finger (NF fingers):
+//     Shared S/D regions reduce total area.
+//     AS_total = W * Ldiff * (ceil(NF/2) + 1) / NF  (outer + shared)
+//     AD_total = W * Ldiff * (floor(NF/2) + 1) / NF
+//     PS_total = 2*W + 2*Ldiff * (ceil(NF/2) + 1) / NF
+//     PD_total = 2*W + 2*Ldiff * (floor(NF/2) + 1) / NF
+//
+//   Substrate resistance:
+//     Rsub = Rsheet_sub * distance_to_tap / (W * NF)
+//     Typical Rsheet_sub ≈ 500 Ω/sq for p-sub
+//
+// Reference: BSIM4 Technical Manual v4.8, UC Berkeley
+// Reference: Cao et al., "Modeling of Advanced MOSFET Parasitic Elements"
+
+LvsChecker::ExtractedParamsResult LvsChecker::extract_device_params() {
+    ExtractedParamsResult result;
+
+    // First, extract basic devices to get W/L and terminal mapping
+    auto basic = extract_devices();
+
+    // Default diffusion extension past gate edge (technology-dependent)
+    // Typical for 28nm-7nm: 0.05 to 0.15 um
+    const double ldiff_default = 0.10; // um
+
+    // Substrate sheet resistance (Ohm/square, typical p-type substrate)
+    const double rsub_sheet = 500.0;
+
+    // Collect tap cell locations for substrate resistance calculation
+    std::vector<std::pair<double, double>> tap_locations;
+    for (const auto& cell : layout_.cells) {
+        std::string ct_up = to_upper(cell.cell_type);
+        if (ct_up.find("TAP") != std::string::npos ||
+            ct_up.find("WELL_TIE") != std::string::npos ||
+            ct_up.find("SUBSTRATE") != std::string::npos) {
+            tap_locations.push_back({cell.position.x + cell.width / 2.0,
+                                     cell.position.y + cell.height / 2.0});
+        }
+    }
+
+    for (const auto& dev : basic.devices) {
+        if (dev.type != ExtractedDevice::MOSFET) continue;
+
+        ExtractedDeviceParams params;
+        params.instance_name = dev.name;
+        params.cell_type = dev.gate.empty() ? "MOSFET" : dev.name;
+
+        // Parse cell type for finger count and multiplier from naming conventions
+        // Common patterns: "NMOS_W0P5_L0P018_NF4_M2", "pfet_nf8"
+        std::string ct_up = to_upper(dev.name);
+        int nf = 1;
+        int m_mult = 1;
+
+        // Extract NF from name
+        auto extract_int = [](const std::string& s, const std::string& prefix) -> int {
+            auto pos = s.find(prefix);
+            if (pos == std::string::npos) return -1;
+            pos += prefix.size();
+            std::string num;
+            while (pos < s.size() && std::isdigit(static_cast<unsigned char>(s[pos]))) {
+                num += s[pos++];
+            }
+            if (num.empty()) return -1;
+            try { return std::stoi(num); } catch (...) { return -1; }
+        };
+
+        int nf_parsed = extract_int(ct_up, "NF");
+        if (nf_parsed > 0) nf = nf_parsed;
+        int m_parsed = extract_int(ct_up, "_M");
+        if (m_parsed <= 0) m_parsed = extract_int(ct_up, "MULT");
+        if (m_parsed > 0) m_mult = m_parsed;
+
+        // Heuristic: if cell width >> gate width * 2, infer finger count
+        // from width ratio (each finger adds ~W + spacing)
+        if (nf == 1 && dev.width > 0) {
+            // Check layout cell for actual width
+            for (const auto& cell : layout_.cells) {
+                if (cell.name == dev.name && cell.width > 2.0 * dev.width) {
+                    // Estimate fingers: cell_width / (gate_width + min_spacing)
+                    double finger_pitch = dev.width + 0.1; // estimated finger pitch
+                    int inferred_nf = std::max(1, (int)(cell.width / finger_pitch));
+                    if (inferred_nf > 1) nf = inferred_nf;
+                    break;
+                }
+            }
+        }
+
+        params.w = dev.width;
+        params.l = dev.length;
+        params.nf = nf;
+        params.m = m_mult;
+
+        double w = dev.width;
+        double ldiff = ldiff_default;
+
+        // Source/drain area computation for multi-finger device
+        // In an NF-finger transistor, there are (NF+1) diffusion regions.
+        // Outer diffusions have full ldiff extension; shared (inner) diffusions
+        // have reduced width = min_spacing / 2.
+        double ldiff_shared = ldiff * 0.6; // shared S/D has less extension
+
+        // Number of source-side and drain-side diffusion regions
+        // For NF fingers: source regions = ceil((NF+1)/2), drain regions = floor((NF+1)/2)
+        int n_source = (nf + 2) / 2;  // ceil((NF+1)/2)
+        int n_drain  = (nf + 1) / 2;  // floor((NF+1)/2)
+
+        // Source area: 1 outer + (n_source - 1) shared
+        double as_outer = w * ldiff;
+        double as_shared = (n_source > 1) ? (n_source - 1) * w * ldiff_shared : 0.0;
+        params.as_area = (as_outer + as_shared) * m_mult;
+
+        // Drain area: 1 outer + (n_drain - 1) shared
+        double ad_outer = w * ldiff;
+        double ad_shared = (n_drain > 1) ? (n_drain - 1) * w * ldiff_shared : 0.0;
+        params.ad_area = (ad_outer + ad_shared) * m_mult;
+
+        // Source perimeter: outer contributes 2*(W + ldiff), shared contributes 2*W only
+        params.ps_perim = (2.0 * (w + ldiff) + (n_source > 1 ? (n_source - 1) * 2.0 * w : 0.0)) * m_mult;
+
+        // Drain perimeter
+        params.pd_perim = (2.0 * (w + ldiff) + (n_drain > 1 ? (n_drain - 1) * 2.0 * w : 0.0)) * m_mult;
+
+        // Substrate resistance estimation
+        // Find nearest tap cell and compute resistance based on distance
+        double min_tap_dist = 1e6;
+        double dev_cx = 0.0, dev_cy = 0.0;
+        for (const auto& cell : layout_.cells) {
+            if (cell.name == dev.name) {
+                dev_cx = cell.position.x + cell.width / 2.0;
+                dev_cy = cell.position.y + cell.height / 2.0;
+                break;
+            }
+        }
+
+        for (const auto& tap : tap_locations) {
+            double dx = dev_cx - tap.first;
+            double dy = dev_cy - tap.second;
+            double dist = std::sqrt(dx * dx + dy * dy);
+            min_tap_dist = std::min(min_tap_dist, dist);
+        }
+
+        if (min_tap_dist < 1e5) {
+            // Rsub = Rsheet * distance / (effective_width)
+            double eff_w = w * nf * m_mult;
+            if (eff_w > 0) {
+                params.rsub = rsub_sheet * min_tap_dist / eff_w;
+            }
+            params.well_proximity = min_tap_dist;
+        } else {
+            // No taps found; use conservative estimate
+            params.rsub = rsub_sheet * 10.0; // 10 squares to nearest ground
+            params.well_proximity = 0.0;
+        }
+
+        // Stress proximity (SA/SB): distance from gate edge to STI/OD boundary
+        // Approximation: SA = SB = ldiff (assumes symmetric diffusion)
+        params.sa = ldiff;
+        params.sb = ldiff;
+
+        // Look up cell type from schematic for proper identification
+        for (size_t ci = 0; ci < layout_.cells.size(); ++ci) {
+            if (layout_.cells[ci].name == dev.name) {
+                params.cell_type = layout_.cells[ci].cell_type;
+                break;
+            }
+        }
+
+        result.devices.push_back(std::move(params));
+        result.mos_extracted++;
+        result.total_extracted++;
+    }
+
+    return result;
+}
+
 } // namespace sf

@@ -1,6 +1,7 @@
 // SiliconForge — Static Timing Analysis Implementation
 // Slew-aware delay, hold checks, multi-corner derating, OCV/AOCV.
 #include "timing/sta.hpp"
+#include "timing/sdf_writer.hpp"
 #include <algorithm>
 #include <chrono>
 #include <iostream>
@@ -140,6 +141,38 @@ double StaEngine::gate_delay(GateId gid, double input_slew) const {
 
     // Determine effective derate (OCV/AOCV-aware)
     double eff_derate = effective_cell_derate(gid);
+
+    // SDF back-annotation override: if SDF delays are annotated for this instance,
+    // use the SDF delay instead of Liberty/estimated values.
+    // Conditional delays take priority when the active condition matches.
+    if (sdf_annotated_) {
+        auto sdf_it = sdf_cell_delays_.find(g.name);
+        if (sdf_it != sdf_cell_delays_.end()) {
+            const auto& ad = sdf_it->second;
+            double sdf_delay = 0.0;
+            bool found_cond = false;
+
+            // Check conditional delays first
+            if (!sdf_active_condition_.empty()) {
+                for (const auto& ce : ad.conditionals) {
+                    if (ce.condition == sdf_active_condition_) {
+                        sdf_delay = std::max(ce.rise, ce.fall);
+                        found_cond = true;
+                        break;
+                    }
+                }
+            }
+
+            // Fall back to unconditional delay
+            if (!found_cond) {
+                sdf_delay = std::max(ad.unconditional_rise, ad.unconditional_fall);
+            }
+
+            if (sdf_delay > 0.0) {
+                return sdf_delay * eff_derate * voltage_delay_scale(gid);
+            }
+        }
+    }
 
     if (lib_) {
         std::string type_str = gate_type_str(g.type);
@@ -2415,6 +2448,156 @@ PocvMonteCarloResult StaEngine::run_pocv_monte_carlo(double clock_period,
     // Restore OCV mode
     ocv_mode_ = saved_ocv;
     return result;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Chiplet-to-Chiplet Clock Skew Modeling (2.5D/3D Integration)
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Models inter-die clock distribution for chiplet-based designs:
+//   - Base D2D PHY propagation delay (serializer/deserializer latency)
+//   - Die-to-die jitter (dominated by forwarded-clock or CDR PLL)
+//   - Thermal gradient-induced skew (different die temperatures)
+//   - Interposer trace delay (Si interposer or organic bridge)
+//   - Micro-bump parasitic delay (C4 or Cu pillar)
+//   - PLL jitter accumulation through clock recovery chain
+//
+// Total skew (ps) at a chiplet boundary:
+//   skew = D2D_delay + jitter/2 + thermal_delta * thermal_factor * D2D_delay
+//        + interposer_loss * distance + bump_delay + sqrt(N_pll) * pll_jitter
+//
+// Reference: TSMC CoWoS-S/CoWoS-R interconnect characterization
+// Reference: Intel EMIB 2.5D bridge specifications
+// Reference: Kannan et al., "Enabling Interposer-Based Disintegration", MICRO 2015
+
+void StaEngine::apply_chiplet_skew() {
+    if (cell_chiplet_map_.empty()) return;
+
+    // For each timing arc that crosses a chiplet boundary, add the inter-die skew
+    // to the clock arrival times of the destination DFF.
+    //
+    // Strategy: iterate all DFFs. For each DFF, check if any of its fanin cone
+    // originates from a different chiplet. If so, adjust clock insertion delay
+    // to account for the chiplet boundary crossing.
+
+    for (size_t i = 0; i < nl_.num_gates(); ++i) {
+        auto gid = static_cast<GateId>(i);
+        const auto& g = nl_.gate(gid);
+
+        // Only adjust clock arrivals at sequential elements
+        if (g.type != GateType::DFF && g.type != GateType::DLATCH) continue;
+
+        auto dst_it = cell_chiplet_map_.find(g.name);
+        if (dst_it == cell_chiplet_map_.end()) continue;
+        int dst_chiplet = dst_it->second;
+
+        // Check fanin gates for cross-chiplet paths
+        for (auto in_net : g.inputs) {
+            if (in_net < 0 || static_cast<size_t>(in_net) >= nl_.num_nets()) continue;
+            const auto& net = nl_.net(in_net);
+
+            // Find driver of this net via the net's driver field
+            GateId driver = net.driver;
+            if (driver < 0 || static_cast<size_t>(driver) >= nl_.num_gates()) continue;
+
+            auto src_it = cell_chiplet_map_.find(nl_.gate(driver).name);
+            if (src_it == cell_chiplet_map_.end()) continue;
+            int src_chiplet = src_it->second;
+
+            if (src_chiplet == dst_chiplet) continue;
+
+            // Cross-chiplet path detected — compute total skew penalty
+
+            // 1. Base D2D PHY propagation delay
+            double skew_ps = chiplet_cfg_.inter_chiplet_delay_ps;
+
+            // 2. D2D jitter (half peak-to-peak as worst-case single-sided)
+            skew_ps += chiplet_cfg_.d2d_jitter_ps / 2.0;
+
+            // 3. Thermal gradient contribution
+            //    Temperature difference between source and destination die
+            //    causes differential delay shift
+            double src_dt = 0.0, dst_dt = 0.0;
+            auto src_th = chiplet_thermal_delta_.find(src_chiplet);
+            if (src_th != chiplet_thermal_delta_.end()) src_dt = src_th->second;
+            auto dst_th = chiplet_thermal_delta_.find(dst_chiplet);
+            if (dst_th != chiplet_thermal_delta_.end()) dst_dt = dst_th->second;
+            double thermal_delta_c = std::abs(dst_dt - src_dt);
+            skew_ps += chiplet_cfg_.thermal_gradient_factor * thermal_delta_c
+                       * chiplet_cfg_.inter_chiplet_delay_ps;
+
+            // 4. Interposer trace delay (proportional to physical distance)
+            auto dist_key = std::make_pair(std::min(src_chiplet, dst_chiplet),
+                                           std::max(src_chiplet, dst_chiplet));
+            auto dist_it = chiplet_distances_.find(dist_key);
+            double distance_mm = (dist_it != chiplet_distances_.end())
+                                 ? dist_it->second : 2.0;  // default 2mm
+            skew_ps += chiplet_cfg_.interposer_loss_ps_per_mm * distance_mm;
+
+            // 5. Micro-bump parasitic delay (two bumps per crossing: TX + RX)
+            skew_ps += 2.0 * chiplet_cfg_.micro_bump_delay_ps;
+
+            // 6. PLL jitter accumulation (RSS over N stages)
+            if (chiplet_cfg_.num_pll_stages > 0) {
+                skew_ps += std::sqrt(static_cast<double>(chiplet_cfg_.num_pll_stages))
+                           * chiplet_cfg_.pll_jitter_ps;
+            }
+
+            // Convert ps to ns and add to clock insertion delay of destination DFF
+            double skew_ns = skew_ps / 1000.0;
+            clock_insertion_[gid] += skew_ns;
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SDF Back-Annotation into STA
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Consumes a parsed SDF file (IEEE 1497) and back-annotates cell delays
+// into the STA engine. Supports:
+//   - Unconditional IOPATH delays (always applied)
+//   - Conditional IOPATH delays (applied when condition matches active mode)
+//   - Rise/fall delay asymmetry
+//
+// During timing analysis, gate_delay() consults the SDF annotation map.
+// If an SDF entry exists for the instance:
+//   1. Check if the active condition matches any conditional entry
+//   2. If matched, use the conditional delay
+//   3. Otherwise, fall back to the unconditional delay
+//   4. If no SDF entry exists at all, use the Liberty/estimated delay
+//
+// Reference: IEEE Std 1497-2001, Section 5 — Delay Back-Annotation Semantics
+
+void StaEngine::annotate_sdf(const SdfReader& reader) {
+    sdf_cell_delays_.clear();
+    sdf_annotated_ = false;
+
+    const auto& cell_delays = reader.cell_delays();
+    if (cell_delays.empty()) return;
+
+    for (const auto& cd : cell_delays) {
+        SdfAnnotatedDelay annotated;
+
+        // Store unconditional delays (use first IOPATH if multiple exist)
+        if (!cd.unconditional.empty()) {
+            annotated.unconditional_rise = cd.unconditional.front().delay_rise;
+            annotated.unconditional_fall = cd.unconditional.front().delay_fall;
+        }
+
+        // Store all conditional delays
+        for (const auto& cond : cd.conditional) {
+            SdfAnnotatedDelay::ConditionalEntry entry;
+            entry.condition = cond.condition;
+            entry.rise = cond.delay_rise;
+            entry.fall = cond.delay_fall;
+            annotated.conditionals.push_back(std::move(entry));
+        }
+
+        sdf_cell_delays_[cd.instance] = std::move(annotated);
+    }
+
+    sdf_annotated_ = !sdf_cell_delays_.empty();
 }
 
 } // namespace sf

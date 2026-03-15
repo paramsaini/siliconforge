@@ -206,6 +206,62 @@ struct PdnPackageModel {
     double board_capacitance_uf = 10.0;
 };
 
+// ── Via-to-Via Mutual Inductance (Coupling) ─────────────────────────
+// Computes mutual inductance between PDN via pairs using Neumann's
+// formula for parallel cylindrical conductors:
+//   M = (mu_0 / 2*pi) * length * [ln(2*length/d) - 1 + d/length]
+// where d = center-to-center distance between vias, length = via height.
+//
+// Coupling between power and ground vias is critical for loop inductance
+// in the PDN; closely spaced P/G via pairs minimize L_loop and thus
+// reduce Ldi/dt noise.
+//
+// Reference: Grover, "Inductance Calculations", Dover 1946
+// Reference: Swaminathan & Engin, "Power Integrity Modeling", Prentice Hall
+
+struct ViaCouplingResult {
+    std::pair<int, int> via_pair;     // indices into PhysicalDesign::vias
+    double mutual_inductance_ph = 0;  // mutual inductance in picohenry
+    double coupling_coefficient = 0;  // k = M / sqrt(L1 * L2), range [0, 1]
+    double distance_um = 0;           // center-to-center distance
+};
+
+// ── Package-to-Die Interaction Model ────────────────────────────────
+// Full RLC model of the package-level interconnect from BGA ball through
+// bond wire / flip-chip bump to the die pad.  Computes package-level
+// IR drop and simultaneous switching noise (SSN) at the die interface.
+//
+// SSN = N_switching * L_pkg * dI/dt where N_switching = number of
+// simultaneously switching I/O drivers.
+//
+// Reference: Swaminathan, "Power Distribution Networks with On-Chip Decoupling Capacitors"
+// Reference: JEDEC JESD-78 (I/O buffer modeling for SSN)
+
+struct PackageModel {
+    double lead_inductance_nh = 2.0;       // package lead inductance per pin
+    double bond_wire_resistance_mohm = 50; // bond wire or bump resistance
+    double package_cap_pf = 200.0;         // package-level decoupling capacitance
+    int bga_ball_count = 256;              // total BGA ball count
+    int power_pins = 32;                   // number of VDD pins
+    int ground_pins = 32;                  // number of VSS pins
+    int signal_pins = 192;                 // number of signal I/O pins
+    double switching_fraction = 0.5;       // fraction of I/O switching simultaneously
+    double slew_rate_v_per_ns = 1.0;       // output driver slew rate
+    double io_current_ma = 8.0;            // per-pin switching current
+};
+
+struct PackageInteractionResult {
+    double pkg_ir_drop_mv = 0;            // package-level IR drop on VDD
+    double pkg_ground_bounce_mv = 0;      // ground bounce (SSN on VSS)
+    double ssn_mv = 0;                    // simultaneous switching noise
+    double effective_pkg_inductance_nh = 0;// effective parallel inductance of power pins
+    double effective_pkg_resistance_mohm = 0;
+    double resonance_freq_mhz = 0;        // package-die resonance frequency
+    double total_loop_inductance_nh = 0;   // VDD-to-VSS loop inductance
+    bool meets_noise_budget = false;       // true if SSN < 10% VDD
+    std::string summary;
+};
+
 // ── IR-Aware Stripe Fix Config/Result ────────────────────────────────
 struct IrFixConfig {
     double target_drop_pct = 5.0;  // max allowed IR drop %
@@ -256,6 +312,17 @@ public:
 
     // Target impedance calculation: Z_target = VDD × ripple% / I_transient
     double compute_target_impedance() const;
+
+    // ── Via-to-Via Coupling Inductance ───────────────────────────────
+    // Compute mutual inductance between all power/ground via pairs
+    // using Neumann's formula for parallel conductors.
+    std::vector<ViaCouplingResult> compute_via_coupling(double via_height_um = 10.0,
+                                                         double max_distance_um = 50.0) const;
+
+    // ── Package-to-Die Interaction Analysis ──────────────────────────
+    // Compute package-level IR drop and SSN at the die interface using
+    // a lumped RLC model of the package interconnect.
+    PackageInteractionResult analyze_package_interaction(const PackageModel& pkg) const;
 
 private:
     const PhysicalDesign& pd_;

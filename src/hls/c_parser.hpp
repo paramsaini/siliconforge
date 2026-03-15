@@ -86,6 +86,35 @@ struct HlsStructType {
     std::vector<std::pair<std::string, std::string>> fields; // name, type
 };
 
+// Floating-point type for HLS synthesis
+// Reference: IEEE 754-2019 — binary16 (half), binary32 (single), binary64 (double)
+struct HlsFloatType {
+    int width = 32;           // total bit width
+    int exponent_bits = 8;    // exponent field width
+    int mantissa_bits = 23;   // mantissa (significand) field width (excludes implicit leading 1)
+    bool is_signed = true;    // IEEE 754 always has sign bit
+
+    // Predefined IEEE 754 formats
+    static HlsFloatType half()   { HlsFloatType f; f.width=16; f.exponent_bits=5;  f.mantissa_bits=10; return f; }
+    static HlsFloatType single() { HlsFloatType f; f.width=32; f.exponent_bits=8;  f.mantissa_bits=23; return f; }
+    static HlsFloatType dbl()    { HlsFloatType f; f.width=64; f.exponent_bits=11; f.mantissa_bits=52; return f; }
+
+    // Fixed-point conversion parameters
+    int fixed_int_bits = 16;    // integer part width after float-to-fixed
+    int fixed_frac_bits = 16;   // fractional part width after float-to-fixed
+    int fixed_total() const { return fixed_int_bits + fixed_frac_bits; }
+};
+
+// Floating-point operator synthesis result
+struct HlsFloatOpResult {
+    enum OpType { FADD, FSUB, FMUL, FDIV, F2I, I2F, F2FIXED, FIXED2F };
+    OpType op = FADD;
+    int latency_cycles = 1;    // pipeline latency in clock cycles
+    double area_estimate = 0;  // relative area (normalized to integer adder = 1.0)
+    int dsp_blocks = 0;        // DSP block count (for FPGA targets)
+    std::string rtl_module;    // name of generated RTL module
+};
+
 // HLS scheduling and synthesis configuration
 struct HlsConfig {
     int target_clock_mhz = 100;
@@ -121,12 +150,14 @@ public:
     // Access parsed type information
     const std::vector<HlsArrayType>& array_types() const { return array_types_; }
     const std::vector<HlsStructType>& struct_types() const { return struct_types_; }
+    const std::vector<HlsFloatType>& float_types() const { return float_types_; }
 
 private:
     int id_counter_ = 0;
     int block_counter_ = 0;
     std::vector<HlsArrayType> array_types_;
     std::vector<HlsStructType> struct_types_;
+    std::vector<HlsFloatType> float_types_;
     std::vector<std::string> tokenize(const std::string& src) const;
     int parse_block(const std::vector<std::string>& tokens, size_t& i,
                     std::vector<CfgBlock>& blocks, std::map<std::string,int>& var_map);
@@ -134,6 +165,54 @@ private:
                    CfgBlock& block, std::map<std::string,int>& var_map);
     void parse_array_decl(const std::vector<std::string>& tokens, size_t& i);
     void parse_struct_decl(const std::vector<std::string>& tokens, size_t& i);
+    void parse_float_decl(const std::vector<std::string>& tokens, size_t& i);
+};
+
+// ============================================================================
+// Floating-Point Synthesis Engine
+// Reference: IEEE 754-2019, Muller et al. "Handbook of Floating-Point Arithmetic"
+// ============================================================================
+
+class HlsFloatSynthesizer {
+public:
+    // Synthesize a floating-point add/sub unit
+    // Stages: align exponents -> add mantissas -> normalize -> round
+    static HlsFloatOpResult synthesize_fadd(const HlsFloatType& fmt);
+
+    // Synthesize a floating-point multiplier
+    // Stages: multiply mantissas -> add exponents -> normalize -> round
+    static HlsFloatOpResult synthesize_fmul(const HlsFloatType& fmt);
+
+    // Synthesize a floating-point divider (non-restoring or SRT)
+    // Stages: iterative division -> normalize -> round
+    static HlsFloatOpResult synthesize_fdiv(const HlsFloatType& fmt);
+
+    // Float-to-fixed conversion (for fixed-point datapath optimization)
+    // Returns the fixed-point configuration and conversion unit parameters
+    static HlsFloatOpResult synthesize_f2fixed(const HlsFloatType& fmt);
+
+    // Fixed-to-float conversion
+    static HlsFloatOpResult synthesize_fixed2f(const HlsFloatType& fmt);
+
+    // Float-to-integer conversion
+    static HlsFloatOpResult synthesize_f2i(const HlsFloatType& fmt);
+
+    // Integer-to-float conversion
+    static HlsFloatOpResult synthesize_i2f(const HlsFloatType& fmt);
+
+    // Determine IEEE 754 format from C type name
+    static HlsFloatType type_from_name(const std::string& type_name);
+
+    // Estimate total area and latency for a floating-point expression tree
+    struct FloatExprCost {
+        int total_latency = 0;
+        double total_area = 0;
+        int adders = 0;
+        int multipliers = 0;
+        int dividers = 0;
+        int converters = 0;
+    };
+    static FloatExprCost estimate_cost(const std::vector<HlsFloatOpResult>& ops);
 };
 
 class HlsScheduler {

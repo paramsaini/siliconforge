@@ -10,6 +10,8 @@
 #include <fstream>
 #include <sstream>
 #include <climits>
+#include <queue>
+#include <set>
 
 namespace sf {
 
@@ -1058,6 +1060,342 @@ PowerResult PowerAnalyzer::run_enhanced() {
                      " rtl_est=" + std::to_string(rtl.total_mw) +
                      " states=" + std::to_string(states.size()) + ")";
     return result;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Gate-Level Switching Activity Correlation
+// ══════════════════════════════════════════════════════════════════════
+// When multiple inputs of a gate share a common driver through reconvergent
+// fanout, their switching activities are not independent.  The standard
+// P(AB) = P(A)P(B) assumption overestimates toggle rate.  We perform a
+// bounded BFS (depth <= 3 logic levels) from each gate input back through
+// the driver graph to discover common ancestors, then compute a Pearson-
+// style spatial correlation coefficient between each input pair.
+//
+// Power reduction model:
+//   For each correlated pair (i,j) with coefficient rho_ij > threshold,
+//   the effective joint toggle rate decreases by a factor of
+//     (1 - rho_ij * min(alpha_i, alpha_j))
+//   summed across all pairs and normalized by total switching power.
+//
+// Reference: Tsui, Pedram, Despain, "Efficient Estimation of Dynamic
+//            Power Dissipation Under a Real Delay Model", ICCAD 1993
+
+PowerAnalyzer::CorrelationResult
+PowerAnalyzer::analyze_activity_correlation(double threshold) {
+    CorrelationResult cr{};
+
+    // Build reverse-driver map: for a given net, which gate drives it?
+    // (Already available via Net::driver.)
+    // For each gate, collect the set of ancestor nets reachable within
+    // 3 logic levels through the driver chain.
+
+    constexpr int MAX_BFS_DEPTH = 3;
+
+    // Pre-compute ancestor sets lazily per net, caching results.
+    // ancestor_map[net] = set of nets reachable by walking backwards
+    // through drivers up to MAX_BFS_DEPTH levels.
+    std::unordered_map<NetId, std::set<NetId>> ancestor_cache;
+
+    auto collect_ancestors = [&](NetId seed) -> const std::set<NetId>& {
+        auto cached = ancestor_cache.find(seed);
+        if (cached != ancestor_cache.end()) return cached->second;
+
+        std::set<NetId>& result = ancestor_cache[seed];
+        // BFS backward through driver gates
+        std::queue<std::pair<NetId, int>> frontier;
+        frontier.push({seed, 0});
+        while (!frontier.empty()) {
+            auto [nid, depth] = frontier.front();
+            frontier.pop();
+            if (depth > MAX_BFS_DEPTH) continue;
+            result.insert(nid);
+            auto& n = nl_.net(nid);
+            if (n.driver < 0) continue;
+            auto& drv = nl_.gate(n.driver);
+            if (drv.type == GateType::INPUT || drv.type == GateType::DFF)
+                continue;
+            for (auto inp : drv.inputs) {
+                if (!result.count(inp))
+                    frontier.push({inp, depth + 1});
+            }
+        }
+        return result;
+    };
+
+    double total_rho = 0;
+    int total_pairs = 0;
+    double weighted_reduction = 0;
+    double total_switching = 0;
+
+    for (size_t gid = 0; gid < nl_.num_gates(); ++gid) {
+        auto& g = nl_.gate(gid);
+        if (g.type == GateType::INPUT || g.type == GateType::OUTPUT ||
+            g.type == GateType::DFF || g.inputs.size() < 2)
+            continue;
+
+        int n_in = static_cast<int>(g.inputs.size());
+        bool gate_has_reconvergence = false;
+
+        for (int i = 0; i < n_in; ++i) {
+            const auto& anc_i = collect_ancestors(g.inputs[i]);
+            double alpha_i = last_default_activity_;
+            {
+                auto it = activities_.find(g.inputs[i]);
+                if (it != activities_.end()) alpha_i = it->second;
+            }
+
+            for (int j = i + 1; j < n_in; ++j) {
+                const auto& anc_j = collect_ancestors(g.inputs[j]);
+                double alpha_j = last_default_activity_;
+                {
+                    auto it = activities_.find(g.inputs[j]);
+                    if (it != activities_.end()) alpha_j = it->second;
+                }
+
+                // Count shared ancestors (excluding the inputs themselves
+                // if they happen to be the same net, which would be trivial).
+                int shared = 0;
+                int union_sz = 0;
+                for (auto a : anc_i) {
+                    if (anc_j.count(a)) ++shared;
+                }
+                union_sz = static_cast<int>(anc_i.size() + anc_j.size()) - shared;
+                if (union_sz <= 0) continue;
+
+                // Jaccard-style correlation: fraction of shared transitive
+                // fanin within the BFS window.
+                double rho = static_cast<double>(shared) / static_cast<double>(union_sz);
+
+                total_rho += rho;
+                ++total_pairs;
+
+                if (rho > threshold) {
+                    cr.correlated_pairs++;
+                    if (!gate_has_reconvergence) {
+                        cr.reconvergent_fanouts++;
+                        gate_has_reconvergence = true;
+                    }
+                    // Power reduction contribution: the joint toggle rate
+                    // overestimate from independence assumption is proportional
+                    // to rho * min(alpha_i, alpha_j).
+                    weighted_reduction += rho * std::min(alpha_i, alpha_j);
+                }
+            }
+        }
+
+        // Accumulate total switching for normalization.
+        if (g.output >= 0) {
+            double alpha = last_default_activity_;
+            auto it = activities_.find(g.output);
+            if (it != activities_.end()) alpha = it->second;
+            total_switching += alpha;
+        }
+    }
+
+    cr.avg_correlation = (total_pairs > 0)
+        ? total_rho / static_cast<double>(total_pairs) : 0.0;
+    cr.power_reduction_pct = (total_switching > 0)
+        ? (weighted_reduction / total_switching) * 100.0 : 0.0;
+
+    return cr;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// SAF (Switching Activity File) I/O
+// ══════════════════════════════════════════════════════════════════════
+// Format is a simplified SAIF-like parenthesized structure.
+// TC = toggle count over a canonical 1000-cycle simulation window.
+// T0/T1 derived from static probability: T0 = (1-P(1))*1000, T1 = P(1)*1000.
+
+bool PowerAnalyzer::write_saf(const std::string& filename) const {
+    std::ofstream ofs(filename);
+    if (!ofs.is_open()) return false;
+
+    constexpr int SIM_CYCLES = 1000;
+
+    ofs << "(SAIF_VERSION \"2.0\")\n";
+    ofs << "(DIRECTION \"backward\")\n";
+    ofs << "(DESIGN (name \"top\")\n";
+
+    for (size_t gid = 0; gid < nl_.num_gates(); ++gid) {
+        auto& g = nl_.gate(gid);
+        if (g.type == GateType::INPUT || g.type == GateType::OUTPUT)
+            continue;
+        if (g.output < 0) continue;
+
+        std::string gname = g.name.empty()
+            ? ("gate_" + std::to_string(gid)) : g.name;
+
+        double alpha = last_default_activity_;
+        {
+            auto it = activities_.find(g.output);
+            if (it != activities_.end()) alpha = it->second;
+        }
+
+        // Static probability: approximate from activity.
+        // For a signal with toggle rate alpha, P(1) ~ 0.5 when no
+        // additional information is available (maximum entropy).  If
+        // activity data carries explicit static probs, prefer those.
+        double sp = 0.5;
+        if (has_activity_data_) {
+            auto& net_name = nl_.net(g.output).name;
+            auto spit = activity_data_.static_probs.find(net_name);
+            if (spit != activity_data_.static_probs.end())
+                sp = spit->second;
+        }
+
+        int tc = static_cast<int>(alpha * SIM_CYCLES + 0.5);
+        int t1 = static_cast<int>(sp * SIM_CYCLES + 0.5);
+        int t0 = SIM_CYCLES - t1;
+        int tx = 0;
+
+        std::string nname = nl_.net(g.output).name.empty()
+            ? ("net_" + std::to_string(g.output))
+            : nl_.net(g.output).name;
+
+        ofs << "  (INSTANCE (name \"" << gname << "\")\n";
+        ofs << "    (NET (name \"" << nname << "\")\n";
+        ofs << "      (T0 " << t0 << ") (T1 " << t1
+            << ") (TX " << tx << ") (TC " << tc << ")\n";
+        ofs << "    )\n";
+        ofs << "  )\n";
+    }
+
+    ofs << ")\n";
+    return ofs.good();
+}
+
+bool PowerAnalyzer::read_saf(const std::string& filename) {
+    std::ifstream ifs(filename);
+    if (!ifs.is_open()) return false;
+
+    constexpr int SIM_CYCLES = 1000;
+    std::string content((std::istreambuf_iterator<char>(ifs)),
+                         std::istreambuf_iterator<char>());
+
+    // Build name-to-net index for O(1) lookups.
+    std::unordered_map<std::string, NetId> name_to_net;
+    for (size_t i = 0; i < nl_.num_nets(); ++i) {
+        auto& n = nl_.net(static_cast<NetId>(i));
+        if (!n.name.empty())
+            name_to_net[n.name] = static_cast<NetId>(i);
+    }
+
+    // Tokenize by scanning for INSTANCE/NET/T0/T1/TX/TC tokens inside
+    // the parenthesized structure.  This is a hand-rolled recursive-descent
+    // parser that tolerates whitespace and newline variations.
+    size_t pos = 0;
+    auto skip_ws = [&]() {
+        while (pos < content.size() && (content[pos] == ' '  ||
+               content[pos] == '\t' || content[pos] == '\n' ||
+               content[pos] == '\r'))
+            ++pos;
+    };
+
+    auto read_quoted = [&]() -> std::string {
+        std::string result;
+        skip_ws();
+        if (pos < content.size() && content[pos] == '"') {
+            ++pos;
+            while (pos < content.size() && content[pos] != '"')
+                result += content[pos++];
+            if (pos < content.size()) ++pos; // consume closing quote
+        }
+        return result;
+    };
+
+    auto read_int = [&]() -> int {
+        skip_ws();
+        int val = 0;
+        bool neg = false;
+        if (pos < content.size() && content[pos] == '-') { neg = true; ++pos; }
+        while (pos < content.size() && content[pos] >= '0' && content[pos] <= '9')
+            val = val * 10 + (content[pos++] - '0');
+        return neg ? -val : val;
+    };
+
+    auto find_token = [&](const char* tok) -> bool {
+        size_t tlen = std::strlen(tok);
+        size_t found = content.find(tok, pos);
+        if (found == std::string::npos) return false;
+        pos = found + tlen;
+        return true;
+    };
+
+    // Scan for each INSTANCE block.
+    while (find_token("(INSTANCE")) {
+        // Expect (name "...")
+        if (!find_token("(name")) continue;
+        std::string inst_name = read_quoted();
+        (void)inst_name; // instance name used for context, net name for mapping
+
+        // Expect (NET (name "...") (T0 n) (T1 n) (TX n) (TC n))
+        if (!find_token("(NET")) continue;
+        if (!find_token("(name")) continue;
+        std::string net_name = read_quoted();
+
+        int t0 = 0, t1 = 0, tx = 0, tc = 0;
+        // Parse T0, T1, TX, TC in any order within the NET block.
+        // We look for the closing parentheses of NET to bound our search.
+        size_t net_start = pos;
+        // Find approximate end of this NET block (next INSTANCE or end).
+        size_t net_end = content.find("(INSTANCE", pos);
+        if (net_end == std::string::npos) net_end = content.size();
+        std::string net_block = content.substr(net_start, net_end - net_start);
+
+        auto extract_field = [&](const char* field) -> int {
+            std::string tag = std::string("(") + field;
+            size_t fp = net_block.find(tag);
+            if (fp == std::string::npos) return 0;
+            fp += tag.size();
+            while (fp < net_block.size() && (net_block[fp] == ' ' || net_block[fp] == '\t'))
+                ++fp;
+            int v = 0;
+            bool neg = false;
+            if (fp < net_block.size() && net_block[fp] == '-') { neg = true; ++fp; }
+            while (fp < net_block.size() && net_block[fp] >= '0' && net_block[fp] <= '9')
+                v = v * 10 + (net_block[fp++] - '0');
+            return neg ? -v : v;
+        };
+
+        t0 = extract_field("T0");
+        t1 = extract_field("T1");
+        tx = extract_field("TX");
+        tc = extract_field("TC");
+
+        // Convert TC to activity factor.
+        double activity = (SIM_CYCLES > 0)
+            ? static_cast<double>(tc) / static_cast<double>(SIM_CYCLES) : 0.0;
+        activity = std::min(activity, 1.0);
+
+        // Map to net by name.
+        auto nit = name_to_net.find(net_name);
+        if (nit != name_to_net.end()) {
+            activities_[nit->second] = activity;
+        } else {
+            // Fallback: try stripping "net_" prefix and interpreting as NetId.
+            if (net_name.size() > 4 && net_name.substr(0, 4) == "net_") {
+                int nid = std::atoi(net_name.c_str() + 4);
+                if (nid >= 0 && nid < static_cast<int>(nl_.num_nets()))
+                    activities_[static_cast<NetId>(nid)] = activity;
+            }
+        }
+
+        // Also populate static probability if activity data tracking is active.
+        if (t0 + t1 > 0) {
+            double sp = static_cast<double>(t1) / static_cast<double>(t0 + t1);
+            auto& real_name = (nit != name_to_net.end())
+                ? nl_.net(nit->second).name : net_name;
+            if (!real_name.empty())
+                activity_data_.static_probs[real_name] = sp;
+        }
+
+        pos = net_end;
+    }
+
+    has_activity_data_ = true;
+    return true;
 }
 
 // ── Voltage derating for leakage power ───────────────────────────────
