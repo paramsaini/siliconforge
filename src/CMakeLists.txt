@@ -121,12 +121,22 @@ add_library(siliconforge_lib STATIC
     ml/timing_model.cpp
     ml/ml_opt.cpp
 
+    # ── Standard Cell ─────────────────────────────────────────────────
+    stdcell/cell_layout.cpp
+    stdcell/cell_drc.cpp
+    stdcell/cell_lvs.cpp
+    stdcell/characterizer.cpp
+
     # ── Visualization ─────────────────────────────────────────────────
     viz/dashboard.cpp
     viz/html_export.cpp
     viz/logic_viz.cpp
     viz/rtl_viz.cpp
     viz/sim_viz.cpp
+
+    # ── SPICE Engine ────────────────────────────────────────────────────
+    spice/spice_parser.cpp
+    spice/spice_engine.cpp
 
     # ── Flow Engine & Shell ───────────────────────────────────────────
     flow/engine.cpp
