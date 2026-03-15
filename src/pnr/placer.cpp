@@ -2,6 +2,8 @@
 // Conjugate-gradient solver + density bin spreading + Abacus legalization
 // Timing-driven: STA-based slack analysis → criticality-weighted net model
 #include "pnr/placer.hpp"
+#include "pnr/spectral_density.hpp"
+#include "pnr/gpu_density.hpp"
 #include "timing/sta.hpp"
 #include "ml/congestion_model.hpp"
 #include <algorithm>
@@ -1152,6 +1154,19 @@ void AnalyticalPlacer::smooth_density(std::vector<std::vector<double>>& density)
     }
 }
 
+// Phase 4: Spectral (DCT) density smoothing — proper frequency-domain filter
+void AnalyticalPlacer::smooth_density_spectral(std::vector<std::vector<double>>& density) {
+    SpectralDensity sd;
+    sd.init(density_cfg_.bin_count_x, density_cfg_.bin_count_y,
+            pd_.die_area.width(), pd_.die_area.height(),
+            density_cfg_.target_density, density_cfg_.spectral_alpha);
+    density = sd.smooth(density);
+    // Add back the target so density represents total, not excess
+    for (auto& row : density)
+        for (auto& v : row)
+            v += density_cfg_.target_density;
+}
+
 // ── C) compute_density_gradient ──────────────────────────────────────
 AnalyticalPlacer::DensityGradient AnalyticalPlacer::compute_density_gradient() {
     int n = static_cast<int>(pd_.cells.size());
@@ -1161,7 +1176,11 @@ AnalyticalPlacer::DensityGradient AnalyticalPlacer::compute_density_gradient() {
     dg.overflow = 0.0;
 
     auto density = compute_density_map();
-    smooth_density(density);
+    if (density_cfg_.use_spectral) {
+        smooth_density_spectral(density);
+    } else {
+        smooth_density(density);
+    }
 
     int nx = density_cfg_.bin_count_x;
     int ny = density_cfg_.bin_count_y;

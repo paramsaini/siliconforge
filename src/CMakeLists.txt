@@ -75,6 +75,7 @@ add_library(siliconforge_lib STATIC
     pnr/global_router.cpp
     pnr/detailed_router.cpp
     pnr/detailed_router_v2.cpp
+    pnr/distributed_route.cpp
     pnr/cts.cpp
     pnr/post_route_opt.cpp
     pnr/timing_closure.cpp

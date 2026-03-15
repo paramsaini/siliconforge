@@ -178,6 +178,8 @@ public:
         double target_density = 0.7;   // target utilization
         double smooth_penalty = 1.0;    // density penalty weight
         int fft_iterations = 5;
+        bool use_spectral = false;     // true = DCT spectral smoothing (Phase 4)
+        double spectral_alpha = 8.0;   // Poisson kernel strength
     };
     void set_density_config(const DensityConfig& cfg) { density_cfg_ = cfg; }
 
@@ -380,6 +382,9 @@ private:
     // FFT helpers (simplified 2D DCT for density smoothing)
     std::vector<std::vector<double>> compute_density_map();
     void smooth_density(std::vector<std::vector<double>>& density);
+
+    // Phase 4: Spectral (DCT) density smoothing — replaces Gaussian when enabled
+    void smooth_density_spectral(std::vector<std::vector<double>>& density);
 
     // Nesterov's method for global placement
     struct NesterovState {
