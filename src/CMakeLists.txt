@@ -6,6 +6,8 @@ add_library(siliconforge_lib STATIC
     core/hierarchy.cpp
     core/die_to_die.cpp
     core/liberty_parser.cpp
+    core/liberty_cache.cpp
+    core/name_pool.cpp
     core/def_parser.cpp
     core/lef_parser.cpp
     core/lef_writer.cpp
