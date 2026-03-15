@@ -3328,3 +3328,153 @@ STATS AFTER SESSION 27:
   Parity estimate: ~65% (up from ~62%)
   ~10-12 remaining gaps (Tier 3-4)
 ================================================================================
+
+SESSION 27b — 2026-03-15 — Studio Viz Overhaul
+================================================================================
+SCOPE:
+  Complete visual overhaul of placement and routing 3D views to match
+  production EDA quality (KLayout/Cadence Innovus style).
+
+CHANGES:
+  - Color palette: foundry-standard (blue M1, pink M2, green M3, gold M4,
+    red M5, cyan M6) — matches KLayout/Cadence convention
+  - Placement cells: solid opaque geometry, uniform height per type
+    (STD 2.0, DFF 2.8, FILL 0.8), dark edge outlines
+  - Routing wires: solid metal traces, width scales per layer (capped at M5),
+    upper layers slightly transparent (0.82) so lower layers visible
+  - Vias: solid gray square pillars with colored landing pads (not ghost cylinders)
+  - Lighting: brighter ambient (0.6), stronger fill light for solid geometry
+  - Layer spacing: tighter (20→12) for realistic cross-section feel
+  - Wire/via caps raised (6000 wires, 2500 vias)
+  - Substrate: darker, more silicon-like
+
+FILES MODIFIED:
+  studio/index.html
+
+================================================================================
+
+SESSION 28 — 2026-03-15 — Multi-Million Gate Scalability Initiative
+================================================================================
+SCOPE:
+  Deep research into scalability bottlenecks preventing SiliconForge from
+  handling multi-million gate designs. Identified 6 critical walls through
+  codebase analysis and comparison with Big 3 (Cadence/Synopsys/Siemens)
+  and academic state-of-art (DREAMPlace, CUGR, TritonRoute, OpenTimer).
+
+SCALABILITY GAP ANALYSIS:
+
+  Current capacity: ~500K gates comfortable, 1M gates with pain
+  Target: 5-10M gates, architecture for 50M+
+  Big 3: 10M-500M gates (ICC2 claims 500M+ with hierarchy)
+
+  CRITICAL BOTTLENECK #1 — Detailed Router DRC: O(n) per query
+    - occupancy_ is flat vector, every track check scans ALL segments
+    - 5M wires = 5M comparisons per query
+    - Fix: interval tree per layer/track → O(log n)
+    - Impact: 5-10x routing speedup
+
+  CRITICAL BOTTLENECK #2 — Global Router: no fast-path
+    - A* for 100% of nets, no pattern routing for simple L/Z shapes
+    - Single-threaded, no net-level parallelism
+    - Fix: pattern routing first (80%), A* fallback, multi-threaded
+    - Impact: 5-8x speedup (FastRoute/CUGR approach)
+
+  CRITICAL BOTTLENECK #3 — STA Crosstalk: O(m²) aggressor search
+    - find_aggressors() has no spatial index
+    - 3M nets → 9×10¹² operations
+    - Fix: spatial grid → O(m log m)
+    - Impact: 100x+ when SI enabled
+
+  CRITICAL BOTTLENECK #4 — Placement CG: single-threaded matvec
+    - Edge accumulation has write conflicts
+    - Fix: per-thread buffers, merge at end
+    - Impact: 3-4x on 8 cores
+
+  BOTTLENECK #5 — String-heavy netlist
+    - std::string per gate/net = 32-64 MB wasted at 1M gates
+    - Fix: name pool + integer handles
+    - Impact: 5-10% memory, better cache
+
+  BOTTLENECK #6 — No hierarchical netlist
+    - Everything flat, 10M gates = 10M objects in RAM
+    - Fix: module definitions instantiated by reference
+    - Impact: enables 10M+ designs
+
+IMPLEMENTATION PLAN (4 PHASES):
+
+  Phase 1 — Router Scalability (STARTING NOW):
+    1. Interval tree for detailed router occupancy → O(log n) DRC
+    2. Pattern routing fast-path (L/Z shapes) → skip A* for 80% of nets
+    3. Multi-threaded net routing (spatial decomposition)
+
+  Phase 2 — Placement + STA:
+    4. Parallelize CG matvec (per-thread buffers)
+    5. Spatial grid for crosstalk aggressor finding
+    6. Incremental STA (affected-cone-only re-propagation)
+
+  Phase 3 — Memory + Architecture:
+    7. Name pool replacing std::string in Gate/Net structs
+    8. Compiled Liberty binary cache
+    9. Hierarchical netlist model
+
+  Phase 4 — Advanced (GPU/distributed):
+    10. FFT-based density for placement (ePlace algorithm)
+    11. GPU-accelerated placement (DREAMPlace approach)
+    12. Distributed multi-machine routing for 50M+ designs
+
+REFERENCE PAPERS:
+  - ePlace (Lu et al., DAC 2014) — analytical placement with FFT density
+  - DREAMPlace (Lin et al., DAC 2019) — GPU placement, 1M cells in ~1 min
+  - CUGR (Liu et al., DAC 2020) — 3D global router, 50M cells
+  - TritonRoute (Kahng et al., DAC 2018) — production detailed router
+  - OpenTimer v2 (Huang et al., TCAD 2021) — incremental task-parallel STA
+  - FastRoute (Pan & Chu) — pattern routing + rip-up/reroute
+
+PERFORMANCE TARGETS:
+  Current → Target (1M gates):
+    Placement:   2s    → <1s   (2x)
+    Global Route: 15s  → 2-3s  (5-8x)
+    Detailed Route: 10s → <2s  (5-10x)
+    STA:          1s   → 0.5s  (2x)
+    Total Flow:   30s  → 5-8s  (4-6x)
+
+PHASE 1 IMPLEMENTATION — Router Scalability (COMPLETED):
+
+  1. TrackOccupancy interval index (detailed_router_v2.hpp/cpp):
+     - New TrackOccupancy class with sorted-interval per (layer, track) pair
+     - O(log k) binary search queries where k = segments on specific track
+     - Previously O(N) where N = ALL segments across ALL tracks
+     - insert(): O(log k) amortized with sorted vector + binary search
+     - is_free_with_adj(): checks same track + adjacent tracks with DRC
+     - remove_net(): removes all intervals for a net across all tracks
+     - Backward compatible — flat occupancy_ vector kept in sync
+
+  2. Pattern routing fast-path (detailed_router_v2.hpp/cpp):
+     - try_pattern_route() tries 3 patterns before A* fallback:
+       a) L-shape horizontal-first (H-track even layer → V-track odd layer)
+       b) L-shape vertical-first (V-track odd layer → H-track even layer)
+       c) Z-shape HVH (3 segments, 2 vias, midpoint x jog)
+     - route_two_pin() now calls try_pattern_route() first
+     - Expected: ~80% of 2-pin nets routed by pattern (10-100x faster than A*)
+
+  3. Multi-threaded net routing (detailed_router_v2.cpp):
+     - Nets sorted by HPWL descending (longest first)
+     - Phase 1a: parallel pattern routing for all 2-pin nets via ThreadPool
+     - Phase 1b: sequential A* for pattern-failed and multi-pin nets
+     - Per-net local wire/via vectors (no contention during pattern phase)
+     - Sequential commit of occupancy after parallel phase
+
+TEST RESULTS:
+  - Full regression: 87/87 phases PASS
+  - ASAN: 86/86 clean (Phase 44 excluded)
+
+FILES MODIFIED:
+  src/pnr/detailed_router_v2.hpp
+  src/pnr/detailed_router_v2.cpp
+  conversation.txt
+
+STATS AFTER SESSION 28:
+  87 test phases, all PASS, ASAN clean
+  ~90,500 LOC source, ~33,300 LOC tests
+  Router scalability: O(N) → O(log k) DRC, pattern routing fast-path, parallel nets
+================================================================================

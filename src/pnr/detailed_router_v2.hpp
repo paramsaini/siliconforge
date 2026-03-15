@@ -27,6 +27,46 @@
 
 namespace sf {
 
+// Interval tree for O(log n) track occupancy queries.
+// Organized as: layer -> track_idx -> sorted intervals.
+// Uses a sorted vector of intervals per (layer, track) pair with binary search.
+class TrackOccupancy {
+public:
+    struct Interval {
+        double lo, hi;
+        int net_id;
+    };
+
+    void clear();
+
+    // Insert a segment — O(log n) amortized
+    void insert(int layer, int track_idx, double lo, double hi, int net_id);
+
+    // Query if range [lo, hi] is free on (layer, track_idx), ignoring net_id — O(log n)
+    bool is_free(int layer, int track_idx, double lo, double hi, int net_id,
+                 double buffer, double adj_buffer, double pitch, double wire_width, double spacing) const;
+
+    // Check same track + adjacent tracks (matching current DRC logic)
+    bool is_free_with_adj(int layer, int track_idx, double lo, double hi, int net_id,
+                          double wire_width, double spacing, double pitch) const;
+
+    // Remove all segments for a net — O(n_net) where n_net = segments belonging to that net
+    void remove_net(int net_id);
+
+    // Total segment count
+    size_t size() const;
+
+private:
+    // Key: (layer << 16) | track_idx -> sorted vector of Interval by lo
+    std::unordered_map<int, std::vector<Interval>> tracks_;
+
+    int make_key(int layer, int track_idx) const { return (layer << 16) | (track_idx & 0xFFFF); }
+
+    // Binary search: find first interval whose hi+buffer > lo, then scan forward
+    bool has_overlap(const std::vector<Interval>& intervals, double lo, double hi,
+                     double buffer, int exclude_net) const;
+};
+
 class DetailedRouterV2 {
 public:
     DetailedRouterV2(PhysicalDesign& pd, int num_layers = 0)
@@ -108,6 +148,12 @@ public:
     void set_dp_config(const DPConfig& cfg) { dp_cfg_ = cfg; }
     bool check_dp_conflict(int track1, int track2, int layer) const;
 
+    // Pattern routing: try L/Z shapes before falling back to A*
+    // Returns true if pattern route succeeded
+    bool try_pattern_route(Point src, Point dst, int net_id,
+                           std::vector<WireSegment>& wires,
+                           std::vector<Via>& vias);
+
 private:
     PhysicalDesign& pd_;
     int num_layers_;
@@ -130,6 +176,7 @@ private:
         int net_id;
     };
     std::vector<TrackSeg> occupancy_;
+    TrackOccupancy occ_;  // O(log n) interval-based occupancy index
 
     int compute_num_layers() const;
     void build_track_grid();

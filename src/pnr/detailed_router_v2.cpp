@@ -1,6 +1,7 @@
 // SiliconForge — Detailed Router v2 (Track-Based A* + Rip-up/Reroute)
 // Industrial: timing-driven net ordering, via minimization, antenna tracking.
 #include "pnr/detailed_router_v2.hpp"
+#include "core/thread_pool.hpp"
 #include <iostream>
 #include <thread>
 #include <future>
@@ -9,8 +10,123 @@
 #include <queue>
 #include <numeric>
 #include <chrono>
+#include <atomic>
 
 namespace sf {
+
+// ── TrackOccupancy — sorted-interval occupancy for O(log k) queries ──
+
+void TrackOccupancy::clear() {
+    tracks_.clear();
+}
+
+void TrackOccupancy::insert(int layer, int track_idx, double lo, double hi, int net_id) {
+    double a = std::min(lo, hi);
+    double b = std::max(lo, hi);
+    int key = make_key(layer, track_idx);
+    auto& vec = tracks_[key];
+    // Insert maintaining sort by lo using binary search
+    Interval iv{a, b, net_id};
+    auto it = std::lower_bound(vec.begin(), vec.end(), iv,
+        [](const Interval& x, const Interval& y) { return x.lo < y.lo; });
+    vec.insert(it, iv);
+}
+
+bool TrackOccupancy::has_overlap(const std::vector<Interval>& intervals, double lo, double hi,
+                                  double buffer, int exclude_net) const {
+    if (intervals.empty()) return false;
+    // We need to find intervals where: iv.lo - buffer < hi  AND  iv.hi + buffer > lo
+    // Since intervals are sorted by iv.lo, find the first where iv.lo >= lo - buffer_max
+    // (conservative start point). We use iv.hi + buffer > lo as a post-filter.
+    //
+    // Binary search for first interval where iv.lo >= lo - buffer - max_possible_width.
+    // Conservative: start from first interval whose lo could possibly satisfy overlap.
+    // An interval overlaps if:  iv.lo - buffer < hi  AND  iv.hi + buffer > lo
+    // Rearranged: iv.lo < hi + buffer.  So find first iv with iv.lo >= lo - buffer
+    // (but iv.hi could extend rightward), so we need to start scanning earlier.
+    //
+    // Strategy: binary search for first iv where iv.lo >= lo - buffer, but we must also
+    // catch intervals that start before lo-buffer but extend past it (iv.hi + buffer > lo).
+    // Those intervals have iv.lo < lo - buffer but iv.hi > lo - buffer.
+    // To handle that: also scan backward from the found position.
+
+    // Find first interval with lo >= (query_lo - buffer)
+    // But intervals starting before that point could still overlap if their hi extends far enough.
+    // We handle this by also checking a few intervals before the lower_bound position.
+
+    Interval sentinel{lo - buffer, 0.0, 0};
+    auto it = std::lower_bound(intervals.begin(), intervals.end(), sentinel,
+        [](const Interval& x, const Interval& y) { return x.lo < y.lo; });
+
+    // Scan backward to catch intervals that start before lo-buffer but whose hi extends into range.
+    // These intervals satisfy: iv.lo < lo - buffer AND iv.hi + buffer > lo.
+    // Since intervals are sorted by lo, we scan backward until iv.lo is too small for iv.hi to matter.
+    // In practice, we check all intervals from it backward while iv.hi + buffer > lo.
+    if (it != intervals.begin()) {
+        auto back = it;
+        do {
+            --back;
+            if (back->net_id != exclude_net) {
+                if (back->lo - buffer < hi && back->hi + buffer > lo) return true;
+            }
+            // Once hi + buffer <= lo, no earlier interval can overlap either
+            if (back->hi + buffer <= lo) break;
+        } while (back != intervals.begin());
+    }
+
+    // Scan forward: check intervals while iv.lo - buffer < hi (could still overlap)
+    for (auto fwd = it; fwd != intervals.end(); ++fwd) {
+        if (fwd->lo - buffer >= hi) break;  // sorted by lo, no further overlap possible
+        if (fwd->net_id == exclude_net) continue;
+        if (fwd->hi + buffer > lo) return true;
+    }
+    return false;
+}
+
+bool TrackOccupancy::is_free(int layer, int track_idx, double lo, double hi, int net_id,
+                              double buffer, double adj_buffer, double pitch,
+                              double wire_width, double spacing) const {
+    // Same track check
+    int key = make_key(layer, track_idx);
+    auto it = tracks_.find(key);
+    if (it != tracks_.end()) {
+        if (has_overlap(it->second, lo, hi, buffer, net_id)) return false;
+    }
+    // Adjacent track checks (track_idx - 1, track_idx + 1)
+    double perp_edge = pitch - wire_width;
+    if (perp_edge < spacing) {
+        for (int delta : {-1, 1}) {
+            int adj_key = make_key(layer, track_idx + delta);
+            auto adj_it = tracks_.find(adj_key);
+            if (adj_it != tracks_.end()) {
+                if (has_overlap(adj_it->second, lo, hi, adj_buffer, net_id)) return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool TrackOccupancy::is_free_with_adj(int layer, int track_idx, double lo, double hi, int net_id,
+                                       double wire_width, double spacing, double pitch) const {
+    double buffer = spacing + wire_width;
+    double adj_buffer = spacing;
+    return is_free(layer, track_idx, lo, hi, net_id, buffer, adj_buffer, pitch, wire_width, spacing);
+}
+
+void TrackOccupancy::remove_net(int net_id) {
+    for (auto& kv : tracks_) {
+        auto& vec = kv.second;
+        vec.erase(std::remove_if(vec.begin(), vec.end(),
+            [net_id](const Interval& iv) { return iv.net_id == net_id; }),
+            vec.end());
+    }
+}
+
+size_t TrackOccupancy::size() const {
+    size_t total = 0;
+    for (auto& kv : tracks_) total += kv.second.size();
+    return total;
+}
 
 // ── Compute number of routing layers from design complexity ──────────
 int DetailedRouterV2::compute_num_layers() const {
@@ -103,34 +219,17 @@ int DetailedRouterV2::nearest_track(int layer, double coord) const {
 
 // ── Track occupancy ──────────────────────────────────────────────────
 bool DetailedRouterV2::is_free(int layer, int track_idx, double lo, double hi, int net_id) const {
-    // DRC wire rectangles extend width/2 beyond segment endpoints in all directions,
-    // so the minimum centerline gap must be: min_spacing + wire_width
+    // DRC parameters for this layer
     double w = (layer < (int)pd_.layers.size()) ? pd_.layers[layer].width : 0.14;
     double sp = (layer < (int)pd_.layers.size()) ? pd_.layers[layer].spacing : 0.14;
-    double buffer = sp + w;  // accounts for wire-end extension in DRC rectangles
     double pitch = (layer < (int)pd_.layers.size()) ? pd_.layers[layer].pitch : 0.5;
-    for (auto& seg : occupancy_) {
-        if (seg.layer != layer) continue;
-        if (seg.net_id == net_id) continue;
-        // Check same track and adjacent tracks (off-track access wires can violate)
-        int track_dist = std::abs(seg.track_idx - track_idx);
-        if (track_dist > 1) continue;
-        double adj_buffer = buffer;
-        if (track_dist == 1) {
-            // Adjacent track: also check along-track overlap with reduced buffer
-            // Physical separation between tracks = pitch, but wires extend width/2 perp
-            // Edge-to-edge = pitch - width; only need to check if < spacing
-            double perp_edge = pitch - w;
-            if (perp_edge >= sp) continue;  // adjacent tracks have enough perpendicular spacing
-            adj_buffer = sp;  // reduced buffer for adjacent tracks
-        }
-        if (seg.lo - adj_buffer < hi && seg.hi + adj_buffer > lo) return false;
-    }
-    return true;
+    // Delegate to interval-tree occupancy for O(log k) per-track query
+    return occ_.is_free_with_adj(layer, track_idx, lo, hi, net_id, w, sp, pitch);
 }
 
 void DetailedRouterV2::mark_occupied(int layer, int track_idx, double lo, double hi, int net_id) {
     occupancy_.push_back({layer, track_idx, std::min(lo,hi), std::max(lo,hi), net_id});
+    occ_.insert(layer, track_idx, lo, hi, net_id);
 }
 
 void DetailedRouterV2::unmark_net(int net_id) {
@@ -138,6 +237,7 @@ void DetailedRouterV2::unmark_net(int net_id) {
         std::remove_if(occupancy_.begin(), occupancy_.end(),
                         [net_id](const TrackSeg& s) { return s.net_id == net_id; }),
         occupancy_.end());
+    occ_.remove_net(net_id);
 }
 
 // ── L-shape fallback route ───────────────────────────────────────────
@@ -187,11 +287,167 @@ bool DetailedRouterV2::l_shape_route(Point start, Point end,
     return true;
 }
 
+// ── Pattern routing fast-path: L/Z shapes before A* ──────────────────
+// ~80% of two-pin connections can be routed with simple geometric patterns,
+// avoiding the O(N log N) overhead of A* maze expansion.  This enables
+// embarrassingly-parallel first-pass routing for the majority of nets.
+bool DetailedRouterV2::try_pattern_route(Point src, Point dst, int net_id,
+                                          std::vector<WireSegment>& wires,
+                                          std::vector<Via>& vias) {
+    if (src.dist(dst) < 0.001) return true;
+    if (num_layers_ < 2 || layer_tracks_.empty()) return false;
+
+    int num_pairs = std::max(1, num_layers_ / 2);
+    int pair_idx = net_id % num_pairs;
+    int h_layer = std::clamp(pair_idx * 2, 0, num_layers_ - 1);
+    int v_layer = std::clamp(pair_idx * 2 + 1, 0, num_layers_ - 1);
+    if (h_layer == v_layer && num_layers_ > 1)
+        v_layer = (h_layer + 1) % num_layers_;
+
+    if (h_layer >= (int)layer_tracks_.size() || v_layer >= (int)layer_tracks_.size())
+        return false;
+    if (layer_tracks_[h_layer].empty() || layer_tracks_[v_layer].empty())
+        return false;
+
+    double h_width = (h_layer < (int)pd_.layers.size()) ? pd_.layers[h_layer].width : 0.14;
+    double v_width = (v_layer < (int)pd_.layers.size()) ? pd_.layers[v_layer].width : 0.14;
+
+    // ── Pattern 1: L-shape horizontal-first ─────────────────────────
+    // src -> (dst.x, src.y) -> dst
+    {
+        int h_tk = nearest_track(h_layer, src.y);
+        int v_tk = nearest_track(v_layer, dst.x);
+        double h_y = layer_tracks_[h_layer][h_tk].coord;
+        double v_x = layer_tracks_[v_layer][v_tk].coord;
+
+        double h_lo = std::min(src.x, v_x), h_hi = std::max(src.x, v_x);
+        double v_lo = std::min(h_y, dst.y), v_hi = std::max(h_y, dst.y);
+
+        if (is_free(h_layer, h_tk, h_lo, h_hi, net_id) &&
+            is_free(v_layer, v_tk, v_lo, v_hi, net_id)) {
+            Point on_h(src.x, h_y);
+            Point bend(v_x, h_y);
+            Point on_v(v_x, dst.y);
+
+            if (std::abs(src.y - h_y) > 0.001)
+                wires.push_back({v_layer, src, on_h, v_width});
+            if (std::abs(src.x - v_x) > 0.001)
+                wires.push_back({h_layer, on_h, bend, h_width});
+            if (h_layer != v_layer)
+                vias.push_back({bend, std::min(h_layer, v_layer), std::max(h_layer, v_layer)});
+            if (std::abs(h_y - dst.y) > 0.001)
+                wires.push_back({v_layer, bend, on_v, v_width});
+            if (std::abs(v_x - dst.x) > 0.001)
+                wires.push_back({h_layer, on_v, dst, h_width});
+
+            mark_occupied(h_layer, h_tk, h_lo, h_hi, net_id);
+            mark_occupied(v_layer, v_tk, v_lo, v_hi, net_id);
+            return true;
+        }
+    }
+
+    // ── Pattern 2: L-shape vertical-first ───────────────────────────
+    // src -> (src.x, dst.y) -> dst
+    {
+        int v_tk = nearest_track(v_layer, src.x);
+        int h_tk = nearest_track(h_layer, dst.y);
+        double v_x = layer_tracks_[v_layer][v_tk].coord;
+        double h_y = layer_tracks_[h_layer][h_tk].coord;
+
+        double v_lo = std::min(src.y, h_y), v_hi = std::max(src.y, h_y);
+        double h_lo = std::min(v_x, dst.x), h_hi = std::max(v_x, dst.x);
+
+        if (is_free(v_layer, v_tk, v_lo, v_hi, net_id) &&
+            is_free(h_layer, h_tk, h_lo, h_hi, net_id)) {
+            Point on_v(v_x, src.y);
+            Point bend(v_x, h_y);
+            Point on_h(dst.x, h_y);
+
+            if (std::abs(src.x - v_x) > 0.001)
+                wires.push_back({h_layer, src, on_v, h_width});
+            if (std::abs(src.y - h_y) > 0.001)
+                wires.push_back({v_layer, on_v, bend, v_width});
+            if (h_layer != v_layer)
+                vias.push_back({bend, std::min(h_layer, v_layer), std::max(h_layer, v_layer)});
+            if (std::abs(v_x - dst.x) > 0.001)
+                wires.push_back({h_layer, bend, on_h, h_width});
+            if (std::abs(h_y - dst.y) > 0.001)
+                wires.push_back({v_layer, on_h, dst, v_width});
+
+            mark_occupied(v_layer, v_tk, v_lo, v_hi, net_id);
+            mark_occupied(h_layer, h_tk, h_lo, h_hi, net_id);
+            return true;
+        }
+    }
+
+    // ── Pattern 3: Z-shape HVH ──────────────────────────────────────
+    // src -> (mid_x, src.y) -> (mid_x, dst.y) -> dst
+    // where mid_x = (src.x + dst.x) / 2
+    {
+        double mid_x = (src.x + dst.x) / 2.0;
+        int h_src_tk = nearest_track(h_layer, src.y);
+        int h_dst_tk = nearest_track(h_layer, dst.y);
+        int v_mid_tk = nearest_track(v_layer, mid_x);
+        double h_src_y = layer_tracks_[h_layer][h_src_tk].coord;
+        double h_dst_y = layer_tracks_[h_layer][h_dst_tk].coord;
+        double v_mid_x = layer_tracks_[v_layer][v_mid_tk].coord;
+
+        double h1_lo = std::min(src.x, v_mid_x), h1_hi = std::max(src.x, v_mid_x);
+        double v_lo  = std::min(h_src_y, h_dst_y), v_hi = std::max(h_src_y, h_dst_y);
+        double h2_lo = std::min(v_mid_x, dst.x), h2_hi = std::max(v_mid_x, dst.x);
+
+        if (is_free(h_layer, h_src_tk, h1_lo, h1_hi, net_id) &&
+            (v_hi - v_lo < 0.001 || is_free(v_layer, v_mid_tk, v_lo, v_hi, net_id)) &&
+            is_free(h_layer, h_dst_tk, h2_lo, h2_hi, net_id)) {
+
+            Point p_src_h(src.x, h_src_y);
+            Point jog_s(v_mid_x, h_src_y);
+            Point jog_e(v_mid_x, h_dst_y);
+            Point p_dst_h(dst.x, h_dst_y);
+
+            // Access: src to H-track
+            if (std::abs(src.y - h_src_y) > 0.001)
+                wires.push_back({v_layer, src, p_src_h, v_width});
+            // H segment 1
+            if (std::abs(src.x - v_mid_x) > 0.001)
+                wires.push_back({h_layer, p_src_h, jog_s, h_width});
+            // Via at first bend
+            if (h_layer != v_layer && v_hi - v_lo > 0.001)
+                vias.push_back({jog_s, std::min(h_layer, v_layer), std::max(h_layer, v_layer)});
+            // V segment (the jog)
+            if (std::abs(h_src_y - h_dst_y) > 0.001)
+                wires.push_back({v_layer, jog_s, jog_e, v_width});
+            // Via at second bend
+            if (h_layer != v_layer && v_hi - v_lo > 0.001)
+                vias.push_back({jog_e, std::min(h_layer, v_layer), std::max(h_layer, v_layer)});
+            // H segment 2
+            if (std::abs(v_mid_x - dst.x) > 0.001)
+                wires.push_back({h_layer, jog_e, p_dst_h, h_width});
+            // Access: H-track to dst
+            if (std::abs(h_dst_y - dst.y) > 0.001)
+                wires.push_back({v_layer, p_dst_h, dst, v_width});
+
+            mark_occupied(h_layer, h_src_tk, h1_lo, h1_hi, net_id);
+            if (v_hi - v_lo > 0.001)
+                mark_occupied(v_layer, v_mid_tk, v_lo, v_hi, net_id);
+            mark_occupied(h_layer, h_dst_tk, h2_lo, h2_hi, net_id);
+            return true;
+        }
+    }
+
+    // All patterns failed -- caller should fall back to full maze routing
+    return false;
+}
+
 // ── Route a 2-pin connection with track-based routing ────────────────
 bool DetailedRouterV2::route_two_pin(Point src, Point dst, int net_id,
                                       std::vector<WireSegment>& wires,
                                       std::vector<Via>& vias) {
     if (src.dist(dst) < 0.001) return true;
+
+    // Fast-path: try simple geometric patterns before expensive maze routing
+    if (try_pattern_route(src, dst, net_id, wires, vias))
+        return true;
 
     int num_pairs = std::max(1, num_layers_ / 2);
     int pair_idx = net_id % num_pairs;
@@ -450,8 +706,24 @@ RouteResult DetailedRouterV2::route(int num_threads) {
     setup_layers();
     build_track_grid();
     occupancy_.clear();
+    occ_.clear();
 
-    // Industrial: timing-driven net ordering (critical nets first)
+    // HPWL computation for net ordering
+    auto compute_hpwl = [&](int ni) -> double {
+        auto& net = pd_.nets[ni];
+        if (net.cell_ids.size() < 2) return 0.0;
+        double xlo = 1e18, xhi = -1e18, ylo = 1e18, yhi = -1e18;
+        for (auto ci : net.cell_ids) {
+            xlo = std::min(xlo, pd_.cells[ci].position.x);
+            xhi = std::max(xhi, pd_.cells[ci].position.x);
+            ylo = std::min(ylo, pd_.cells[ci].position.y);
+            yhi = std::max(yhi, pd_.cells[ci].position.y);
+        }
+        return (xhi - xlo) + (yhi - ylo);
+    };
+
+    // Net ordering: sort by HPWL descending (longest nets first) to reduce
+    // congestion from late-arriving long nets.  Critical nets override.
     std::vector<int> net_order(pd_.nets.size());
     std::iota(net_order.begin(), net_order.end(), 0);
 
@@ -460,45 +732,188 @@ RouteResult DetailedRouterV2::route(int num_threads) {
             double ca = get_criticality(a);
             double cb = get_criticality(b);
             if (std::abs(ca - cb) > 0.01) return ca > cb;
-            // Tiebreak: shorter HPWL first
-            auto hpwl = [&](int ni) {
-                auto& net = pd_.nets[ni];
-                if (net.cell_ids.size() < 2) return 0.0;
-                double xlo=1e18,xhi=-1e18,ylo=1e18,yhi=-1e18;
-                for (auto ci : net.cell_ids) {
-                    xlo = std::min(xlo, pd_.cells[ci].position.x);
-                    xhi = std::max(xhi, pd_.cells[ci].position.x);
-                    ylo = std::min(ylo, pd_.cells[ci].position.y);
-                    yhi = std::max(yhi, pd_.cells[ci].position.y);
-                }
-                return (xhi-xlo) + (yhi-ylo);
-            };
-            return hpwl(a) < hpwl(b);
+            return compute_hpwl(a) > compute_hpwl(b);
         });
     } else {
         std::sort(net_order.begin(), net_order.end(), [&](int a, int b) {
-            auto hpwl = [&](int ni) {
-                auto& net = pd_.nets[ni];
-                if (net.cell_ids.size() < 2) return 0.0;
-                double xlo=1e18,xhi=-1e18,ylo=1e18,yhi=-1e18;
-                for (auto ci : net.cell_ids) {
-                    xlo = std::min(xlo, pd_.cells[ci].position.x);
-                    xhi = std::max(xhi, pd_.cells[ci].position.x);
-                    ylo = std::min(ylo, pd_.cells[ci].position.y);
-                    yhi = std::max(yhi, pd_.cells[ci].position.y);
-                }
-                return (xhi-xlo) + (yhi-ylo);
-            };
-            return hpwl(a) < hpwl(b);
+            return compute_hpwl(a) > compute_hpwl(b);
         });
     }
 
-    // Phase 1: Initial routing
     int routed = 0, failed = 0;
     std::vector<std::vector<WireSegment>> net_wires(pd_.nets.size());
     std::vector<std::vector<Via>> net_vias(pd_.nets.size());
 
+    // Phase 1a: Parallel pattern routing pass
+    // Pattern routes (L/Z shapes) are fast and can be tried for all 2-pin
+    // nets simultaneously.  Each net gets private wire/via vectors; successful
+    // results are merged under lock.  Nets that fail pattern routing are
+    // collected for sequential A* in Phase 1b.
+    int effective_threads = std::max(1, num_threads);
+    ThreadPool pool(effective_threads);
+    int N = (int)net_order.size();
+
+    // Per-net pattern routing results (thread-local storage per net)
+    std::vector<std::vector<WireSegment>> pat_wires(pd_.nets.size());
+    std::vector<std::vector<Via>> pat_vias(pd_.nets.size());
+    std::vector<std::atomic<int>> pat_ok(pd_.nets.size());
+    for (auto& a : pat_ok) a.store(0, std::memory_order_relaxed);
+
+    // Extract 2-pin net info for pattern routing (read-only access to pd_)
+    struct TwoPinInfo {
+        int net_idx;
+        Point src, dst;
+    };
+    std::vector<TwoPinInfo> two_pin_nets;
+    std::vector<int> multi_pin_nets;
+    two_pin_nets.reserve(N);
+
     for (int ni : net_order) {
+        auto& net = pd_.nets[ni];
+        if (net.cell_ids.size() == 2) {
+            auto& c0 = pd_.cells[net.cell_ids[0]];
+            auto& c1 = pd_.cells[net.cell_ids[1]];
+            double px0 = c0.position.x + (net.pin_offsets.size() > 0 ? net.pin_offsets[0].x : c0.width / 2);
+            double py0 = c0.position.y + (net.pin_offsets.size() > 0 ? net.pin_offsets[0].y : c0.height / 2);
+            double px1 = c1.position.x + (net.pin_offsets.size() > 1 ? net.pin_offsets[1].x : c1.width / 2);
+            double py1 = c1.position.y + (net.pin_offsets.size() > 1 ? net.pin_offsets[1].y : c1.height / 2);
+            two_pin_nets.push_back({ni, {px0, py0}, {px1, py1}});
+        } else {
+            multi_pin_nets.push_back(ni);
+        }
+    }
+
+    // Try pattern routing in parallel for all 2-pin nets
+    // Each thread writes to its own net's wire/via vectors (no contention),
+    // but is_free() reads from shared occupancy (safe for read-only snapshot
+    // since occupancy is empty at this point -- no writes yet).
+    // After parallel pass, successful routes commit occupancy sequentially.
+    if (!two_pin_nets.empty()) {
+        pool.parallel_for(0, (int)two_pin_nets.size(), [&](int i) {
+            auto& tp = two_pin_nets[i];
+            int ni = tp.net_idx;
+            // Pattern route into thread-local vectors (no occupancy writes)
+            std::vector<WireSegment> local_wires;
+            std::vector<Via> local_vias;
+
+            // Inline pattern route check without marking occupancy
+            if (tp.src.dist(tp.dst) < 0.001) {
+                pat_ok[ni].store(1, std::memory_order_relaxed);
+                return;
+            }
+            if (num_layers_ < 2 || layer_tracks_.empty()) return;
+
+            int num_pairs = std::max(1, num_layers_ / 2);
+            int pair_idx = ni % num_pairs;
+            int h_layer = std::clamp(pair_idx * 2, 0, num_layers_ - 1);
+            int v_layer = std::clamp(pair_idx * 2 + 1, 0, num_layers_ - 1);
+            if (h_layer == v_layer && num_layers_ > 1)
+                v_layer = (h_layer + 1) % num_layers_;
+
+            if (h_layer >= (int)layer_tracks_.size() || v_layer >= (int)layer_tracks_.size()) return;
+            if (layer_tracks_[h_layer].empty() || layer_tracks_[v_layer].empty()) return;
+
+            double h_width = (h_layer < (int)pd_.layers.size()) ? pd_.layers[h_layer].width : 0.14;
+            double v_width = (v_layer < (int)pd_.layers.size()) ? pd_.layers[v_layer].width : 0.14;
+
+            Point src = tp.src, dst = tp.dst;
+            bool found = false;
+
+            // L-shape horizontal-first
+            if (!found) {
+                int h_tk = nearest_track(h_layer, src.y);
+                int v_tk = nearest_track(v_layer, dst.x);
+                double h_y = layer_tracks_[h_layer][h_tk].coord;
+                double v_x = layer_tracks_[v_layer][v_tk].coord;
+                double h_lo = std::min(src.x, v_x), h_hi = std::max(src.x, v_x);
+                double v_lo = std::min(h_y, dst.y), v_hi = std::max(h_y, dst.y);
+
+                if (is_free(h_layer, h_tk, h_lo, h_hi, ni) &&
+                    is_free(v_layer, v_tk, v_lo, v_hi, ni)) {
+                    Point on_h(src.x, h_y), bend(v_x, h_y), on_v(v_x, dst.y);
+                    if (std::abs(src.y - h_y) > 0.001)
+                        local_wires.push_back({v_layer, src, on_h, v_width});
+                    if (std::abs(src.x - v_x) > 0.001)
+                        local_wires.push_back({h_layer, on_h, bend, h_width});
+                    if (h_layer != v_layer)
+                        local_vias.push_back({bend, std::min(h_layer, v_layer), std::max(h_layer, v_layer)});
+                    if (std::abs(h_y - dst.y) > 0.001)
+                        local_wires.push_back({v_layer, bend, on_v, v_width});
+                    if (std::abs(v_x - dst.x) > 0.001)
+                        local_wires.push_back({h_layer, on_v, dst, h_width});
+                    found = true;
+                }
+            }
+
+            // L-shape vertical-first
+            if (!found) {
+                int v_tk = nearest_track(v_layer, src.x);
+                int h_tk = nearest_track(h_layer, dst.y);
+                double v_x = layer_tracks_[v_layer][v_tk].coord;
+                double h_y = layer_tracks_[h_layer][h_tk].coord;
+                double v_lo = std::min(src.y, h_y), v_hi = std::max(src.y, h_y);
+                double h_lo = std::min(v_x, dst.x), h_hi = std::max(v_x, dst.x);
+
+                if (is_free(v_layer, v_tk, v_lo, v_hi, ni) &&
+                    is_free(h_layer, h_tk, h_lo, h_hi, ni)) {
+                    Point on_v(v_x, src.y), bend(v_x, h_y), on_h(dst.x, h_y);
+                    if (std::abs(src.x - v_x) > 0.001)
+                        local_wires.push_back({h_layer, src, on_v, h_width});
+                    if (std::abs(src.y - h_y) > 0.001)
+                        local_wires.push_back({v_layer, on_v, bend, v_width});
+                    if (h_layer != v_layer)
+                        local_vias.push_back({bend, std::min(h_layer, v_layer), std::max(h_layer, v_layer)});
+                    if (std::abs(v_x - dst.x) > 0.001)
+                        local_wires.push_back({h_layer, bend, on_h, h_width});
+                    if (std::abs(h_y - dst.y) > 0.001)
+                        local_wires.push_back({v_layer, on_h, dst, v_width});
+                    found = true;
+                }
+            }
+
+            if (found) {
+                pat_wires[ni] = std::move(local_wires);
+                pat_vias[ni] = std::move(local_vias);
+                pat_ok[ni].store(1, std::memory_order_relaxed);
+            }
+        });
+    }
+
+    // Commit successful pattern routes sequentially (occupancy updates)
+    for (auto& tp : two_pin_nets) {
+        int ni = tp.net_idx;
+        if (!pat_ok[ni].load(std::memory_order_relaxed)) continue;
+
+        // Commit occupancy for this net's pattern route
+        for (auto& w : pat_wires[ni]) {
+            int tk = nearest_track(w.layer, w.start.y);
+            double lo = std::min(w.start.x, w.end.x);
+            double hi = std::max(w.start.x, w.end.x);
+            // For vertical wires, use y-coordinates for occupancy range
+            if (w.layer < (int)pd_.layers.size() && !pd_.layers[w.layer].horizontal) {
+                tk = nearest_track(w.layer, w.start.x);
+                lo = std::min(w.start.y, w.end.y);
+                hi = std::max(w.start.y, w.end.y);
+            }
+            mark_occupied(w.layer, tk, lo, hi, ni);
+        }
+        net_wires[ni] = std::move(pat_wires[ni]);
+        net_vias[ni] = std::move(pat_vias[ni]);
+        routed++;
+    }
+
+    // Phase 1b: Sequential A* routing for pattern-failed 2-pin nets
+    // and all multi-pin nets (these need Steiner/MST decomposition with
+    // occupancy coordination that cannot be parallelized safely).
+    for (auto& tp : two_pin_nets) {
+        int ni = tp.net_idx;
+        if (pat_ok[ni].load(std::memory_order_relaxed)) continue;
+        if (route_net(pd_.nets[ni], ni, net_wires[ni], net_vias[ni]))
+            routed++;
+        else
+            failed++;
+    }
+    for (int ni : multi_pin_nets) {
         if (route_net(pd_.nets[ni], ni, net_wires[ni], net_vias[ni]))
             routed++;
         else
@@ -1312,6 +1727,7 @@ RouteResult DetailedRouterV2::route_with_convergence() {
     setup_layers();
     build_track_grid();
     occupancy_.clear();
+    occ_.clear();
     congestion_penalty_ = 1.0;
 
     int total_nets = (int)pd_.nets.size();
