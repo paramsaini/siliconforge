@@ -250,7 +250,7 @@ body{
 .layer-legend-item{display:flex;align-items:center;gap:8px;margin:5px 0;color:var(--text-secondary);cursor:pointer;transition:opacity 0.2s;user-select:none;}
 .layer-legend-item:hover{color:var(--text-primary);}
 .layer-legend-item.off{opacity:0.3;}
-.layer-legend-item .swatch{width:18px;height:5px;border-radius:2px;box-shadow:0 0 6px currentColor;}
+.layer-legend-item .swatch{width:18px;height:5px;border-radius:2px;box-shadow:0 0 3px currentColor;}
 .scene-hint{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);font-size:10px;color:var(--text-muted);pointer-events:none;opacity:0.6;background:rgba(6,8,15,0.7);padding:3px 14px;border-radius:12px;backdrop-filter:blur(6px);}
 .scene-toolbar{position:absolute;top:10px;left:10px;display:flex;gap:6px;z-index:10;}
 .scene-toolbar button{
@@ -1303,23 +1303,27 @@ function drawImpedance(canvas,pdn){
    THREE.JS 3D — PROFESSIONAL EDA VISUALIZATION
    Inspired by Cadence Innovus / OpenROAD / ICC2
    ═══════════════════════════════════════════════════════ */
-const SEMI_LAYER_COLORS=[0x4169e1,0xc71585,0x228b22,0xdaa520,0xff6347,0x00ced1,0x9370db,0x20b2aa];
-const SEMI_LAYER_HEX=['#4169e1','#c71585','#228b22','#daa520','#ff6347','#00ced1','#9370db','#20b2aa'];
+// ── Foundry-standard color palette (KLayout/Cadence/Synopsys convention) ──
+// Metal layers: blue → pink → green → gold → red → cyan → purple → teal
+const SEMI_LAYER_COLORS=[0x3d6eff,0xd94fa0,0x2ea84a,0xc9952e,0xe04848,0x28a8b8,0x8866cc,0x2ea89a];
+const SEMI_LAYER_HEX=['#3d6eff','#d94fa0','#2ea84a','#c9952e','#e04848','#28a8b8','#8866cc','#2ea89a'];
 const SEMI_LAYER_NAMES=['M1','M2','M3','M4','M5','M6','M7','M8'];
+// Cell type colors — muted, professional tones (not neon)
 const CELL_TYPE_COLORS={
-  'NAND':0x38bdf8,'NOR':0x34d399,'INV':0xa78bfa,'BUF':0x22d3ee,
-  'AND':0x60a5fa,'OR':0x4ade80,'XOR':0xfbbf24,'XNOR':0xf97316,
-  'MUX':0xf472b6,'DFF':0xe879f9,'LATCH':0xc084fc,'AOI':0x2dd4bf,
-  'OAI':0x67e8f9,'HA':0xfde047,'FA':0xfb923c,'FILL':0x334155,
-  'CLKBUF':0x22d3ee,'CLKINV':0x06b6d4,'TIE':0x475569,'DEFAULT':0x64748b
+  'NAND':0x4a7fbf,'NOR':0x3da06a,'INV':0x7e6eb5,'BUF':0x4a9ea8,
+  'AND':0x5580b8,'OR':0x4aa870,'XOR':0xb89040,'XNOR':0xc07040,
+  'MUX':0xb06088,'DFF':0xc06ab0,'LATCH':0x9a6cc0,'AOI':0x3ab098,
+  'OAI':0x4ab8c0,'HA':0xc8a838,'FA':0xd08838,'FILL':0x252a35,
+  'CLKBUF':0x4a9ea8,'CLKINV':0x3898a8,'TIE':0x3a4050,'ENDCAP':0xd08838,
+  'WELLTAP':0x3da06a,'NOT':0x4a9ea8,'DEFAULT':0x506070
 };
 function cellColor(type){
   if(!type)return CELL_TYPE_COLORS.DEFAULT;
   const up=type.toUpperCase();
   for(const k in CELL_TYPE_COLORS)if(up.includes(k))return CELL_TYPE_COLORS[k];
-  // Hash-based fallback
+  // Hash-based fallback — muted professional palette
   let h=0;for(let i=0;i<type.length;i++)h=((h<<5)-h)+type.charCodeAt(i);
-  const palette=[0x38bdf8,0x34d399,0xa78bfa,0xf472b6,0xfbbf24,0x22d3ee,0x818cf8,0xf97316,0x60a5fa,0x4ade80];
+  const palette=[0x4a7fbf,0x3da06a,0x7e6eb5,0xb06088,0xb89040,0x4a9ea8,0x6a6eb8,0xc07040,0x5580b8,0x4aa870];
   return palette[Math.abs(h)%palette.length];
 }
 
@@ -1340,10 +1344,10 @@ function create3DScene(container,opts){
   renderer.toneMappingExposure=1.1;
   container.insertBefore(renderer.domElement,container.firstChild);
 
-  // Professional lighting rig
-  const ambient=new THREE.AmbientLight(0x303050,0.4);
+  // Professional lighting rig — bright enough for solid opaque geometry
+  const ambient=new THREE.AmbientLight(0x404860,0.6);
   scene.add(ambient);
-  const key=new THREE.DirectionalLight(0xffffff,0.65);
+  const key=new THREE.DirectionalLight(0xffffff,0.8);
   key.position.set(300,500,400);key.castShadow=true;
   key.shadow.mapSize.width=2048;key.shadow.mapSize.height=2048;
   key.shadow.camera.near=10;key.shadow.camera.far=2000;
@@ -1351,11 +1355,11 @@ function create3DScene(container,opts){
   key.shadow.camera.top=500;key.shadow.camera.bottom=-500;
   key.shadow.bias=-0.0001;
   scene.add(key);
-  const fill=new THREE.DirectionalLight(0x4488cc,0.2);
+  const fill=new THREE.DirectionalLight(0x5599cc,0.35);
   fill.position.set(-300,200,-300);scene.add(fill);
-  const rim=new THREE.DirectionalLight(0x6366f1,0.15);
+  const rim=new THREE.DirectionalLight(0x5560c0,0.2);
   rim.position.set(0,100,-400);scene.add(rim);
-  const point=new THREE.PointLight(0x38bdf8,0.15,1200);
+  const point=new THREE.PointLight(0x3090c0,0.2,1500);
   point.position.set(0,400,0);scene.add(point);
 
   // Camera orbit state
@@ -1471,55 +1475,52 @@ function build3DPlacement(container,ph){
   const scene=ctx.scene;
   ctx._labels=[];
 
-  // ── Die substrate with layered look ──
+  // ── Die substrate — clean silicon look ──
   const dieW=dw*sc, dieH=dh*sc;
-  // Silicon base
-  const baseGeo=new THREE.BoxGeometry(dieW+6,4,dieH+6);
-  const baseMat=new THREE.MeshPhongMaterial({color:0x080c18,specular:0x111122,shininess:20});
+  // Package/PCB base
+  const baseGeo=new THREE.BoxGeometry(dieW+8,3,dieH+8);
+  const baseMat=new THREE.MeshPhongMaterial({color:0x1a1a2e,specular:0x222240,shininess:25});
   const base=new THREE.Mesh(baseGeo,baseMat);
-  base.position.set(0,-3,0);base.receiveShadow=true;scene.add(base);
+  base.position.set(0,-2.5,0);base.receiveShadow=true;scene.add(base);
 
-  // Active area
-  const dieGeo=new THREE.BoxGeometry(dieW,1.5,dieH);
-  const dieMat=new THREE.MeshPhongMaterial({color:0x0e1528,specular:0x182040,shininess:50});
+  // Active silicon die
+  const dieGeo=new THREE.BoxGeometry(dieW,0.8,dieH);
+  const dieMat=new THREE.MeshPhongMaterial({color:0x141828,specular:0x1c2040,shininess:40});
   const die=new THREE.Mesh(dieGeo,dieMat);
-  die.position.set(0,-0.75,0);die.receiveShadow=true;scene.add(die);
+  die.position.set(0,-0.4,0);die.receiveShadow=true;scene.add(die);
 
-  // Die border glow
-  const edgeGeo=new THREE.EdgesGeometry(new THREE.BoxGeometry(dieW+0.5,2,dieH+0.5));
-  const edgeMat=new THREE.LineBasicMaterial({color:0x38bdf8,transparent:true,opacity:0.2});
+  // Die edge — subtle, no neon glow
+  const edgeGeo=new THREE.EdgesGeometry(new THREE.BoxGeometry(dieW+0.3,1,dieH+0.3));
+  const edgeMat=new THREE.LineBasicMaterial({color:0x3060a0,transparent:true,opacity:0.25});
   const edges=new THREE.LineSegments(edgeGeo,edgeMat);
-  edges.position.y=-0.5;scene.add(edges);
+  edges.position.y=-0.2;scene.add(edges);
 
-  // Grid overlay
-  const gridDiv=Math.min(50,Math.max(8,Math.round(Math.max(dw,dh)/5)));
-  const gridHelper=new THREE.GridHelper(Math.max(dieW,dieH),gridDiv,0x1a2a4a,0x0d1525);
-  gridHelper.position.y=0.02;scene.add(gridHelper);
+  // Placement row grid — thin lines, not filled planes
+  const gridDiv=Math.min(60,Math.max(10,Math.round(Math.max(dw,dh)/4)));
+  const gridHelper=new THREE.GridHelper(Math.max(dieW,dieH),gridDiv,0x182848,0x101828);
+  gridHelper.position.y=0.01;scene.add(gridHelper);
 
-  // Placement rows (like Innovus)
-  const rowH=dieH/Math.max(1,Math.round(dh/4));
-  for(let ry=oz;ry<-oz;ry+=rowH){
-    const rowGeo=new THREE.PlaneGeometry(dieW,rowH*0.92);
-    const rowMat=new THREE.MeshBasicMaterial({color:0x0f1a2e,transparent:true,opacity:0.3,side:THREE.DoubleSide});
-    const row=new THREE.Mesh(rowGeo,rowMat);
-    row.rotation.x=-Math.PI/2;row.position.set(0,0.03,ry+rowH/2);scene.add(row);
-  }
-
-  // ── Cells as colored blocks with type-based coloring ──
+  // ── Cells as solid blocks — uniform height per type, tightly packed ──
   const typeColors={};
+  // Standard cell height is uniform (like real placement rows)
+  const STD_CELL_H=2.0;   // standard cells
+  const DFF_CELL_H=2.8;   // sequential cells slightly taller
+  const FILL_CELL_H=0.8;  // filler/tap cells are short
   for(const c of cells){
-    const cw=Math.max((c.w||2)*sc,0.6);
-    const cd=Math.max((c.h||10)*sc,0.6);
-    const ch=1.5+Math.random()*2.5;
+    const cw=Math.max((c.w||2)*sc,0.5);
+    const cd=Math.max((c.h||10)*sc,0.5);
+    const up=(c.type||'').toUpperCase();
+    const ch=up.includes('FILL')||up.includes('TAP')||up.includes('WELLTAP')||up.includes('ENDCAP')?FILL_CELL_H:
+             up.includes('DFF')||up.includes('LATCH')?DFF_CELL_H:STD_CELL_H;
     const color=cellColor(c.type);
 
     if(!typeColors[c.type||'DEFAULT'])typeColors[c.type||'DEFAULT']=color;
 
     const geo=new THREE.BoxGeometry(cw,ch,cd);
     const mat=new THREE.MeshPhongMaterial({
-      color:color,transparent:true,opacity:0.78,
-      emissive:color,emissiveIntensity:0.08,
-      specular:0xffffff,shininess:70,
+      color:color,transparent:false,
+      emissive:color,emissiveIntensity:0.05,
+      specular:0x222222,shininess:30,
     });
     const mesh=new THREE.Mesh(geo,mat);
     const px=ox+c.x*sc+cw/2, pz=oz+c.y*sc+cd/2;
@@ -1527,9 +1528,9 @@ function build3DPlacement(container,ph){
     mesh.castShadow=true;mesh.receiveShadow=true;
     scene.add(mesh);
 
-    // Top edge highlight
+    // Thin dark outline for cell boundary — makes cells distinguishable
     const topGeo=new THREE.EdgesGeometry(geo);
-    const topMat=new THREE.LineBasicMaterial({color:color,transparent:true,opacity:0.2});
+    const topMat=new THREE.LineBasicMaterial({color:0x000000,transparent:true,opacity:0.3});
     const topLine=new THREE.LineSegments(topGeo,topMat);
     topLine.position.copy(mesh.position);scene.add(topLine);
 
@@ -1538,25 +1539,28 @@ function build3DPlacement(container,ph){
     const spriteSize=Math.max(cw,cd)*6;
     const sprite=makeTextSprite(label,'#'+color.toString(16).padStart(6,'0'),Math.max(128,Math.min(512,Math.round(spriteSize*8))));
     sprite.scale.set(Math.max(cw*1.2,4),Math.max(cd*0.3,1),1);
-    sprite.position.set(px,ch+1.2,pz);
+    sprite.position.set(px,ch+0.8,pz);
     sprite.visible=false;
     scene.add(sprite);
     ctx._labels.push(sprite);
   }
 
-  // ── Wires with layer-specific coloring ──
-  for(const w of wires){
+  // ── Wires with layer-specific coloring — solid metal traces ──
+  const placeWires=(ph.wires||[]).slice(0,4000);
+  for(const w of placeWires){
     const l=w.layer||0;
     const lc=SEMI_LAYER_COLORS[l%SEMI_LAYER_COLORS.length];
-    const y=5+l*3;
+    const y=STD_CELL_H+1.5+l*2.5;  // above cells, proper layer spacing
     const x1=ox+w.x1*sc, z1=oz+w.y1*sc, x2=ox+w.x2*sc, z2=oz+w.y2*sc;
     const len=Math.sqrt((x2-x1)**2+(z2-z1)**2);
     if(len<0.01)continue;
-    const thick=0.3+l*0.08;
-    const wGeo=new THREE.BoxGeometry(len,0.4,thick);
+    const thick=0.6+l*0.15;  // real metal width grows per layer
+    const wireH=0.35+l*0.05;
+    const wGeo=new THREE.BoxGeometry(len,wireH,thick);
     const wMat=new THREE.MeshPhongMaterial({
-      color:lc,transparent:true,opacity:0.35,
-      emissive:lc,emissiveIntensity:0.1,
+      color:lc,transparent:true,opacity:0.75,
+      emissive:lc,emissiveIntensity:0.06,
+      specular:0x333333,shininess:40,
     });
     const wMesh=new THREE.Mesh(wGeo,wMat);
     wMesh.position.set((x1+x2)/2,y,(z1+z2)/2);
@@ -1643,11 +1647,11 @@ function build3DRouting(container,ph){
   const sc=280/Math.max(dw,dh);
   const ox=-dw*sc/2, oz=-dh*sc/2;
   const dieW=dw*sc, dieH=dh*sc;
-  const layerSpacing=20;
+  const layerSpacing=12;  // tighter spacing — looks more like real cross-section
   const R=Math.max(dw,dh)*sc;
 
   const ctx=create3DScene(container,{
-    radius:R*1.8,phi:Math.PI/3.5,theta:Math.PI/5,fog:0.0004,
+    radius:R*1.6,phi:Math.PI/3.5,theta:Math.PI/5,fog:0.0003,
     cy:nLayers*layerSpacing/2
   });
   const scene=ctx.scene;
@@ -1658,17 +1662,17 @@ function build3DRouting(container,ph){
   const viaGroup=new THREE.Group();
   scene.add(viaGroup);
 
-  // ── Substrate ──
-  const subGeo=new THREE.BoxGeometry(dieW+4,3,dieH+4);
-  const subMat=new THREE.MeshPhongMaterial({color:0x080c18,specular:0x0a0f20,shininess:20});
+  // ── Substrate — silicon wafer look ──
+  const subGeo=new THREE.BoxGeometry(dieW+6,4,dieH+6);
+  const subMat=new THREE.MeshPhongMaterial({color:0x1a1a2e,specular:0x222240,shininess:30});
   const sub=new THREE.Mesh(subGeo,subMat);
-  sub.position.set(0,-3,0);sub.receiveShadow=true;scene.add(sub);
+  sub.position.set(0,-5,0);sub.receiveShadow=true;scene.add(sub);
 
-  // Active silicon
-  const siGeo=new THREE.BoxGeometry(dieW,1,dieH);
-  const siMat=new THREE.MeshPhongMaterial({color:0x0f1528,specular:0x182040,shininess:40,transparent:true,opacity:0.9});
+  // Active silicon layer
+  const siGeo=new THREE.BoxGeometry(dieW+1,2,dieH+1);
+  const siMat=new THREE.MeshPhongMaterial({color:0x141828,specular:0x1c2040,shininess:40});
   const si=new THREE.Mesh(siGeo,siMat);
-  si.position.set(0,-1,0);si.receiveShadow=true;scene.add(si);
+  si.position.set(0,-2.5,0);si.receiveShadow=true;scene.add(si);
 
   // ── Layer planes + borders + labels ──
   for(let l=0;l<nLayers;l++){
@@ -1677,25 +1681,25 @@ function build3DRouting(container,ph){
     const group=layerGroups[l];
     scene.add(group);
 
-    // Transparent plane
+    // ILD (inter-layer dielectric) plane — subtle but visible
     const pGeo=new THREE.PlaneGeometry(dieW,dieH);
     const pMat=new THREE.MeshPhongMaterial({
-      color:color,transparent:true,opacity:0.03,
-      side:THREE.DoubleSide,emissive:color,emissiveIntensity:0.02,
+      color:0x0a1020,transparent:true,opacity:0.06,
+      side:THREE.DoubleSide,
     });
     const plane=new THREE.Mesh(pGeo,pMat);
     plane.rotation.x=-Math.PI/2;plane.position.y=y;
     group.add(plane);
 
-    // Border with glow
+    // Clean border — layer color, moderate visibility
     const bGeo=new THREE.EdgesGeometry(pGeo);
-    const bMat=new THREE.LineBasicMaterial({color:color,transparent:true,opacity:0.22});
+    const bMat=new THREE.LineBasicMaterial({color:color,transparent:true,opacity:0.35});
     const border=new THREE.LineSegments(bGeo,bMat);
     border.rotation.x=-Math.PI/2;border.position.y=y;
     group.add(border);
 
-    // Corner accent lines
-    const cornerLen=dieW*0.08;
+    // Corner accent lines — subtle alignment marks
+    const cornerLen=dieW*0.05;
     const corners=[
       [[-dieW/2,y,-dieH/2],[-dieW/2+cornerLen,y,-dieH/2]],
       [[-dieW/2,y,-dieH/2],[-dieW/2,y,-dieH/2+cornerLen]],
@@ -1708,7 +1712,7 @@ function build3DRouting(container,ph){
     ];
     for(const [a,b] of corners){
       const cGeo=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...a),new THREE.Vector3(...b)]);
-      const cMat=new THREE.LineBasicMaterial({color:color,transparent:true,opacity:0.5});
+      const cMat=new THREE.LineBasicMaterial({color:color,transparent:true,opacity:0.4});
       group.add(new THREE.Line(cGeo,cMat));
     }
 
@@ -1729,8 +1733,8 @@ function build3DRouting(container,ph){
     }
   }
 
-  // ── Wires as 3D metal traces ──
-  const wires=(ph.wires||[]).slice(0,3000);
+  // ── Wires as solid metal traces — real width, opaque, readable ──
+  const wires=(ph.wires||[]).slice(0,6000);
   for(const w of wires){
     const l=w.layer||0;
     if(l>=nLayers)continue;
@@ -1741,13 +1745,17 @@ function build3DRouting(container,ph){
     const len=Math.sqrt((x2-x1)**2+(z2-z1)**2);
     if(len<0.01)continue;
 
-    const thick=0.5+l*0.12;
-    const wireH=0.7+l*0.08;
+    // Real metal width: lower layers thin, upper layers wider (foundry rules)
+    // Capped so upper layers don't overwhelm the view
+    const thick=0.8+Math.min(l,5)*0.2;
+    const wireH=0.5+Math.min(l,5)*0.1;
     const wGeo=new THREE.BoxGeometry(len,wireH,thick);
+    // Upper layers slightly transparent so lower layers remain visible
+    const isUpper=l>=5;
     const wMat=new THREE.MeshPhongMaterial({
-      color:lc,transparent:true,opacity:0.55+l*0.04,
-      emissive:lc,emissiveIntensity:0.15,
-      specular:0xffffff,shininess:90,
+      color:lc,transparent:isUpper,opacity:isUpper?0.82:1.0,
+      emissive:lc,emissiveIntensity:0.04,
+      specular:0x444444,shininess:50,
     });
     const wMesh=new THREE.Mesh(wGeo,wMat);
     wMesh.position.set((x1+x2)/2,y+wireH/2,(z1+z2)/2);
@@ -1756,35 +1764,37 @@ function build3DRouting(container,ph){
     layerGroups[l].add(wMesh);
   }
 
-  // ── Vias as glowing cylinders ──
-  const vias=(ph.vias||[]).slice(0,1200);
+  // ── Vias as solid contact pillars with landing pads ──
+  const vias=(ph.vias||[]).slice(0,2500);
   for(const v of vias){
     const lo=Math.min(v.lower||0,v.upper||0);
     const hi=Math.max(v.lower||0,v.upper||0);
     const y0=lo*layerSpacing;
     const y1=hi*layerSpacing;
-    const vH=Math.max(y1-y0,layerSpacing*0.5);
+    const vH=Math.max(y1-y0,layerSpacing*0.3);
+    const vx=ox+(v.x||0)*sc, vz=oz+(v.y||0)*sc;
 
-    const vGeo=new THREE.CylinderGeometry(0.4,0.4,vH,6);
+    // Via pillar — solid square cross-section (like real vias)
+    const vGeo=new THREE.BoxGeometry(0.8,vH,0.8);
     const vMat=new THREE.MeshPhongMaterial({
-      color:0xffffff,transparent:true,opacity:0.3,
-      emissive:0x88aaff,emissiveIntensity:0.12,
-      specular:0xffffff,shininess:120,
+      color:0xc0c0c0,transparent:false,
+      specular:0x888888,shininess:60,
     });
-    const via=new THREE.Mesh(vGeo,vMat);
-    via.position.set(ox+(v.x||0)*sc,(y0+y1)/2,oz+(v.y||0)*sc);
-    viaGroup.add(via);
+    const viaMesh=new THREE.Mesh(vGeo,vMat);
+    viaMesh.position.set(vx,(y0+y1)/2,vz);
+    viaGroup.add(viaMesh);
 
-    // Via pads (small squares at each layer)
+    // Landing pads at each layer — solid, layer-colored squares
     for(const ly of [lo,hi]){
-      const padGeo=new THREE.BoxGeometry(1.2,0.2,1.2);
+      const padGeo=new THREE.BoxGeometry(1.6,0.3,1.6);
+      const padColor=SEMI_LAYER_COLORS[ly%SEMI_LAYER_COLORS.length];
       const padMat=new THREE.MeshPhongMaterial({
-        color:SEMI_LAYER_COLORS[ly%SEMI_LAYER_COLORS.length],
-        transparent:true,opacity:0.5,
-        emissive:SEMI_LAYER_COLORS[ly%SEMI_LAYER_COLORS.length],emissiveIntensity:0.1,
+        color:padColor,transparent:false,
+        emissive:padColor,emissiveIntensity:0.03,
+        specular:0x333333,shininess:40,
       });
       const pad=new THREE.Mesh(padGeo,padMat);
-      pad.position.set(ox+(v.x||0)*sc,ly*layerSpacing,oz+(v.y||0)*sc);
+      pad.position.set(vx,ly*layerSpacing,vz);
       viaGroup.add(pad);
     }
   }
@@ -1799,7 +1809,7 @@ function build3DRouting(container,ph){
       lh+='<div class="layer-legend-item" data-layer="'+l+'"><span class="swatch" style="background:'+hex+';box-shadow:0 0 6px '+hex+'"></span>'+SEMI_LAYER_NAMES[l]+' <span style="color:var(--text-muted);font-size:10px">('+wCount+')</span></div>';
     }
     lh+='<hr style="border:none;border-top:1px solid rgba(148,163,184,0.1);margin:6px 0">';
-    lh+='<div class="layer-legend-item" data-layer="vias"><span class="swatch" style="background:#fff;box-shadow:0 0 6px #88aaff"></span>Vias <span style="color:var(--text-muted);font-size:10px">('+vias.length+')</span></div>';
+    lh+='<div class="layer-legend-item" data-layer="vias"><span class="swatch" style="background:#c0c0c0;box-shadow:0 0 4px #888"></span>Vias <span style="color:var(--text-muted);font-size:10px">('+vias.length+')</span></div>';
     legend.innerHTML=lh;
 
     // Click to toggle layers
