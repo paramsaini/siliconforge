@@ -4106,3 +4106,118 @@ schematic matching), and Elmore/Sakurai-based NLDM characterizer producing
 94/94 phases pass. ASAN clean."
 
 ================================================================================
+
+SESSION 32 — Phases 95-97: Closed-Loop Feedback Systems
+=========================================================
+Date: 2026-03-16
+Commit at start: after Phase 94
+
+OBJECTIVE
+---------
+Implement the top 3 remaining feedback-loop gaps identified in Session 25 audit:
+1. Timing closure loop enhancement (STA → placement/routing criticality feedback)
+2. Power/ground planning with IR drop feedback (plan → IR analysis → stripe densification)
+3. Global router ↔ DRC integration (route → DRC check → penalty-based rerouting)
+
+All three follow same pattern: run analysis → identify problems → feed back → re-check.
+
+PHASE 95: Timing Closure Loop Enhancement
+------------------------------------------
+Files modified:
+  src/pnr/timing_closure.hpp — NetCriticality struct, MCMM config, enhanced result fields,
+    run_enhanced(), set_placer()/set_global_router() with void* pointers
+  src/pnr/timing_closure.cpp — 6 new functions (~240 lines added):
+    compute_criticality(): per-net crit = clamp(1 - slack/T, 0, 1) from STA critical paths
+    update_placer_weights(): cast void*→AnalyticalPlacer*, set_net_weight(1 + crit*weight)
+    update_router_timing(): populate NetTimingInfo with slack/criticality/is_critical
+    build_slack_histogram(): 10 buckets from <-1ns to >=1ns
+    format_iteration_summary(): "Iter N: WNS=X TNS=Y violations=Z"
+    run_enhanced(): full MCMM-aware closure loop with criticality feedback to placer+router
+
+Key design decisions:
+  - Standard ICC2/Innovus criticality formula
+  - void* pointers to avoid circular header dependency (cast in .cpp only)
+  - MCMM: per-corner OCV derating, worst-corner drives optimization
+  - Slack histogram for convergence visualization
+
+Test: tests/test_phase95.cpp — 15 test functions, 64/64 PASS
+
+Bug fixes:
+  - Rewrote build_chain() helper: CellInst→CellInstance, Wire→WireSegment, GateType::INV→NOT
+  - Fixed MCMM SEGV: early-return path didn't populate corner_names → null deref.
+    Fix: set result.corner_names = cfg.corner_names before convergence check.
+
+PHASE 96: Power/Ground Planning with IR Drop Feedback
+------------------------------------------------------
+Files modified:
+  src/pnr/power_plan.hpp — IrFeedbackResult struct, EM config fields,
+    plan_with_ir_feedback(), compute_em_width() (static), compute_adaptive_pitches() (static)
+  src/pnr/power_plan.cpp — ~150 lines added:
+    add_stripes_at_positions(): VDD+VSS stripe pairs at given X positions (NET_VDD=-3, NET_VSS=-4)
+    compute_em_width(): max(min_width, I_peak / J_max_EM)
+    compute_adaptive_pitches(): ratio-based linear interpolation (high current→min pitch)
+    plan_with_ir_feedback(): resistive IR model → iterative midpoint stripe insertion → convergence
+
+Key design decisions:
+  - R_sheet ~0.03 ohm/sq (SKY130 M5), R_stripe = R_sheet * L / W
+  - Midpoint insertion: new stripes placed between existing stripes at each iteration
+  - EM limit from Black's equation minimum-width constraint
+  - Adaptive pitch: regions >1.5x avg → min_pitch, <0.5x → max_pitch
+
+Test: tests/test_phase96.cpp — 14 test functions, 45/45 PASS
+
+PHASE 97: Global Router ↔ DRC Integration
+-------------------------------------------
+Files modified:
+  src/pnr/global_router.hpp — DRC config in RouterConfig, DRC fields in RouteResult,
+    set_drc_engine(), route_drc_aware(), private DRC penalty map + helpers
+  src/pnr/global_router.cpp — ~120 lines added:
+    init_drc_penalty_map(): zero-init grid_y_ × grid_x_ penalty matrix
+    drc_edge_cost(): returns penalty at (gy, gx)
+    run_lightweight_drc(): calls drc_engine_->check()
+    update_drc_penalties(): violation bbox → gcell coords → add penalty + reduce capacity
+    route_drc_aware(): route → DRC check → penalty loop → rip-up/reroute → convergence
+
+Key design decisions:
+  - Penalty-based A* cost modification (not hard capacity block)
+  - DRC violations mapped to gcell via to_grid(bbox.center())
+  - Gcell capacity reduced by 1 at violation sites (min 0)
+  - drc_violations_per_iteration tracked for convergence monitoring
+
+Test: tests/test_phase97.cpp — 12 test functions, 36/36 PASS
+
+Bug fix: route_drc_aware() early-return path (0 initial violations) didn't set
+  DRC-aware message → test "message mentions DRC-aware" failed. Fixed.
+
+BUILD & TEST
+-------------
+tests/CMakeLists.txt — added test_phase95, test_phase96, test_phase97 targets
+
+All 97/97 phases pass. ASAN clean on all 3 new phases.
+Total new assertions: 145 (64 + 45 + 36)
+
+GIT COMMANDS
+-------------------------------------------------------
+git add src/pnr/timing_closure.hpp src/pnr/timing_closure.cpp \
+        src/pnr/power_plan.hpp src/pnr/power_plan.cpp \
+        src/pnr/global_router.hpp src/pnr/global_router.cpp \
+        tests/test_phase95.cpp tests/test_phase96.cpp tests/test_phase97.cpp \
+        tests/CMakeLists.txt
+
+git commit -m "Phases 95-97: closed-loop feedback — timing closure, IR-driven power plan, DRC-aware routing
+
+Phase 95: Enhanced timing closure with STA criticality feedback into placer
+net weights and router timing, MCMM multi-corner analysis with OCV derating,
+per-iteration slack histograms, and convergence/stall detection.
+
+Phase 96: Power/ground planning with IR drop feedback loop, resistive grid
+IR model, iterative hotspot-driven stripe densification, EM-aware stripe
+width sizing (Black's equation), and adaptive pitch computation.
+
+Phase 97: DRC-aware global routing with penalty-based A* cost modification,
+violation-to-gcell mapping, capacity reduction at violation sites, and
+iterative rip-up/reroute convergence loop.
+
+97/97 phases pass. ASAN clean."
+
+================================================================================

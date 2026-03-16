@@ -25,6 +25,17 @@ struct TimingClosureConfig {
     bool enable_sizing = true;
     double convergence_threshold = 0.01; // stop when WNS improves less than this
     int stall_limit = 3;                // stop after N iterations with no improvement
+
+    // MCMM (Multi-Corner Multi-Mode) analysis
+    bool enable_mcmm = false;
+    std::vector<std::string> corner_names;         // corner names for MCMM
+    std::vector<double> corner_derates;            // late cell derate per corner (e.g., 1.0, 1.15)
+
+    // Feedback loop controls
+    bool enable_incremental_sta = true;
+    bool enable_criticality_routing = true;
+    bool enable_timing_placement = true;
+    double criticality_weight = 10.0;              // max weight multiplier for critical nets
 };
 
 struct TimingClosureResult {
@@ -39,6 +50,22 @@ struct TimingClosureResult {
     double time_ms = 0.0;
     std::string summary;
     std::vector<double> wns_per_iteration;
+
+    // Enhanced tracking
+    std::vector<double> tns_per_iteration;
+    std::vector<std::vector<int>> slack_histogram;  // per-iteration, 10 buckets
+    std::vector<std::string> iteration_summaries;
+
+    // MCMM per-corner results
+    std::vector<double> per_corner_wns;
+    std::vector<std::string> corner_names;
+};
+
+// Per-net criticality metric for timing-driven feedback
+struct NetCriticality {
+    int net_id;
+    double slack;
+    double criticality;  // 1 - slack/clock_period, clamped [0,1]
 };
 
 class TimingClosureEngine {
@@ -47,6 +74,13 @@ public:
                         const LibertyLibrary* lib = nullptr);
 
     TimingClosureResult run(const TimingClosureConfig& cfg = {});
+
+    // Enhanced closure loop with criticality feedback into placer/router
+    TimingClosureResult run_enhanced(const TimingClosureConfig& cfg = {});
+
+    // Inject placer/router for feedback (void* to avoid circular deps)
+    void set_placer(void* placer) { placer_ = placer; }
+    void set_global_router(void* grouter) { grouter_ = grouter; }
 
     // Individual steps (for manual control)
     double run_sta(double clock_period);
@@ -57,6 +91,17 @@ private:
     Netlist& nl_;
     PhysicalDesign& pd_;
     const LibertyLibrary* lib_;
+
+    // Feedback handles (cast to concrete types in .cpp)
+    void* placer_ = nullptr;
+    void* grouter_ = nullptr;
+
+    // Criticality computation and feedback helpers
+    std::vector<NetCriticality> compute_criticality(const StaResult& sta, double clock_period);
+    void update_placer_weights(const std::vector<NetCriticality>& crits, double crit_weight);
+    void update_router_timing(const std::vector<NetCriticality>& crits);
+    std::vector<int> build_slack_histogram(const StaResult& sta, double clock_period);
+    std::string format_iteration_summary(int iter, const StaResult& sta);
 };
 
 } // namespace sf

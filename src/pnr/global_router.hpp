@@ -12,6 +12,7 @@
 
 #include "pnr/physical.hpp"
 #include "verify/antenna.hpp"
+#include "verify/drc.hpp"
 #include <string>
 #include <vector>
 #include <set>
@@ -60,6 +61,12 @@ struct RouterConfig {
 
     // Layer assignment
     bool enable_layer_promotion = false; // promote critical nets to upper layers
+
+    // DRC integration
+    bool enable_drc_aware = false;
+    double drc_penalty_factor = 5.0;
+    int drc_max_iterations = 10;
+    int drc_convergence_threshold = 0;     // stop when violations <= this
 };
 
 // Per-net timing info (populated from STA)
@@ -92,6 +99,12 @@ struct RouteResult {
     // Per-layer wire count
     std::vector<int> wires_per_layer;
     std::vector<int> vias_per_layer;
+
+    // DRC integration metrics
+    int drc_violations_initial = 0;
+    int drc_violations_final = 0;
+    std::vector<int> drc_violations_per_iteration;
+    bool drc_clean = false;
 };
 
 struct GCell {
@@ -174,6 +187,10 @@ public:
     PatternRoute route_z_shape(int sx, int sy, int dx, int dy, int net_idx, bool h_first);
     PatternRoute route_pattern(int sx, int sy, int dx, int dy, int net_idx);
 
+    // DRC-aware routing
+    void set_drc_engine(DrcEngine* drc) { drc_engine_ = drc; }
+    RouteResult route_drc_aware();
+
     // Enhanced routing with rip-up reroute
     RouteResult route_with_rr();
 
@@ -245,6 +262,15 @@ private:
     // Negotiated congestion routing state
     sf::CongestionMap neg_cmap_;
     void apply_cmap_to_grid();  // transfer neg_cmap_ penalties into grid_ history
+
+    // DRC integration state
+    DrcEngine* drc_engine_ = nullptr;
+    std::vector<std::vector<double>> drc_penalty_;
+
+    int run_lightweight_drc();
+    void update_drc_penalties(int violation_count);
+    void init_drc_penalty_map();
+    double drc_edge_cost(int gx, int gy) const;
 };
 
 } // namespace sf

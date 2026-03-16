@@ -373,3 +373,15 @@ add_test(NAME Phase93Tests COMMAND test_phase93)
 add_executable(test_phase94 test_phase94.cpp)
 target_link_libraries(test_phase94 PRIVATE siliconforge_lib)
 add_test(NAME Phase94Tests COMMAND test_phase94)
+
+add_executable(test_phase95 test_phase95.cpp)
+target_link_libraries(test_phase95 PRIVATE siliconforge_lib)
+add_test(NAME Phase95Tests COMMAND test_phase95)
+
+add_executable(test_phase96 test_phase96.cpp)
+target_link_libraries(test_phase96 PRIVATE siliconforge_lib)
+add_test(NAME Phase96Tests COMMAND test_phase96)
+
+add_executable(test_phase97 test_phase97.cpp)
+target_link_libraries(test_phase97 PRIVATE siliconforge_lib)
+add_test(NAME Phase97Tests COMMAND test_phase97)
