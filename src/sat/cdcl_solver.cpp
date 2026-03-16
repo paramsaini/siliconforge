@@ -6,6 +6,9 @@
 #include <atomic>
 #include <mutex>
 #include <thread>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace sf {
 
@@ -391,7 +394,12 @@ void CdclSolver::reduce_clause_db() {
 
     // Identify clauses to delete
     std::vector<bool> to_delete(clauses_.size(), false);
-    for (int ci = 0; ci < (int)clauses_.size(); ++ci) {
+    int local_deleted = 0;
+    int num_clauses = (int)clauses_.size();
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(dynamic, 64) reduction(+:local_deleted) if(num_clauses > 512)
+#endif
+    for (int ci = 0; ci < num_clauses; ++ci) {
         auto& cl = clauses_[ci];
         if (!cl.learned) continue;
         if (is_reason[ci]) continue;
@@ -399,9 +407,10 @@ void CdclSolver::reduce_clause_db() {
         int lbd = compute_lbd(cl);
         if (lbd > clause_db_cfg_.lbd_threshold) {
             to_delete[ci] = true;
-            deleted_count_++;
+            local_deleted++;
         }
     }
+    deleted_count_ += local_deleted;
 
     // Clean up watch lists: remove references to deleted clauses
     for (auto& ws : watches_) {

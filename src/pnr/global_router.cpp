@@ -10,6 +10,10 @@
 #include <cmath>
 #include <climits>
 #include <set>
+#include <mutex>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace sf {
 
@@ -36,6 +40,7 @@ double CongestionMap::congestion_cost(int x, int y) const {
 }
 
 void CongestionMap::update_history(double alpha) {
+    #pragma omp parallel for schedule(static) if(grid_y > 16)
     for (int y = 0; y < grid_y; y++)
         for (int x = 0; x < grid_x; x++) {
             int overflow = std::max(0, usage[y][x] - capacity[y][x]);
@@ -51,6 +56,7 @@ bool CongestionMap::is_overflowed(int x, int y) const {
 
 int CongestionMap::total_overflow() const {
     int total = 0;
+    #pragma omp parallel for reduction(+:total) schedule(static) if(grid_y > 16)
     for (int y = 0; y < grid_y; y++)
         for (int x = 0; x < grid_x; x++)
             total += std::max(0, usage[y][x] - capacity[y][x]);
@@ -334,8 +340,10 @@ void GlobalRouter::rip_up_net(int net_idx) {
 
 // ── PathFinder history update ────────────────────────────────────────
 void GlobalRouter::update_history() {
-    for (auto& row : grid_) {
-        for (auto& gc : row) {
+    int gy = (int)grid_.size();
+    #pragma omp parallel for schedule(static) if(gy > 16)
+    for (int y = 0; y < gy; y++) {
+        for (auto& gc : grid_[y]) {
             if (gc.usage > gc.capacity)
                 gc.history_cost += 1.0 + 0.5 * (gc.usage - gc.capacity);
         }
@@ -344,9 +352,12 @@ void GlobalRouter::update_history() {
 
 int GlobalRouter::compute_overflow() const {
     int total = 0;
-    for (auto& row : grid_)
-        for (auto& gc : row)
+    int gy = (int)grid_.size();
+    #pragma omp parallel for reduction(+:total) schedule(static) if(gy > 16)
+    for (int y = 0; y < gy; y++) {
+        for (auto& gc : grid_[y])
             if (gc.usage > gc.capacity) total += gc.usage - gc.capacity;
+    }
     return total;
 }
 
@@ -429,15 +440,36 @@ RouteResult GlobalRouter::route() {
                        [](const WireSegment& w) { return w.width < 0; }),
         pd_.wires.end());
 
-    // ── Compute metrics ──────────────────────────────────────────────
-    result.total_wirelength = 0;
-    for (auto& w : pd_.wires)
-        result.total_wirelength += w.start.dist(w.end);
-    result.max_congestion = 0;
-    for (auto& row : grid_)
-        for (auto& gc : row)
-            result.max_congestion = std::max(result.max_congestion,
-                gc.capacity > 0 ? (double)gc.usage / gc.capacity : 0);
+    // ── Compute metrics (parallel reductions) ────────────────────────
+    {
+        double wl = 0;
+        double crit_wl = 0;
+        int nw = (int)pd_.wires.size();
+        #pragma omp parallel for reduction(+:wl,crit_wl) schedule(static) if(nw > 256)
+        for (int i = 0; i < nw; i++) {
+            double d = pd_.wires[i].start.dist(pd_.wires[i].end);
+            wl += d;
+            if (config_.enable_timing_driven && pd_.wires[i].net_id >= 0 &&
+                get_criticality(pd_.wires[i].net_id) > 0.5)
+                crit_wl += d;
+        }
+        result.total_wirelength = wl;
+        result.critical_net_wirelength = crit_wl;
+    }
+
+    {
+        double max_cong = 0;
+        int gy = (int)grid_.size();
+        #pragma omp parallel for reduction(max:max_cong) schedule(static) if(gy > 16)
+        for (int y = 0; y < gy; y++) {
+            for (auto& gc : grid_[y]) {
+                double c = gc.capacity > 0 ? (double)gc.usage / gc.capacity : 0;
+                if (c > max_cong) max_cong = c;
+            }
+        }
+        result.max_congestion = max_cong;
+    }
+
     result.overflow = compute_overflow();
 
     // Recount
@@ -453,23 +485,21 @@ RouteResult GlobalRouter::route() {
     result.total_wires = (int)pd_.wires.size();
     result.total_vias = (int)pd_.vias.size();
 
-    // Critical net wirelength
-    if (config_.enable_timing_driven) {
-        for (auto& w : pd_.wires) {
-            if (w.net_id >= 0 && get_criticality(w.net_id) > 0.5)
-                result.critical_net_wirelength += w.start.dist(w.end);
-        }
-    }
-
-    // Antenna check
+    // Antenna check (parallel — each net independent)
     if (config_.enable_antenna_check) {
-        for (int ni : net_order) {
-            auto av = check_antenna(ni);
+        int nn = (int)net_order.size();
+        std::vector<AntennaViolation> local_violations;
+        std::mutex av_mtx;
+        #pragma omp parallel for schedule(dynamic, 16) if(nn > 64)
+        for (int i = 0; i < nn; i++) {
+            auto av = check_antenna(net_order[i]);
             if (av.ratio > config_.max_antenna_ratio) {
-                result.antenna_violations++;
-                result.antenna_details.push_back(av);
+                std::lock_guard<std::mutex> lock(av_mtx);
+                local_violations.push_back(av);
             }
         }
+        result.antenna_violations = (int)local_violations.size();
+        result.antenna_details = std::move(local_violations);
     }
 
     auto t1 = std::chrono::high_resolution_clock::now();
@@ -845,9 +875,11 @@ bool GlobalRouter::reroute_net(int net_idx, double penalty_factor) {
 // h[e] += step_size × overflow[e]
 // ============================================================================
 void GlobalRouter::update_lagrangian_multipliers(double step_size) {
-    for (int y = 0; y < grid_y_; y++) {
-        for (int x = 0; x < grid_x_; x++) {
-            if (y >= (int)grid_.size() || x >= (int)grid_[y].size()) continue;
+    int gy = std::min(grid_y_, (int)grid_.size());
+    #pragma omp parallel for schedule(static) if(gy > 16)
+    for (int y = 0; y < gy; y++) {
+        int gx = std::min(grid_x_, (int)grid_[y].size());
+        for (int x = 0; x < gx; x++) {
             int overflow = std::max(0, grid_[y][x].usage - grid_[y][x].capacity);
             if (overflow > 0)
                 history_cost_[y][x] += step_size * overflow;
@@ -954,16 +986,34 @@ RouteResult GlobalRouter::route_with_rr() {
         total_via_reduction += minimize_vias(la);
     }
 
-    // ── Compute metrics ──────────────────────────────────────────────
-    result.total_wirelength = 0;
-    for (auto& w : pd_.wires)
-        result.total_wirelength += w.start.dist(w.end);
+    // ── Compute metrics (parallel reductions) ────────────────────────
+    {
+        double wl = 0, crit_wl = 0;
+        int nw = (int)pd_.wires.size();
+        #pragma omp parallel for reduction(+:wl,crit_wl) schedule(static) if(nw > 256)
+        for (int i = 0; i < nw; i++) {
+            double d = pd_.wires[i].start.dist(pd_.wires[i].end);
+            wl += d;
+            if (config_.enable_timing_driven && pd_.wires[i].net_id >= 0 &&
+                get_criticality(pd_.wires[i].net_id) > 0.5)
+                crit_wl += d;
+        }
+        result.total_wirelength = wl;
+        result.critical_net_wirelength = crit_wl;
+    }
 
-    result.max_congestion = 0;
-    for (auto& row : grid_)
-        for (auto& gc : row)
-            result.max_congestion = std::max(result.max_congestion,
-                gc.capacity > 0 ? (double)gc.usage / gc.capacity : 0.0);
+    {
+        double max_cong = 0;
+        int gy = (int)grid_.size();
+        #pragma omp parallel for reduction(max:max_cong) schedule(static) if(gy > 16)
+        for (int y = 0; y < gy; y++) {
+            for (auto& gc : grid_[y]) {
+                double c = gc.capacity > 0 ? (double)gc.usage / gc.capacity : 0.0;
+                if (c > max_cong) max_cong = c;
+            }
+        }
+        result.max_congestion = max_cong;
+    }
 
     result.overflow = compute_overflow();
 
@@ -978,21 +1028,21 @@ RouteResult GlobalRouter::route_with_rr() {
     result.total_wires = (int)pd_.wires.size();
     result.total_vias = (int)pd_.vias.size();
 
-    if (config_.enable_timing_driven) {
-        for (auto& w : pd_.wires) {
-            if (w.net_id >= 0 && get_criticality(w.net_id) > 0.5)
-                result.critical_net_wirelength += w.start.dist(w.end);
-        }
-    }
-
+    // Antenna check (parallel)
     if (config_.enable_antenna_check) {
-        for (int ni : net_order) {
-            auto av = check_antenna(ni);
+        int nn = (int)net_order.size();
+        std::vector<AntennaViolation> local_violations;
+        std::mutex av_mtx;
+        #pragma omp parallel for schedule(dynamic, 16) if(nn > 64)
+        for (int i = 0; i < nn; i++) {
+            auto av = check_antenna(net_order[i]);
             if (av.ratio > config_.max_antenna_ratio) {
-                result.antenna_violations++;
-                result.antenna_details.push_back(av);
+                std::lock_guard<std::mutex> lock(av_mtx);
+                local_violations.push_back(av);
             }
         }
+        result.antenna_violations = (int)local_violations.size();
+        result.antenna_details = std::move(local_violations);
     }
 
     auto t1 = std::chrono::high_resolution_clock::now();
@@ -1265,16 +1315,34 @@ RouteResult GlobalRouter::route_negotiated(int max_iterations) {
                        [](const WireSegment& w) { return w.width < 0; }),
         pd_.wires.end());
 
-    // ── Compute metrics ──────────────────────────────────────────────
-    result.total_wirelength = 0;
-    for (auto& w : pd_.wires)
-        result.total_wirelength += w.start.dist(w.end);
+    // ── Compute metrics (parallel reductions) ────────────────────────
+    {
+        double wl = 0, crit_wl = 0;
+        int nw = (int)pd_.wires.size();
+        #pragma omp parallel for reduction(+:wl,crit_wl) schedule(static) if(nw > 256)
+        for (int i = 0; i < nw; i++) {
+            double d = pd_.wires[i].start.dist(pd_.wires[i].end);
+            wl += d;
+            if (config_.enable_timing_driven && pd_.wires[i].net_id >= 0 &&
+                get_criticality(pd_.wires[i].net_id) > 0.5)
+                crit_wl += d;
+        }
+        result.total_wirelength = wl;
+        result.critical_net_wirelength = crit_wl;
+    }
 
-    result.max_congestion = 0;
-    for (auto& row : grid_)
-        for (auto& gc : row)
-            result.max_congestion = std::max(result.max_congestion,
-                gc.capacity > 0 ? (double)gc.usage / gc.capacity : 0.0);
+    {
+        double max_cong = 0;
+        int gy = (int)grid_.size();
+        #pragma omp parallel for reduction(max:max_cong) schedule(static) if(gy > 16)
+        for (int y = 0; y < gy; y++) {
+            for (auto& gc : grid_[y]) {
+                double c = gc.capacity > 0 ? (double)gc.usage / gc.capacity : 0.0;
+                if (c > max_cong) max_cong = c;
+            }
+        }
+        result.max_congestion = max_cong;
+    }
 
     result.overflow = compute_overflow();
 
@@ -1290,21 +1358,21 @@ RouteResult GlobalRouter::route_negotiated(int max_iterations) {
     result.total_wires = (int)pd_.wires.size();
     result.total_vias = (int)pd_.vias.size();
 
-    if (config_.enable_timing_driven) {
-        for (auto& w : pd_.wires) {
-            if (w.net_id >= 0 && get_criticality(w.net_id) > 0.5)
-                result.critical_net_wirelength += w.start.dist(w.end);
-        }
-    }
-
+    // Antenna check (parallel)
     if (config_.enable_antenna_check) {
-        for (int ni : net_order) {
-            auto av = check_antenna(ni);
+        int nn = (int)net_order.size();
+        std::vector<AntennaViolation> local_violations;
+        std::mutex av_mtx;
+        #pragma omp parallel for schedule(dynamic, 16) if(nn > 64)
+        for (int i = 0; i < nn; i++) {
+            auto av = check_antenna(net_order[i]);
             if (av.ratio > config_.max_antenna_ratio) {
-                result.antenna_violations++;
-                result.antenna_details.push_back(av);
+                std::lock_guard<std::mutex> lock(av_mtx);
+                local_violations.push_back(av);
             }
         }
+        result.antenna_violations = (int)local_violations.size();
+        result.antenna_details = std::move(local_violations);
     }
 
     auto t1 = std::chrono::high_resolution_clock::now();

@@ -580,6 +580,7 @@ void AnalyticalPlacer::apply_congestion_penalty() {
     int n = (int)pd_.cells.size();
 
     // Push cells away from congested bins by adjusting anchors
+    #pragma omp parallel for schedule(static) if(n > 500)
     for (int ci = 0; ci < n; ci++) {
         if (fixed_cells_.count(ci)) continue;
         int bx = std::clamp((int)((x_[ci] - pd_.die_area.x0) / bw), 0, cong_nx_ - 1);

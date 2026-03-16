@@ -12,6 +12,10 @@
 #include <climits>
 #include <queue>
 #include <set>
+#include <mutex>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace sf {
 
@@ -263,11 +267,19 @@ PowerResult PowerAnalyzer::analyze(double clock_freq_mhz, double supply_voltage,
         activities_[g.output] = alpha_out;
     }
 
-    // === Per-cell power computation ===
-    std::vector<PowerResult::CellPower> cell_powers;
-    int num_dff = 0;
+    // === Per-cell power computation (parallel) ===
+    int ng = (int)nl_.num_gates();
+    std::vector<PowerResult::CellPower> cell_powers(ng); // pre-allocate max
+    std::vector<bool> cell_valid(ng, false);
 
-    for (size_t gid = 0; gid < nl_.num_gates(); ++gid) {
+    double sum_static = 0, sum_switching = 0, sum_internal = 0;
+    double sum_glitch = 0, sum_sc = 0, sum_clock = 0;
+    int num_dff = 0, num_cells = 0;
+
+    #pragma omp parallel for schedule(dynamic, 64) \
+        reduction(+:sum_static,sum_switching,sum_internal,sum_glitch,sum_sc,sum_clock,num_dff,num_cells) \
+        if(ng > 256)
+    for (int gid = 0; gid < ng; ++gid) {
         auto& g = nl_.gate(gid);
         if (g.type == GateType::INPUT || g.type == GateType::OUTPUT) continue;
 
@@ -278,14 +290,10 @@ PowerResult PowerAnalyzer::analyze(double clock_freq_mhz, double supply_voltage,
         }
 
         double cell_vdd = gate_vdd(gid, supply_voltage);
-        double leakage_mw = cell_leakage(gid) * 1e-6; // nW → mW
-        // Leakage scales with V² for subthreshold
+        double leakage_mw = cell_leakage(gid) * 1e-6;
         leakage_mw *= (cell_vdd / supply_voltage) * (cell_vdd / supply_voltage);
-
-        // Apply temperature scaling: P_leak(T) = P_leak(25) * 2^((T-25)/10)
         leakage_mw *= leakage_temp_factor_;
 
-        // Apply voltage derating from IR drop feedback
         std::string cell_name = g.name.empty() ? ("g" + std::to_string(gid)) : g.name;
         auto vd_it = voltage_derating_.find(cell_name);
         if (vd_it != voltage_derating_.end()) {
@@ -295,7 +303,6 @@ PowerResult PowerAnalyzer::analyze(double clock_freq_mhz, double supply_voltage,
         double dynamic_mw = cell_dynamic(gid, clock_freq_mhz, cell_vdd, cell_activity);
         double internal_mw = dynamic_mw * 0.15;
 
-        // Glitch power
         double glitch_alpha = glitch_activity(gid, cell_activity);
         double glitch_mw = 0;
         if (glitch_alpha > 0 && g.output >= 0) {
@@ -303,29 +310,44 @@ PowerResult PowerAnalyzer::analyze(double clock_freq_mhz, double supply_voltage,
             glitch_mw = glitch_alpha * c_load * cell_vdd * cell_vdd * clock_freq_mhz * 1e6 * 1e-9;
         }
 
-        // Short-circuit power (Isc)
         double sc_mw = cell_short_circuit(gid, clock_freq_mhz, cell_vdd, cell_activity);
 
-        result.static_power_mw += leakage_mw;
-        result.switching_power_mw += dynamic_mw;
-        result.internal_power_mw += internal_mw;
-        result.glitch_power_mw += glitch_mw;
-        result.short_circuit_power_mw += sc_mw;
+        sum_static += leakage_mw;
+        sum_switching += dynamic_mw;
+        sum_internal += internal_mw;
+        sum_glitch += glitch_mw;
+        sum_sc += sc_mw;
 
-        // Clock power: DFF toggle + clock buffer estimation
         if (g.type == GateType::DFF) {
             num_dff++;
             double clk_dyn = cell_dynamic(gid, clock_freq_mhz, cell_vdd, 1.0);
-            result.clock_power_mw += clk_dyn;
+            sum_clock += clk_dyn;
         }
 
-        cell_powers.push_back({
-            g.name.empty() ? ("g" + std::to_string(gid)) : g.name,
+        cell_powers[gid] = {
+            cell_name,
             dynamic_mw + internal_mw + glitch_mw + sc_mw, leakage_mw,
             dynamic_mw + internal_mw + leakage_mw + glitch_mw + sc_mw
-        });
-        result.num_cells++;
+        };
+        cell_valid[gid] = true;
+        num_cells++;
     }
+
+    result.static_power_mw = sum_static;
+    result.switching_power_mw = sum_switching;
+    result.internal_power_mw = sum_internal;
+    result.glitch_power_mw = sum_glitch;
+    result.short_circuit_power_mw = sum_sc;
+    result.clock_power_mw = sum_clock;
+    result.num_cells = num_cells;
+
+    // Compact cell_powers (remove invalid entries)
+    std::vector<PowerResult::CellPower> compact_powers;
+    compact_powers.reserve(num_cells);
+    for (int i = 0; i < ng; i++) {
+        if (cell_valid[i]) compact_powers.push_back(std::move(cell_powers[i]));
+    }
+    cell_powers = std::move(compact_powers);
 
     // Clock tree buffer power: estimate ~1 buffer per 8 DFFs, each at full toggle
     int cts_buffers = (num_dff + 7) / 8;

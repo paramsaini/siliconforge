@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <iostream>
 #include <cassert>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace sf {
 
@@ -75,12 +78,14 @@ FaultSimResult FaultSimulator::simulate(const std::vector<std::vector<Logic4>>& 
             good_vals[g.output] = eval_gate_64(g.type, in_vals);
         }
 
-        // For each fault, inject and compare
-        for (size_t fi = 0; fi < all_faults.size(); ++fi) {
+        // For each fault, inject and compare (parallel — each fault independent)
+        int nf = (int)all_faults.size();
+        #pragma omp parallel for schedule(dynamic, 32) if(nf > 128)
+        for (int fi = 0; fi < nf; ++fi) {
             if (detected[fi]) continue;
             auto& fault = all_faults[fi];
 
-            // Copy good values
+            // Copy good values (thread-local copy)
             std::vector<uint64_t> faulty_vals = good_vals;
 
             // Inject fault
@@ -91,7 +96,6 @@ FaultSimResult FaultSimulator::simulate(const std::vector<std::vector<Logic4>>& 
                 auto& g = nl_.gate(gid);
                 if (g.type == GateType::DFF || g.type == GateType::INPUT || g.output < 0) continue;
 
-                // Only re-evaluate if in transitive fanout of fault
                 bool affected = false;
                 for (auto ni : g.inputs) {
                     if (faulty_vals[ni] != good_vals[ni]) { affected = true; break; }

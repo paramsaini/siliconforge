@@ -13,6 +13,9 @@
 #include <numeric>
 #include <cmath>
 #include <cctype>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #include <regex>
 #include <queue>
 
@@ -52,14 +55,12 @@ struct LvsGraph {
         }
 
         // Iterative refinement: split classes by neighbor class signature
+        // Parallel strategy: compute signatures in parallel, assign classes serially
         for (int iter = 0; iter < 20; iter++) {
-            std::unordered_map<std::string, int> sig_to_class;
-            std::vector<int> new_classes(n);
-            int new_next = 0;
-            bool changed = false;
-
+            // Phase 1: compute signatures in parallel (read-only on classes)
+            std::vector<std::string> sigs(n);
+            #pragma omp parallel for schedule(dynamic, 64) if(n > 256)
             for (int i = 0; i < n; i++) {
-                // Build signature: own class + sorted neighbor classes
                 std::multiset<int> neighbor_classes;
                 for (int net_id : cell_nets[i]) {
                     if (net_id < 0 || net_id >= (int)net_cells.size()) continue;
@@ -69,10 +70,17 @@ struct LvsGraph {
                 }
                 std::string sig = std::to_string(classes[i]) + ":";
                 for (int nc : neighbor_classes) sig += std::to_string(nc) + ",";
+                sigs[i] = std::move(sig);
+            }
 
-                auto it = sig_to_class.find(sig);
+            // Phase 2: assign class IDs (serial — uses shared map)
+            std::unordered_map<std::string, int> sig_to_class;
+            std::vector<int> new_classes(n);
+            int new_next = 0;
+            for (int i = 0; i < n; i++) {
+                auto it = sig_to_class.find(sigs[i]);
                 if (it == sig_to_class.end()) {
-                    sig_to_class[sig] = new_next;
+                    sig_to_class[sigs[i]] = new_next;
                     new_classes[i] = new_next++;
                 } else {
                     new_classes[i] = it->second;
@@ -81,9 +89,9 @@ struct LvsGraph {
 
             if (new_classes != classes) {
                 classes = new_classes;
-                changed = true;
+            } else {
+                break;
             }
-            if (!changed) break;
         }
         return classes;
     }

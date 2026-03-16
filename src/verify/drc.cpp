@@ -10,6 +10,10 @@
 #include <map>
 #include <functional>
 #include <cctype>
+#include <mutex>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace sf {
 
@@ -1432,39 +1436,101 @@ void DrcEngine::check_min_hole(DrcResult& r) {
 }
 
 // ── Main check dispatcher ────────────────────────────────────────────
+// Merge DRC sub-results into the main result
+static void merge_drc_result(DrcResult& dst, const DrcResult& src) {
+    dst.violations += src.violations;
+    dst.errors += src.errors;
+    dst.warnings += src.warnings;
+    dst.total_rules += src.total_rules;
+    dst.width_violations += src.width_violations;
+    dst.spacing_violations += src.spacing_violations;
+    dst.enclosure_violations += src.enclosure_violations;
+    dst.area_violations += src.area_violations;
+    dst.antenna_violations += src.antenna_violations;
+    dst.density_violations += src.density_violations;
+    dst.via_violations += src.via_violations;
+    dst.other_violations += src.other_violations;
+    dst.em_width_violations += src.em_width_violations;
+    dst.multi_patterning_violations += src.multi_patterning_violations;
+    dst.stress_violations += src.stress_violations;
+    dst.esd_violations += src.esd_violations;
+    dst.guard_ring_violations += src.guard_ring_violations;
+    dst.reliability_violations += src.reliability_violations;
+    dst.temp_violations += src.temp_violations;
+    dst.via_enclosure_violations += src.via_enclosure_violations;
+    dst.density_uniformity_violations += src.density_uniformity_violations;
+    dst.off_grid_violations += src.off_grid_violations;
+    dst.antenna_per_layer_violations += src.antenna_per_layer_violations;
+    dst.min_area_enhanced_violations += src.min_area_enhanced_violations;
+    dst.waived_violations += src.waived_violations;
+    dst.context_rule_violations += src.context_rule_violations;
+    dst.inter_layer_violations += src.inter_layer_violations;
+    dst.tsv_keepout_violations += src.tsv_keepout_violations;
+    dst.inter_die_alignment_violations += src.inter_die_alignment_violations;
+    dst.bump_pitch_violations += src.bump_pitch_violations;
+    dst.thermal_via_density_violations += src.thermal_via_density_violations;
+    dst.litho_resolution_violations += src.litho_resolution_violations;
+    dst.litho_line_end_violations += src.litho_line_end_violations;
+    dst.litho_corner_rounding_violations += src.litho_corner_rounding_violations;
+    dst.details.insert(dst.details.end(), src.details.begin(), src.details.end());
+}
+
 DrcResult DrcEngine::check() {
     auto t0 = std::chrono::high_resolution_clock::now();
     build_spatial_index();
     DrcResult r;
 
-    check_min_width(r);
-    check_max_width(r);
-    check_min_spacing(r);
-    check_min_area(r);
-    check_boundary(r);
-    check_density(r);
-    check_via_rules(r);
-    check_wide_wire_spacing(r);
-    check_end_of_line(r);
-    check_antenna(r);
-    check_min_step(r);
-    check_jog(r);
-    check_parallel_run(r);
-    check_cut_rules(r);
-    check_notch_fill(r);
-    check_enclosure(r);
-    check_min_hole(r);
-    check_conditional_spacing(r);
-    check_conditional_enclosure(r);
+    // Run independent rule groups in parallel using thread-local results.
+    // Each check function reads shared design data (read-only) and writes
+    // to its own DrcResult, then we merge.
+    // Group 1: width/area checks (no spatial queries on other wires)
+    // Group 2: spacing checks (spatial queries but independent)
+    // Group 3: advanced checks
 
-    // Advanced rule checks
-    check_em_width(r);
-    check_multi_patterning(r);
-    check_stress_voiding(r);
-    check_esd_spacing(r);
-    check_guard_ring(r);
-    check_reliability_width(r);
-    check_temp_variant(r);
+    DrcResult r1, r2, r3;
+
+    #pragma omp parallel sections if(pd_.wires.size() > 256)
+    {
+        #pragma omp section
+        {
+            check_min_width(r1);
+            check_max_width(r1);
+            check_min_area(r1);
+            check_boundary(r1);
+            check_density(r1);
+            check_via_rules(r1);
+        }
+        #pragma omp section
+        {
+            check_min_spacing(r2);
+            check_wide_wire_spacing(r2);
+            check_end_of_line(r2);
+            check_min_step(r2);
+            check_jog(r2);
+            check_parallel_run(r2);
+            check_conditional_spacing(r2);
+        }
+        #pragma omp section
+        {
+            check_antenna(r3);
+            check_cut_rules(r3);
+            check_notch_fill(r3);
+            check_enclosure(r3);
+            check_min_hole(r3);
+            check_conditional_enclosure(r3);
+            check_em_width(r3);
+            check_multi_patterning(r3);
+            check_stress_voiding(r3);
+            check_esd_spacing(r3);
+            check_guard_ring(r3);
+            check_reliability_width(r3);
+            check_temp_variant(r3);
+        }
+    }
+
+    merge_drc_result(r, r1);
+    merge_drc_result(r, r2);
+    merge_drc_result(r, r3);
 
     auto t1 = std::chrono::high_resolution_clock::now();
     r.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();

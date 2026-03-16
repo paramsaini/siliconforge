@@ -16,6 +16,9 @@
 #include <numeric>
 #include <random>
 #include <array>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace sf {
 

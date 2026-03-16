@@ -12,6 +12,10 @@
 #include <cassert>
 #include <utility>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 namespace sf {
 
 int CtsEngine::dme_merge(const std::vector<int>& sinks) {
@@ -84,7 +88,11 @@ CtsResult CtsEngine::build_clock_tree(const Point& source, const std::vector<int
     // Calculate metrics
     double total_wl = 0;
     double max_delay = 0, min_delay = 1e18;
-    for (auto sid : sink_nodes) {
+#ifdef _OPENMP
+    #pragma omp parallel for reduction(+:total_wl) reduction(max:max_delay) reduction(min:min_delay) if(sink_nodes.size() > 128)
+#endif
+    for (size_t si = 0; si < sink_nodes.size(); ++si) {
+        int sid = sink_nodes[si];
         // Trace path from sink to root
         // Simple: use direct Manhattan distance as approximation
         double d = tree_[sid].position.dist(source);
@@ -722,7 +730,11 @@ CtsResult CtsEngine::build_htree(const Point& source,
 
     // Compute metrics
     double total_wl = 0, max_delay = 0, min_delay = 1e18;
-    for (auto sid : sink_nodes) {
+#ifdef _OPENMP
+    #pragma omp parallel for reduction(+:total_wl) reduction(max:max_delay) reduction(min:min_delay) if(sink_nodes.size() > 128)
+#endif
+    for (size_t si = 0; si < sink_nodes.size(); ++si) {
+        int sid = sink_nodes[si];
         double d = tree_[sid].position.dist(source);
         total_wl += d;
         double delay = d * 0.001;
@@ -1445,9 +1457,12 @@ std::vector<std::vector<int>> CtsEngine::kmeans_partition_sinks(
     constexpr int max_iter = 50;
 
     for (int iter = 0; iter < max_iter; ++iter) {
-        bool changed = false;
+        int changed = 0;
 
         // Assign each sink to nearest centroid (Manhattan distance)
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static) reduction(|:changed) if(n > 128)
+#endif
         for (int i = 0; i < n; ++i) {
             double best_dist = std::numeric_limits<double>::max();
             int best_k = 0;
@@ -1456,7 +1471,7 @@ std::vector<std::vector<int>> CtsEngine::kmeans_partition_sinks(
                            std::abs(sinks[i].second - cy[j]);
                 if (d < best_dist) { best_dist = d; best_k = j; }
             }
-            if (assignment[i] != best_k) { assignment[i] = best_k; changed = true; }
+            if (assignment[i] != best_k) { assignment[i] = best_k; changed = 1; }
         }
         if (!changed) break;
 
@@ -1638,19 +1653,25 @@ ClockMeshResult CtsEngine::synthesize_mesh(double mesh_pitch) {
     }
 
     // Connect each sink to the nearest mesh point via stub
-    result.stubs_inserted = 0;
-    for (auto& node : tree_) {
-        if (node.cell_id < 0) continue;
+    int stubs_inserted = 0;
+    int tree_sz = static_cast<int>(tree_.size());
+    int mp_sz = static_cast<int>(result.mesh_points.size());
+#ifdef _OPENMP
+    #pragma omp parallel for reduction(+:stubs_inserted) schedule(static) if(tree_sz > 128)
+#endif
+    for (int ti = 0; ti < tree_sz; ++ti) {
+        if (tree_[ti].cell_id < 0) continue;
         double best_dist = std::numeric_limits<double>::max();
-        for (auto& mp : result.mesh_points) {
-            double d = std::abs(node.position.x - mp.first) +
-                       std::abs(node.position.y - mp.second);
+        for (int mi = 0; mi < mp_sz; ++mi) {
+            double d = std::abs(tree_[ti].position.x - result.mesh_points[mi].first) +
+                       std::abs(tree_[ti].position.y - result.mesh_points[mi].second);
             best_dist = std::min(best_dist, d);
         }
         if (best_dist < mesh_pitch * 2.0) {
-            result.stubs_inserted++;
+            stubs_inserted++;
         }
     }
+    result.stubs_inserted = stubs_inserted;
 
     std::ostringstream oss;
     oss << "Clock mesh: " << result.mesh_rows << "x" << result.mesh_cols
@@ -1779,6 +1800,9 @@ PowerAwareCtsResult CtsEngine::optimize_power() {
     double optimized_power = 0;
 
     // Power model: each internal node is a buffer
+#ifdef _OPENMP
+    #pragma omp parallel for reduction(+:total_buf,hvt_count,lvt_count,original_power,optimized_power) if(tree_.size() > 128)
+#endif
     for (int i = 0; i < static_cast<int>(tree_.size()); ++i) {
         if (tree_[i].cell_id >= 0) continue; // skip sinks
         if (tree_[i].left < 0 && tree_[i].right < 0) continue; // isolated

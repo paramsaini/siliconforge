@@ -10,6 +10,10 @@
 #include <functional>
 #include <unordered_set>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 namespace sf {
 
 // === OCV/AOCV Effective Derate ===
@@ -382,6 +386,56 @@ void StaEngine::build_timing_graph() {
                 arcs_.push_back({latch.clk, latch.output, gate_delay(gid), 0.01, gid});
         }
     }
+
+    // Build level sets for parallel propagation
+    build_level_sets();
+}
+
+// === Levelized Parallel Propagation ===
+// Groups topological-order gates by logic level so each level can be
+// processed in parallel (no data dependencies within a level).
+// Forward levels: level 0 = gates whose inputs are all PI/DFF outputs.
+// Backward levels: reverse mapping for required-time propagation.
+
+void StaEngine::build_level_sets() {
+    forward_levels_.clear();
+    backward_levels_.clear();
+
+    // Assign a forward level to each gate based on max input level
+    std::unordered_map<GateId, int> gate_level;
+    int max_level = 0;
+
+    for (auto gid : topo_) {
+        auto& g = nl_.gate(gid);
+        if (g.type == GateType::DFF || g.type == GateType::DLATCH ||
+            g.type == GateType::INPUT ||
+            g.type == GateType::OUTPUT || g.output < 0) continue;
+
+        int lev = 0;
+        for (auto ni : g.inputs) {
+            GateId drv = nl_.net(ni).driver;
+            if (drv >= 0) {
+                auto it = gate_level.find(drv);
+                if (it != gate_level.end())
+                    lev = std::max(lev, it->second + 1);
+            }
+        }
+        gate_level[gid] = lev;
+        max_level = std::max(max_level, lev);
+    }
+
+    // Build forward level sets
+    forward_levels_.resize(max_level + 1);
+    for (auto gid : topo_) {
+        auto it = gate_level.find(gid);
+        if (it != gate_level.end())
+            forward_levels_[it->second].push_back(gid);
+    }
+
+    // Backward levels = forward levels reversed
+    backward_levels_.resize(forward_levels_.size());
+    for (int i = 0; i < (int)forward_levels_.size(); ++i)
+        backward_levels_[i] = forward_levels_[forward_levels_.size() - 1 - i];
 }
 
 // === Forward Propagation with Slew (LATE paths for setup) ===
@@ -447,43 +501,50 @@ void StaEngine::forward_propagation(double input_arrival) {
     for (size_t i = 0; i < nl_.num_nets(); ++i)
         if (!pin_timing_.count(i)) pin_timing_[i] = {};
 
-    // Propagate LATE (latest) arrivals for setup analysis
-    for (auto gid : topo_) {
-        auto& g = nl_.gate(gid);
-        if (g.type == GateType::DFF || g.type == GateType::DLATCH ||
-            g.type == GateType::INPUT ||
-            g.type == GateType::OUTPUT || g.output < 0) continue;
+    // Levelized parallel forward propagation: process each level concurrently.
+    // Gates within a level have no data dependencies — their inputs are all
+    // from prior levels (already computed). Barrier between levels ensures
+    // correctness. This is the same strategy used by PrimeTime and Tempus.
+    for (auto& level : forward_levels_) {
+        int level_size = (int)level.size();
+        #pragma omp parallel for schedule(dynamic, 64) if(level_size > 128)
+        for (int idx = 0; idx < level_size; ++idx) {
+            GateId gid = level[idx];
+            auto& g = nl_.gate(gid);
 
-        double max_arr = 0;
-        double worst_slew = pi_slew;
-        GateId worst_driver = -1;
-        for (auto ni : g.inputs) {
-            double arr = pin_timing_[ni].worst_arrival();
-            if (arr > max_arr) {
-                max_arr = arr;
-                worst_slew = std::max(pin_timing_[ni].slew_rise, pin_timing_[ni].slew_fall);
-                worst_driver = nl_.net(ni).driver;
+            double max_arr = 0;
+            double worst_slew = pi_slew;
+            GateId worst_driver = -1;
+            for (auto ni : g.inputs) {
+                double arr = pin_timing_[ni].worst_arrival();
+                if (arr > max_arr) {
+                    max_arr = arr;
+                    worst_slew = std::max(pin_timing_[ni].slew_rise, pin_timing_[ni].slew_fall);
+                    worst_driver = nl_.net(ni).driver;
+                }
             }
+
+            double gd = gate_delay(gid, worst_slew);
+            double wd = wire_delay(g.inputs.empty() ? -1 : g.inputs[0], g.output);
+
+            double ls_penalty = 0;
+            if (!voltage_domains_.empty() && worst_driver >= 0)
+                ls_penalty = level_shifter_penalty(worst_driver, gid);
+
+            double out_arr = max_arr + gd + wd + ls_penalty;
+
+            // Each gate writes only to its own output net — no conflicts
+            // within a level since no two gates share an output net.
+            auto& pt = pin_timing_[g.output];
+            pt.arrival_rise = std::max(pt.arrival_rise, out_arr);
+            pt.arrival_fall = std::max(pt.arrival_fall, out_arr);
+
+            double load = net_load_cap(g.output);
+            double out_slew = output_slew(gid, worst_slew, load);
+            pt.slew_rise = std::max(pt.slew_rise, out_slew);
+            pt.slew_fall = std::max(pt.slew_fall, out_slew);
         }
-
-        double gd = gate_delay(gid, worst_slew);
-        double wd = wire_delay(g.inputs.empty() ? -1 : g.inputs[0], g.output);
-
-        // Level-shifter penalty when crossing voltage domains
-        double ls_penalty = 0;
-        if (!voltage_domains_.empty() && worst_driver >= 0)
-            ls_penalty = level_shifter_penalty(worst_driver, gid);
-
-        double out_arr = max_arr + gd + wd + ls_penalty;
-
-        auto& pt = pin_timing_[g.output];
-        pt.arrival_rise = std::max(pt.arrival_rise, out_arr);
-        pt.arrival_fall = std::max(pt.arrival_fall, out_arr);
-
-        double load = net_load_cap(g.output);
-        double out_slew = output_slew(gid, worst_slew, load);
-        pt.slew_rise = std::max(pt.slew_rise, out_slew);
-        pt.slew_fall = std::max(pt.slew_fall, out_slew);
+        // Implicit barrier: OMP parallel for joins here before next level
     }
 }
 
@@ -523,35 +584,36 @@ void StaEngine::hold_forward_propagation(double input_arrival) {
         }
     }
 
-    // Propagate MINIMUM (earliest) arrivals
-    for (auto gid : topo_) {
-        auto& g = nl_.gate(gid);
-        if (g.type == GateType::DFF || g.type == GateType::DLATCH ||
-            g.type == GateType::INPUT ||
-            g.type == GateType::OUTPUT || g.output < 0) continue;
+    // Levelized parallel hold forward propagation (EARLY/minimum arrivals)
+    for (auto& level : forward_levels_) {
+        int level_size = (int)level.size();
+        #pragma omp parallel for schedule(dynamic, 64) if(level_size > 128)
+        for (int idx = 0; idx < level_size; ++idx) {
+            GateId gid = level[idx];
+            auto& g = nl_.gate(gid);
 
-        double min_arr = std::numeric_limits<double>::max();
-        double best_slew = pi_slew;
-        for (auto ni : g.inputs) {
-            double arr = std::min(pin_timing_[ni].hold_arrival_rise,
-                                   pin_timing_[ni].hold_arrival_fall);
-            if (arr < min_arr) {
-                min_arr = arr;
-                best_slew = std::min(pin_timing_[ni].slew_rise, pin_timing_[ni].slew_fall);
+            double min_arr = std::numeric_limits<double>::max();
+            double best_slew = pi_slew;
+            for (auto ni : g.inputs) {
+                double arr = std::min(pin_timing_[ni].hold_arrival_rise,
+                                       pin_timing_[ni].hold_arrival_fall);
+                if (arr < min_arr) {
+                    min_arr = arr;
+                    best_slew = std::min(pin_timing_[ni].slew_rise, pin_timing_[ni].slew_fall);
+                }
             }
+            if (min_arr == std::numeric_limits<double>::max()) min_arr = 0;
+
+            double gd = gate_delay(gid, best_slew);
+            double wd = wire_delay(g.inputs.empty() ? -1 : g.inputs[0], g.output);
+            double out_arr = min_arr + gd + wd;
+
+            auto& pt = pin_timing_[g.output];
+            if (pt.hold_arrival_rise == 0 || out_arr < pt.hold_arrival_rise)
+                pt.hold_arrival_rise = out_arr;
+            if (pt.hold_arrival_fall == 0 || out_arr < pt.hold_arrival_fall)
+                pt.hold_arrival_fall = out_arr;
         }
-        if (min_arr == std::numeric_limits<double>::max()) min_arr = 0;
-
-        // Early delay: gate_delay already applies early derate via effective_cell_derate
-        double gd = gate_delay(gid, best_slew);
-        double wd = wire_delay(g.inputs.empty() ? -1 : g.inputs[0], g.output);
-        double out_arr = min_arr + gd + wd;
-
-        auto& pt = pin_timing_[g.output];
-        if (pt.hold_arrival_rise == 0 || out_arr < pt.hold_arrival_rise)
-            pt.hold_arrival_rise = out_arr;
-        if (pt.hold_arrival_fall == 0 || out_arr < pt.hold_arrival_fall)
-            pt.hold_arrival_fall = out_arr;
     }
 
     analyzing_late_ = true;  // restore default
@@ -615,23 +677,34 @@ void StaEngine::backward_propagation(double clock_period) {
         }
     }
 
-    for (int i = (int)topo_.size() - 1; i >= 0; --i) {
-        auto& g = nl_.gate(topo_[i]);
-        if (g.type == GateType::DFF || g.type == GateType::DLATCH ||
-            g.type == GateType::INPUT ||
-            g.type == GateType::OUTPUT || g.output < 0) continue;
+    // Levelized parallel backward propagation: process levels from PO to PI.
+    // Within each backward level, gates write to their input nets' required times.
+    // Multiple gates may fanout from the same net, so we use atomic min via
+    // a critical section (rare contention — most nets have fanout < 4).
+    for (auto& level : backward_levels_) {
+        int level_size = (int)level.size();
+        #pragma omp parallel for schedule(dynamic, 64) if(level_size > 128)
+        for (int idx = 0; idx < level_size; ++idx) {
+            GateId gid = level[idx];
+            auto& g = nl_.gate(gid);
 
-        double out_req = std::min(pin_timing_[g.output].required_rise,
-                                   pin_timing_[g.output].required_fall);
-        double worst_slew = 0.01;
-        for (auto ni : g.inputs)
-            worst_slew = std::max(worst_slew, pin_timing_[ni].slew_rise);
-        double gd = gate_delay(topo_[i], worst_slew);
+            double out_req = std::min(pin_timing_[g.output].required_rise,
+                                       pin_timing_[g.output].required_fall);
+            double worst_slew = 0.01;
+            for (auto ni : g.inputs)
+                worst_slew = std::max(worst_slew, pin_timing_[ni].slew_rise);
+            double gd = gate_delay(gid, worst_slew);
 
-        for (auto ni : g.inputs) {
-            double in_req = out_req - gd;
-            pin_timing_[ni].required_rise = std::min(pin_timing_[ni].required_rise, in_req);
-            pin_timing_[ni].required_fall = std::min(pin_timing_[ni].required_fall, in_req);
+            for (auto ni : g.inputs) {
+                double in_req = out_req - gd;
+                // Multiple fanout gates may update the same input net —
+                // use atomic min to avoid data races.
+                #pragma omp critical
+                {
+                    pin_timing_[ni].required_rise = std::min(pin_timing_[ni].required_rise, in_req);
+                    pin_timing_[ni].required_fall = std::min(pin_timing_[ni].required_fall, in_req);
+                }
+            }
         }
     }
 }
@@ -690,7 +763,17 @@ void StaEngine::hold_backward_propagation() {
 // === Slack Computation ===
 
 void StaEngine::compute_slacks() {
-    for (auto& [nid, pt] : pin_timing_) {
+    // Slack computation is trivially parallel: each net is independent.
+    // Use a flat vector for OMP (unordered_map iterators not random-access).
+    std::vector<NetId> net_ids;
+    net_ids.reserve(pin_timing_.size());
+    for (auto& [nid, pt] : pin_timing_)
+        net_ids.push_back(nid);
+
+    int n = (int)net_ids.size();
+    #pragma omp parallel for schedule(static) if(n > 256)
+    for (int i = 0; i < n; ++i) {
+        auto& pt = pin_timing_[net_ids[i]];
         pt.slack_rise = pt.required_rise - pt.arrival_rise;
         pt.slack_fall = pt.required_fall - pt.arrival_fall;
         pt.hold_slack_rise = pt.hold_arrival_rise - pt.hold_required_rise;

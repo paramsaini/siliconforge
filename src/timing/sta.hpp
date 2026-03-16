@@ -609,6 +609,12 @@ private:
     void compute_slacks();
     std::vector<TimingPath> extract_paths(int count, bool include_hold = true);
 
+    // Levelized parallelism: group topo-order gates by logic level
+    // so all gates within one level can be processed concurrently.
+    void build_level_sets();
+    std::vector<std::vector<GateId>> forward_levels_;   // levels[0] = closest to PI
+    std::vector<std::vector<GateId>> backward_levels_;  // levels[0] = closest to PO
+
     // Delay calculation with slew + OCV/AOCV awareness
     double gate_delay(GateId gid, double input_slew = 0.01) const;
     double output_slew(GateId gid, double input_slew, double load_cap) const;

@@ -3,6 +3,9 @@
 #include "sat/cdcl_solver.hpp"
 #include <unordered_map>
 #include <iostream>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace sf {
 

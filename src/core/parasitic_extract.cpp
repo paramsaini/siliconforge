@@ -8,6 +8,10 @@
 #include <sstream>
 #include <unordered_set>
 #include <unordered_map>
+#include <mutex>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace sf {
 
@@ -407,37 +411,55 @@ void SpefExtractor::extract_coupling_caps(const WireIndex& idx,
                                           std::vector<SpefNet>& nets) const {
     int num_nets = static_cast<int>(idx.size());
 
-    for (int i = 0; i < num_nets; ++i) {
-        for (int j = i + 1; j < num_nets; ++j) {
-            if (idx[i].empty() || idx[j].empty()) continue;
+    // Parallel over outer net loop. Each thread collects coupling pairs
+    // into thread-local vectors, then merge under lock.
+    struct CouplingPair { int net_a, net_b; double cc; };
+    std::vector<CouplingPair> all_pairs;
+    std::mutex pairs_mtx;
 
-            double total_cc = 0.0;
+    #pragma omp parallel if(num_nets > 32)
+    {
+        std::vector<CouplingPair> local_pairs;
 
-            // Check all wire pairs between nets i and j
-            for (int wi : idx[i]) {
-                for (int wj : idx[j]) {
-                    double cc = compute_coupling_cap(pd_.wires[wi], pd_.wires[wj]);
-                    total_cc += cc;
+        #pragma omp for schedule(dynamic, 4)
+        for (int i = 0; i < num_nets; ++i) {
+            if (idx[i].empty()) continue;
+            for (int j = i + 1; j < num_nets; ++j) {
+                if (idx[j].empty()) continue;
+
+                double total_cc = 0.0;
+                for (int wi : idx[i]) {
+                    for (int wj : idx[j]) {
+                        double cc = compute_coupling_cap(pd_.wires[wi], pd_.wires[wj]);
+                        total_cc += cc;
+                    }
+                }
+
+                if (total_cc >= cfg_.coupling_threshold) {
+                    local_pairs.push_back({i, j, total_cc});
                 }
             }
-
-            if (total_cc < cfg_.coupling_threshold) continue;
-
-            // Add coupling cap to both nets
-            auto add_cc = [&](int net_idx, int other_net_idx, double val) {
-                if (net_idx >= static_cast<int>(nets.size())) return;
-                SpefCapacitor c;
-                c.id = static_cast<int>(nets[net_idx].caps.size()) + 1;
-                c.node1 = nets[net_idx].name;
-                c.node2 = nets[other_net_idx].name;
-                c.value = val;
-                nets[net_idx].caps.push_back(c);
-                nets[net_idx].total_cap += val;
-            };
-
-            add_cc(i, j, total_cc);
-            add_cc(j, i, total_cc);
         }
+
+        // Merge thread-local results
+        std::lock_guard<std::mutex> lock(pairs_mtx);
+        all_pairs.insert(all_pairs.end(), local_pairs.begin(), local_pairs.end());
+    }
+
+    // Apply coupling caps (serial — modifies nets vector)
+    for (auto& cp : all_pairs) {
+        auto add_cc = [&](int net_idx, int other_net_idx, double val) {
+            if (net_idx >= static_cast<int>(nets.size())) return;
+            SpefCapacitor c;
+            c.id = static_cast<int>(nets[net_idx].caps.size()) + 1;
+            c.node1 = nets[net_idx].name;
+            c.node2 = nets[other_net_idx].name;
+            c.value = val;
+            nets[net_idx].caps.push_back(c);
+            nets[net_idx].total_cap += val;
+        };
+        add_cc(cp.net_a, cp.net_b, cp.cc);
+        add_cc(cp.net_b, cp.net_a, cp.cc);
     }
 }
 
@@ -455,13 +477,14 @@ SpefData SpefExtractor::extract() {
     WireIndex wire_idx = build_wire_index();
     int num_nets = static_cast<int>(pd_.nets.size());
 
-    spef.nets.reserve(num_nets);
+    spef.nets.resize(num_nets);
 
+    // Per-net extraction is independent — parallelize
+    #pragma omp parallel for schedule(dynamic, 32) if(num_nets > 64)
     for (int i = 0; i < num_nets; ++i) {
         SpefNet sn;
 
         if (wire_idx[i].empty()) {
-            // Net has no routed wires — emit stub with zero parasitics
             sn.name = pd_.nets[i].name;
             sn.total_cap = 0.0;
         } else {
@@ -476,8 +499,12 @@ SpefData SpefExtractor::extract() {
             }
         }
 
-        spef.net_map[sn.name] = static_cast<int>(spef.nets.size());
-        spef.nets.push_back(std::move(sn));
+        spef.nets[i] = std::move(sn);
+    }
+
+    // Build net_map after parallel extraction (serial, lightweight)
+    for (int i = 0; i < num_nets; ++i) {
+        spef.net_map[spef.nets[i].name] = i;
     }
 
     // Coupling pass (only in COUPLED mode)
