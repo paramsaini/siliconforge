@@ -468,6 +468,70 @@ private:
     double wires_spacing(const WireSegment& a, const WireSegment& b) const;
     double parallel_run_length(const WireSegment& a, const WireSegment& b) const;
     bool is_eol(const WireSegment& w, double eol_width) const;
+
+public:
+    // ── Phase 98: Hierarchical DRC ──────────────────────────────────────
+    // Check each unique cell definition once, then propagate violations
+    // through instance placements. Reduces O(N^2) flat DRC to O(U*M^2 + I)
+    // where U = unique cells, M = max shapes per cell, I = instances.
+    //
+    // Inter-cell spacing checks still run at the flat level but only
+    // between boundary shapes of adjacent instances (scanline sweep).
+
+    struct HierCellDef {
+        std::string name;
+        std::vector<WireSegment> shapes;   // local-coordinate shapes
+        std::vector<Via> local_vias;
+        Rect bbox;                         // bounding box in local coords
+    };
+
+    struct HierInstance {
+        int cell_def_idx;
+        Point offset;                      // placement origin
+        bool mirror_x = false;
+        bool mirror_y = false;
+    };
+
+    struct HierDrcResult {
+        int intra_cell_violations = 0;     // violations inside cell defs
+        int inter_cell_violations = 0;     // violations between instances
+        int unique_cells_checked = 0;
+        int instances_checked = 0;
+        double time_ms = 0;
+        std::vector<DrcViolation> all_violations;
+        std::string summary;
+    };
+
+    // Register cell definitions and instances
+    void add_hier_cell(const HierCellDef& cell) { hier_cells_.push_back(cell); }
+    void add_hier_instance(const HierInstance& inst) { hier_instances_.push_back(inst); }
+    void clear_hierarchy() { hier_cells_.clear(); hier_instances_.clear(); }
+
+    // Run hierarchical DRC
+    HierDrcResult check_hierarchical();
+
+    // ── Scanline-based inter-cell spacing ────────────────────────────────
+    // Sweeps a vertical line across the design, maintaining an active set
+    // of wire segments. Only checks spacing between segments from different
+    // instances that overlap in the Y dimension. O(N log N) vs O(N^2).
+
+    struct ScanlineConfig {
+        double min_spacing = 0.14;        // global minimum spacing
+        int max_events_per_sweep = 100000; // memory limit
+    };
+    void set_scanline_config(const ScanlineConfig& cfg) { scanline_cfg_ = cfg; }
+    int check_inter_cell_scanline(HierDrcResult& result);
+
+private:
+    std::vector<HierCellDef> hier_cells_;
+    std::vector<HierInstance> hier_instances_;
+    ScanlineConfig scanline_cfg_;
+
+    // Intra-cell DRC: check one cell definition
+    int check_intra_cell(const HierCellDef& cell, HierDrcResult& result);
+
+    // Transform local shape to global coordinates
+    WireSegment transform_shape(const WireSegment& local, const HierInstance& inst) const;
 };
 
 } // namespace sf

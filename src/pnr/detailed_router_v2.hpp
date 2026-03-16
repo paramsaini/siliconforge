@@ -57,10 +57,13 @@ public:
     size_t size() const;
 
 private:
-    // Key: (layer << 16) | track_idx -> sorted vector of Interval by lo
-    std::unordered_map<int, std::vector<Interval>> tracks_;
+    // Key: (layer << 20) | track_idx -> sorted vector of Interval by lo
+    // Phase 98: Expanded from 16-bit to 20-bit track index (1M tracks per layer)
+    std::unordered_map<int64_t, std::vector<Interval>> tracks_;
 
-    int make_key(int layer, int track_idx) const { return (layer << 16) | (track_idx & 0xFFFF); }
+    int64_t make_key(int layer, int track_idx) const {
+        return (static_cast<int64_t>(layer) << 20) | (static_cast<int64_t>(track_idx) & 0xFFFFF);
+    }
 
     // Binary search: find first interval whose hi+buffer > lo, then scan forward
     bool has_overlap(const std::vector<Interval>& intervals, double lo, double hi,

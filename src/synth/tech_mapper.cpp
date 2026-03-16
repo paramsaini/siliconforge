@@ -1571,4 +1571,281 @@ Netlist TechMapper::map_optimal(const IlpMapConfig& cfg) {
     return best_nl;
 }
 
+// ============================================================================
+// Phase 98: NPN Boolean matching with 6-input cuts
+// ============================================================================
+
+void TechMapper::build_npn_library() {
+    if (npn_lib_built_) return;
+    std::vector<NpnCellEntry> entries;
+
+    for (auto& cell : lib_.cells) {
+        // Get the output function
+        std::string func = cell.output_function();
+        if (func.empty()) continue;
+        int ni = cell.num_inputs();
+        if (ni < 1 || ni > 6) continue;
+
+        NpnCellEntry entry;
+        entry.cell_name = cell.name;
+        entry.num_inputs = ni;
+        entry.area = cell.area;
+        // Estimate delay from first timing arc
+        entry.delay = 0.1;
+        if (!cell.timings.empty()) {
+            entry.delay = cell.timings[0].cell_rise;
+            if (entry.delay <= 0) entry.delay = 0.1;
+        }
+
+        // Compute truth table from the Boolean function
+        entry.original_tt = NpnMatcher::func_to_tt6(func, ni);
+        entries.push_back(entry);
+    }
+
+    npn_matcher_.build_library(entries);
+    npn_lib_built_ = true;
+}
+
+std::vector<std::vector<TechMapper::Cut>> TechMapper::enumerate_cuts(int max_k) {
+    int num_vars = (int)aig_.max_var();
+    std::vector<std::vector<Cut>> all_cuts(num_vars + 1);
+
+    // PI cuts: each primary input is a trivial cut of itself
+    for (uint32_t i = 1; i <= aig_.num_inputs(); ++i) {
+        Cut c;
+        c.leaves = {i};
+        c.tt = 0x2;  // identity function: f(x0) = x0
+        c.depth = 0;
+        all_cuts[i].push_back(c);
+    }
+
+    // Bottom-up: enumerate cuts for each AND node
+    for (uint32_t v = aig_.num_inputs() + 1; v <= (uint32_t)num_vars; ++v) {
+        if (!aig_.is_and(v)) continue;
+        const auto& nd = aig_.and_node(v);
+        uint32_t v0 = aig_var(nd.fanin0);
+        uint32_t v1 = aig_var(nd.fanin1);
+
+        // Trivial cut: {v} itself
+        Cut triv;
+        triv.leaves = {v};
+        triv.tt = 0x2;
+        triv.depth = 0;
+        all_cuts[v].push_back(triv);
+
+        // Cross-product of child cuts
+        auto& cuts0 = all_cuts[v0];
+        auto& cuts1 = all_cuts[v1];
+
+        for (auto& c0 : cuts0) {
+            for (auto& c1 : cuts1) {
+                // Merge leaves
+                std::vector<uint32_t> merged;
+                std::set_union(c0.leaves.begin(), c0.leaves.end(),
+                              c1.leaves.begin(), c1.leaves.end(),
+                              std::back_inserter(merged));
+                if ((int)merged.size() > max_k) continue;
+
+                Cut c;
+                c.leaves = merged;
+                c.depth = std::max(c0.depth, c1.depth) + 1;
+
+                // Compute truth table for this cut
+                c.tt = compute_aig_tt6(aig_, v, merged);
+
+                // Area flow heuristic
+                c.area_flow = (c0.area_flow + c1.area_flow) / std::max(1, (int)merged.size());
+
+                all_cuts[v].push_back(c);
+            }
+        }
+
+        // Keep only top-K cuts per node (sorted by area_flow)
+        if ((int)all_cuts[v].size() > 8) {
+            std::partial_sort(all_cuts[v].begin(), all_cuts[v].begin() + 8,
+                             all_cuts[v].end(),
+                             [](const Cut& a, const Cut& b) {
+                                 return a.area_flow < b.area_flow;
+                             });
+            all_cuts[v].resize(8);
+        }
+    }
+    return all_cuts;
+}
+
+TechMapper::DecompResult TechMapper::decompose_wide(TruthTable6 tt, int num_inputs,
+                                                      int max_cell_inputs) {
+    DecompResult result;
+    if (num_inputs <= max_cell_inputs) {
+        result.subfunctions.push_back({tt, num_inputs});
+        std::vector<int> identity(num_inputs);
+        std::iota(identity.begin(), identity.end(), 0);
+        result.input_maps.push_back(identity);
+        return result;
+    }
+
+    // Shannon decomposition: f = xi * f|xi=1 + !xi * f|xi=0
+    // Split on the variable with the most balanced cofactors
+    int best_var = 0;
+    int best_balance = 1 << num_inputs;
+    for (int v = 0; v < num_inputs; ++v) {
+        auto sigs = NpnMatcher::cofactor_signatures(tt, num_inputs);
+        int balance = std::abs(sigs[v].count0 - sigs[v].count1);
+        if (balance < best_balance) {
+            best_balance = balance;
+            best_var = v;
+        }
+    }
+
+    // Create two (N-1)-input subfunctions + MUX
+    uint64_t mask = (num_inputs < 6) ? ((1ULL << (1 << num_inputs)) - 1) : ~0ULL;
+    int sub_n = num_inputs - 1;
+
+    // Cofactors removing the split variable
+    TruthTable6 c0 = 0, c1 = 0;
+    int sub_total = 1 << sub_n;
+    for (int m = 0; m < sub_total; ++m) {
+        // Map sub-minterm to full minterm
+        int full_m0 = 0, full_m1 = 0;
+        int sub_bit = 0;
+        for (int i = 0; i < num_inputs; ++i) {
+            if (i == best_var) {
+                full_m1 |= (1 << i);
+            } else {
+                if ((m >> sub_bit) & 1) {
+                    full_m0 |= (1 << i);
+                    full_m1 |= (1 << i);
+                }
+                sub_bit++;
+            }
+        }
+        if ((tt >> full_m0) & 1) c0 |= (1ULL << m);
+        if ((tt >> full_m1) & 1) c1 |= (1ULL << m);
+    }
+
+    result.subfunctions.push_back({c0, sub_n});
+    result.subfunctions.push_back({c1, sub_n});
+
+    // MUX: 3-input function
+    TruthTable6 mux_tt = 0xCA;  // MUX(s,a,b) = s?a:b
+    result.subfunctions.push_back({mux_tt, 3});
+
+    // Input maps
+    std::vector<int> sub_inputs;
+    for (int i = 0; i < num_inputs; ++i)
+        if (i != best_var) sub_inputs.push_back(i);
+    result.input_maps.push_back(sub_inputs);
+    result.input_maps.push_back(sub_inputs);
+    result.input_maps.push_back({best_var, -1, -2}); // -1,-2 = outputs of cofactors
+
+    return result;
+}
+
+Netlist TechMapper::map_npn(const NpnMapConfig& cfg) {
+    auto t0 = std::chrono::steady_clock::now();
+
+    // Step 1: Build NPN library from Liberty cells
+    build_npn_library();
+
+    // Step 2: Enumerate K-feasible cuts
+    auto all_cuts = enumerate_cuts(cfg.max_cut_size);
+
+    // Step 3: For each AIG AND node, find the best cell via NPN matching
+    uint32_t max_v = aig_.max_var();
+    std::vector<uint32_t> and_vars;
+    and_vars.reserve(max_v);
+    for (uint32_t v = 1; v <= max_v; ++v) {
+        if (aig_.is_and(v)) and_vars.push_back(v);
+    }
+
+    std::vector<CellMatch> matches(and_vars.size());
+    int npn_hits = 0;
+
+    for (size_t idx = 0; idx < and_vars.size(); ++idx) {
+        uint32_t v = and_vars[idx];
+
+        // Try NPN matching on each cut
+        bool matched = false;
+        if (cfg.enable_npn && v < all_cuts.size()) {
+            auto& cuts = all_cuts[v];
+            NpnMatcher::MatchResult best_match;
+            Cut best_cut;
+            double best_cost = 1e18;
+
+            for (auto& cut : cuts) {
+                if (cut.leaves.size() <= 1) continue;
+                int ni = (int)cut.leaves.size();
+                if (ni > cfg.max_cut_size) continue;
+
+                auto match = (cfg.area_weight > cfg.delay_weight)
+                    ? npn_matcher_.best_match_area(cut.tt, ni)
+                    : npn_matcher_.best_match_delay(cut.tt, ni);
+
+                if (match.cell) {
+                    double cost = cfg.area_weight * match.area +
+                                  cfg.delay_weight * match.delay;
+                    if (cost < best_cost) {
+                        best_cost = cost;
+                        best_match = match;
+                        best_cut = cut;
+                    }
+                }
+            }
+
+            if (best_match.cell) {
+                // Find the Liberty cell by name
+                const LibertyCell* lc = find_cell_by_pattern(best_match.cell->cell_name);
+                if (lc) {
+                    CellMatch cm;
+                    cm.cell = lc;
+                    cm.output = aig_make(v);
+                    for (auto leaf : best_cut.leaves)
+                        cm.inputs.push_back(aig_make(leaf));
+                    matches[idx] = cm;
+                    matched = true;
+                    npn_hits++;
+                }
+            }
+        }
+
+        // Fallback to structural matching
+        if (!matched) {
+            auto all_m = find_all_matches(v);
+            if (!all_m.empty()) {
+                ExtendedMatch best = select_best_match(all_m);
+                if (best.cell) {
+                    matches[idx] = to_cell_match(best);
+                    continue;
+                }
+            }
+            matches[idx] = match_node(v);
+        }
+    }
+
+    // Filter valid matches and build netlist via existing infrastructure
+    std::vector<CellMatch> final_matches;
+    final_matches.reserve(matches.size());
+    for (auto& m : matches) {
+        if (m.cell) final_matches.push_back(std::move(m));
+    }
+
+    auto nl = build_netlist(final_matches);
+
+    // Post-mapping buffer insertion
+    insert_buffers(nl);
+
+    auto t1 = std::chrono::steady_clock::now();
+    stats_.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    stats_.num_cells = (uint32_t)final_matches.size();
+
+    auto topo = nl.topo_order();
+    stats_.depth = topo.size();
+    stats_.total_area = 0;
+    for (auto& m : final_matches) {
+        if (m.cell) stats_.total_area += m.cell->area;
+    }
+
+    return nl;
+}
+
 } // namespace sf

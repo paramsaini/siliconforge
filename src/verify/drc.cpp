@@ -3255,4 +3255,223 @@ YieldPrediction DrcEngine::predict_yield(double defect_density) {
     return yp;
 }
 
+// ============================================================================
+// Phase 98: Hierarchical DRC + Scanline inter-cell spacing
+// ============================================================================
+
+WireSegment DrcEngine::transform_shape(const WireSegment& local,
+                                         const HierInstance& inst) const {
+    WireSegment global = local;
+    double sx = inst.mirror_x ? -1.0 : 1.0;
+    double sy = inst.mirror_y ? -1.0 : 1.0;
+
+    global.start.x = local.start.x * sx + inst.offset.x;
+    global.start.y = local.start.y * sy + inst.offset.y;
+    global.end.x = local.end.x * sx + inst.offset.x;
+    global.end.y = local.end.y * sy + inst.offset.y;
+
+    // Normalize so start <= end
+    if (global.start.x > global.end.x) std::swap(global.start.x, global.end.x);
+    if (global.start.y > global.end.y) std::swap(global.start.y, global.end.y);
+
+    return global;
+}
+
+int DrcEngine::check_intra_cell(const HierCellDef& cell, HierDrcResult& result) {
+    int violations = 0;
+
+    // Check all shape pairs within the cell definition
+    for (size_t i = 0; i < cell.shapes.size(); ++i) {
+        auto& a = cell.shapes[i];
+        double a_len = std::abs(a.end.x - a.start.x) + std::abs(a.end.y - a.start.y);
+
+        // Min width check
+        if (a.width > 0) {
+            double min_w = 0.14; // default
+            for (auto& rule : rules_) {
+                if (rule.type == DrcRule::MIN_WIDTH && rule.layer == a.layer) {
+                    min_w = rule.value;
+                    break;
+                }
+            }
+            if (a.width < min_w - 1e-6) {
+                DrcViolation v;
+                v.rule_name = "MIN_WIDTH_HIER";
+                v.message = "Min width violation in cell " + cell.name;
+                v.bbox = {a.start.x, a.start.y, a.end.x, a.end.y};
+                v.actual_value = a.width;
+                v.required_value = min_w;
+                v.severity = DrcViolation::ERROR;
+                result.all_violations.push_back(v);
+                violations++;
+            }
+        }
+
+        // Min spacing between shapes in same cell
+        for (size_t j = i + 1; j < cell.shapes.size(); ++j) {
+            auto& b = cell.shapes[j];
+            if (a.layer != b.layer) continue;
+
+            double sp = wires_spacing(a, b);
+            double min_sp = 0.14;
+            for (auto& rule : rules_) {
+                if (rule.type == DrcRule::MIN_SPACING && rule.layer == a.layer) {
+                    min_sp = rule.value;
+                    break;
+                }
+            }
+            if (sp >= 0 && sp < min_sp - 1e-6) {
+                DrcViolation v;
+                v.rule_name = "MIN_SPACING_HIER";
+                v.message = "Min spacing violation in cell " + cell.name;
+                v.bbox = {a.start.x, a.start.y, b.end.x, b.end.y};
+                v.actual_value = sp;
+                v.required_value = min_sp;
+                v.severity = DrcViolation::ERROR;
+                result.all_violations.push_back(v);
+                violations++;
+            }
+        }
+    }
+    return violations;
+}
+
+int DrcEngine::check_inter_cell_scanline(HierDrcResult& result) {
+    // Collect boundary shapes from all instances
+    struct ScanEvent {
+        double x;           // event X coordinate
+        bool is_start;      // true = wire starts, false = wire ends
+        int instance_id;
+        int shape_idx;
+        int layer;
+        double y_lo, y_hi;  // Y extent
+    };
+
+    std::vector<ScanEvent> events;
+    events.reserve(hier_instances_.size() * 10);
+
+    for (int ii = 0; ii < (int)hier_instances_.size(); ++ii) {
+        auto& inst = hier_instances_[ii];
+        if (inst.cell_def_idx < 0 || inst.cell_def_idx >= (int)hier_cells_.size())
+            continue;
+        auto& cell = hier_cells_[inst.cell_def_idx];
+
+        for (int si = 0; si < (int)cell.shapes.size(); ++si) {
+            auto global = transform_shape(cell.shapes[si], inst);
+            double x0 = std::min(global.start.x, global.end.x);
+            double x1 = std::max(global.start.x, global.end.x);
+            double y0 = std::min(global.start.y, global.end.y);
+            double y1 = std::max(global.start.y, global.end.y);
+
+            events.push_back({x0, true, ii, si, global.layer, y0, y1});
+            events.push_back({x1, false, ii, si, global.layer, y0, y1});
+        }
+    }
+
+    // Sort events by X coordinate
+    std::sort(events.begin(), events.end(), [](const ScanEvent& a, const ScanEvent& b) {
+        return a.x < b.x || (a.x == b.x && a.is_start > b.is_start);
+    });
+
+    // Sweep line: maintain active segments sorted by y_lo
+    struct ActiveSeg {
+        int instance_id;
+        int shape_idx;
+        int layer;
+        double y_lo, y_hi;
+        double x_start;
+    };
+    std::vector<ActiveSeg> active;
+
+    int violations = 0;
+    double min_spacing = scanline_cfg_.min_spacing;
+
+    for (auto& evt : events) {
+        if (evt.is_start) {
+            // Check new segment against all active segments from different instances
+            for (auto& seg : active) {
+                if (seg.instance_id == evt.instance_id) continue;
+                if (seg.layer != evt.layer) continue;
+
+                // Check Y overlap/proximity
+                double y_gap = std::max(evt.y_lo - seg.y_hi, seg.y_lo - evt.y_hi);
+                if (y_gap > min_spacing) continue;
+
+                // If Y ranges overlap or are too close, check spacing
+                if (y_gap < min_spacing - 1e-6 && y_gap >= 0) {
+                    DrcViolation v;
+                    v.rule_name = "INTER_CELL_SPACING";
+                    v.message = "Inter-cell spacing violation";
+                    v.bbox = {evt.x, evt.y_lo, evt.x + 0.1, evt.y_hi};
+                    v.actual_value = y_gap;
+                    v.required_value = min_spacing;
+                    v.severity = DrcViolation::ERROR;
+                    result.all_violations.push_back(v);
+                    violations++;
+                }
+            }
+
+            active.push_back({evt.instance_id, evt.shape_idx, evt.layer,
+                             evt.y_lo, evt.y_hi, evt.x});
+        } else {
+            // Remove segment from active set
+            for (auto it = active.begin(); it != active.end(); ++it) {
+                if (it->instance_id == evt.instance_id &&
+                    it->shape_idx == evt.shape_idx &&
+                    it->layer == evt.layer) {
+                    active.erase(it);
+                    break;
+                }
+            }
+        }
+
+        // Memory limit
+        if ((int)active.size() > scanline_cfg_.max_events_per_sweep) {
+            break;
+        }
+    }
+
+    return violations;
+}
+
+DrcEngine::HierDrcResult DrcEngine::check_hierarchical() {
+    auto t0 = std::chrono::steady_clock::now();
+    HierDrcResult result;
+
+    // Step 1: Check each unique cell definition once
+    std::unordered_map<int, int> cell_violations;
+    for (int ci = 0; ci < (int)hier_cells_.size(); ++ci) {
+        int v = check_intra_cell(hier_cells_[ci], result);
+        cell_violations[ci] = v;
+        result.intra_cell_violations += v;
+    }
+    result.unique_cells_checked = (int)hier_cells_.size();
+
+    // Step 2: Propagate intra-cell violations to all instances
+    // (violations are the same for every instance of the same cell)
+    for (auto& inst : hier_instances_) {
+        if (cell_violations.count(inst.cell_def_idx) &&
+            cell_violations[inst.cell_def_idx] > 0) {
+            // Violations already counted in step 1
+        }
+        result.instances_checked++;
+    }
+
+    // Step 3: Inter-cell spacing via scanline sweep
+    result.inter_cell_violations = check_inter_cell_scanline(result);
+
+    auto t1 = std::chrono::steady_clock::now();
+    result.time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    std::ostringstream ss;
+    ss << "Hierarchical DRC: " << result.unique_cells_checked << " unique cells, "
+       << result.instances_checked << " instances. "
+       << "Intra-cell violations: " << result.intra_cell_violations
+       << ", Inter-cell violations: " << result.inter_cell_violations
+       << ". Time: " << result.time_ms << " ms.";
+    result.summary = ss.str();
+
+    return result;
+}
+
 } // namespace sf

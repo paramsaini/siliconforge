@@ -36,6 +36,7 @@ add_library(siliconforge_lib STATIC
     synth/resource_share.cpp
     synth/retiming.cpp
     synth/tech_mapper.cpp
+    synth/npn_match.cpp
 
     # ── SAT Solver ────────────────────────────────────────────────────
     sat/cdcl_solver.cpp
@@ -89,12 +90,14 @@ add_library(siliconforge_lib STATIC
     pnr/cell_insert.cpp
     pnr/detailed_placer.cpp
     pnr/multi_pattern.cpp
+    pnr/gdsii_reader.cpp
 
     # ── Timing & Power ────────────────────────────────────────────────
     timing/sta.cpp
     timing/ssta.cpp
     timing/power.cpp
     timing/parasitics.cpp
+    timing/ccs_delay.cpp
     timing/ir_drop.cpp
     timing/pdn.cpp
     timing/noise.cpp
@@ -118,6 +121,7 @@ add_library(siliconforge_lib STATIC
 
     # ── ML Models ─────────────────────────────────────────────────────
     ml/congestion_model.cpp
+    ml/gnn.cpp
     ml/timing_model.cpp
     ml/ml_opt.cpp
 

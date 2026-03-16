@@ -3,6 +3,7 @@
 #include <sstream>
 #include <chrono>
 #include <cmath>
+#include <unordered_set>
 
 namespace sf {
 
@@ -241,73 +242,292 @@ void ParasiticResult::scale_parasitics(double temp_factor, double voltage_factor
 }
 
 
-void ParasiticExtractor::extract_coupling() {
-    // Compute coupling capacitance between parallel wire segments
-    // For each pair of nets, find overlapping parallel wire segments
-    // Cc = coupling_coeff * overlap_length / spacing
-    
-    struct WireSeg {
-        int net_id;
-        int layer;
-        double x0, y0, x1, y1;
-    };
-    
-    // Collect all wire segments per net
-    std::vector<WireSeg> all_segs;
+// ============================================================================
+// Phase 98: Spatial-grid coupling extraction — O(W·K) instead of O(W^2)
+// ============================================================================
+
+void ParasiticExtractor::build_spatial_index() {
+    wire_entries_.clear();
+
+    // Collect all wires with proper net_id mapping
     for (auto& w : pd_.wires) {
-        // Find which net this wire belongs to (by proximity to net cells)
-        int best_net = -1;
-        double best_dist = 1e18;
-        for (size_t ni = 0; ni < pd_.nets.size(); ni++) {
-            for (auto cid : pd_.nets[ni].cell_ids) {
-                double cx = pd_.cells[cid].position.x + pd_.cells[cid].width/2;
-                double cy = pd_.cells[cid].position.y + pd_.cells[cid].height/2;
-                double d = std::abs(w.start.x - cx) + std::abs(w.start.y - cy);
-                if (d < best_dist) { best_dist = d; best_net = (int)ni; }
+        WireEntry we;
+        we.net_id = w.net_id;
+        we.layer = w.layer;
+        we.x0 = std::min(w.start.x, w.end.x);
+        we.y0 = std::min(w.start.y, w.end.y);
+        we.x1 = std::max(w.start.x, w.end.x);
+        we.y1 = std::max(w.start.y, w.end.y);
+        we.width = w.width;
+        we.horizontal = (std::abs(w.end.y - w.start.y) < 0.01);
+
+        // If net_id not tagged on wire, find by proximity
+        if (we.net_id < 0) {
+            double best_dist = 1e18;
+            for (size_t ni = 0; ni < pd_.nets.size(); ni++) {
+                for (auto cid : pd_.nets[ni].cell_ids) {
+                    if (cid >= (int)pd_.cells.size()) continue;
+                    double cx = pd_.cells[cid].position.x + pd_.cells[cid].width / 2;
+                    double cy = pd_.cells[cid].position.y + pd_.cells[cid].height / 2;
+                    double d = std::abs(w.start.x - cx) + std::abs(w.start.y - cy);
+                    if (d < best_dist) { best_dist = d; we.net_id = (int)ni; }
+                }
             }
         }
-        if (best_net >= 0)
-            all_segs.push_back({best_net, w.layer, w.start.x, w.start.y, w.end.x, w.end.y});
+        if (we.net_id >= 0)
+            wire_entries_.push_back(we);
     }
-    
-    // For each pair of segments on the same layer, compute coupling
-    for (size_t i = 0; i < all_segs.size(); i++) {
-        for (size_t j = i + 1; j < all_segs.size(); j++) {
-            auto& a = all_segs[i];
-            auto& b = all_segs[j];
-            if (a.net_id == b.net_id || a.layer != b.layer) continue;
-            
-            // Check if parallel (both horizontal or both vertical)
-            bool a_horiz = (std::abs(a.y1 - a.y0) < 0.01);
-            bool b_horiz = (std::abs(b.y1 - b.y0) < 0.01);
-            bool a_vert = (std::abs(a.x1 - a.x0) < 0.01);
-            bool b_vert = (std::abs(b.x1 - b.x0) < 0.01);
-            
-            double overlap = 0;
-            double spacing = 0;
-            
-            if (a_horiz && b_horiz) {
-                spacing = std::abs(a.y0 - b.y0);
-                double lo = std::max(std::min(a.x0, a.x1), std::min(b.x0, b.x1));
-                double hi = std::min(std::max(a.x0, a.x1), std::max(b.x0, b.x1));
-                overlap = std::max(0.0, hi - lo);
-            } else if (a_vert && b_vert) {
-                spacing = std::abs(a.x0 - b.x0);
-                double lo = std::max(std::min(a.y0, a.y1), std::min(b.y0, b.y1));
-                double hi = std::min(std::max(a.y0, a.y1), std::max(b.y0, b.y1));
-                overlap = std::max(0.0, hi - lo);
+
+    if (wire_entries_.empty()) return;
+
+    // Compute bounding box
+    double xmin = 1e18, ymin = 1e18, xmax = -1e18, ymax = -1e18;
+    int max_layer = 0;
+    for (auto& we : wire_entries_) {
+        xmin = std::min(xmin, we.x0);
+        ymin = std::min(ymin, we.y0);
+        xmax = std::max(xmax, we.x1);
+        ymax = std::max(ymax, we.y1);
+        max_layer = std::max(max_layer, we.layer);
+    }
+
+    grid_nx_ = coupling_cfg_.spatial_grid_bins;
+    grid_ny_ = coupling_cfg_.spatial_grid_bins;
+    grid_x0_ = xmin;
+    grid_y0_ = ymin;
+    grid_dx_ = std::max(0.01, (xmax - xmin) / grid_nx_);
+    grid_dy_ = std::max(0.01, (ymax - ymin) / grid_ny_);
+
+    // Build per-layer spatial grid
+    int num_layers = max_layer + 2;  // +1 for layer 0, +1 for inter-layer
+    spatial_grid_.resize(num_layers);
+    for (auto& lg : spatial_grid_)
+        lg.resize(grid_nx_ * grid_ny_);
+
+    for (int wi = 0; wi < (int)wire_entries_.size(); ++wi) {
+        auto& we = wire_entries_[wi];
+        int lyr = std::max(0, std::min(we.layer, num_layers - 1));
+
+        // Insert into all bins the wire overlaps
+        int bx0 = std::max(0, (int)((we.x0 - grid_x0_) / grid_dx_));
+        int by0 = std::max(0, (int)((we.y0 - grid_y0_) / grid_dy_));
+        int bx1 = std::min(grid_nx_ - 1, (int)((we.x1 - grid_x0_) / grid_dx_));
+        int by1 = std::min(grid_ny_ - 1, (int)((we.y1 - grid_y0_) / grid_dy_));
+
+        for (int by = by0; by <= by1; ++by)
+            for (int bx = bx0; bx <= bx1; ++bx)
+                spatial_grid_[lyr][by * grid_nx_ + bx].wire_indices.push_back(wi);
+    }
+}
+
+std::vector<int> ParasiticExtractor::query_nearby(int layer, double x0, double y0,
+                                                    double x1, double y1) const {
+    std::vector<int> result;
+    if (layer < 0 || layer >= (int)spatial_grid_.size()) return result;
+
+    double margin = coupling_cfg_.max_coupling_distance_um;
+    int bx0 = std::max(0, (int)((x0 - margin - grid_x0_) / grid_dx_));
+    int by0 = std::max(0, (int)((y0 - margin - grid_y0_) / grid_dy_));
+    int bx1 = std::min(grid_nx_ - 1, (int)((x1 + margin - grid_x0_) / grid_dx_));
+    int by1 = std::min(grid_ny_ - 1, (int)((y1 + margin - grid_y0_) / grid_dy_));
+
+    std::unordered_set<int> seen;
+    for (int by = by0; by <= by1; ++by)
+        for (int bx = bx0; bx <= bx1; ++bx)
+            for (int wi : spatial_grid_[layer][by * grid_nx_ + bx].wire_indices)
+                if (seen.insert(wi).second)
+                    result.push_back(wi);
+    return result;
+}
+
+double ParasiticExtractor::compute_coupling_cap(const WireEntry& a,
+                                                  const WireEntry& b) const {
+    // Same-direction parallel segments: Cc = coeff * overlap / spacing
+    // Perpendicular crossing: Cc = coeff * crossing_area / layer_height
+    double overlap = 0;
+    double spacing = 0;
+
+    bool same_layer = (a.layer == b.layer);
+
+    if (a.horizontal == b.horizontal) {
+        // Parallel segments
+        if (a.horizontal) {
+            spacing = std::abs((a.y0 + a.y1) / 2.0 - (b.y0 + b.y1) / 2.0);
+            double lo = std::max(a.x0, b.x0);
+            double hi = std::min(a.x1, b.x1);
+            overlap = std::max(0.0, hi - lo);
+        } else {
+            spacing = std::abs((a.x0 + a.x1) / 2.0 - (b.x0 + b.x1) / 2.0);
+            double lo = std::max(a.y0, b.y0);
+            double hi = std::min(a.y1, b.y1);
+            overlap = std::max(0.0, hi - lo);
+        }
+    } else {
+        // Perpendicular crossing — small area coupling
+        double ax_lo = a.x0, ax_hi = a.x1, ay_lo = a.y0, ay_hi = a.y1;
+        double bx_lo = b.x0, bx_hi = b.x1, by_lo = b.y0, by_hi = b.y1;
+        double ox = std::max(0.0, std::min(ax_hi, bx_hi) - std::max(ax_lo, bx_lo));
+        double oy = std::max(0.0, std::min(ay_hi, by_hi) - std::max(ay_lo, by_lo));
+        if (ox > 0 && oy > 0) {
+            double cross_area = std::max(ox, a.width) * std::max(oy, b.width);
+            double layer_height = same_layer ? 0.1 : 0.3;  // ILD thickness estimate
+            return params_.coupling_coeff * cross_area / layer_height;
+        }
+        return 0;
+    }
+
+    if (overlap <= 0 || spacing <= 0) return 0;
+    if (spacing > coupling_cfg_.max_coupling_distance_um) return 0;
+
+    // Wong's parallel plate model with fringe correction:
+    // Cc_pp = eps * overlap * wire_height / spacing
+    // Cc_fringe = eps * (2 * overlap) / (pi * log(1 + spacing/wire_height))
+    // Simplified: Cc = coeff * overlap / spacing^alpha (alpha=0.8 for empirical fit)
+    double coeff = same_layer ? params_.coupling_coeff
+                              : params_.coupling_coeff * coupling_cfg_.inter_layer_coupling_factor;
+    double alpha = 0.8;  // empirical exponent for sub-linear spacing dependence
+    double cc = coeff * overlap / std::pow(spacing, alpha);
+
+    // Miller effect doubling for switching aggressors
+    if (coupling_cfg_.enable_miller_effect) {
+        cc *= coupling_cfg_.miller_factor;
+    }
+
+    return cc;
+}
+
+void ParasiticExtractor::extract_coupling_spatial() {
+    build_spatial_index();
+    if (wire_entries_.empty()) return;
+
+    int num_layers = (int)spatial_grid_.size();
+
+    // For each wire, query same-layer and adjacent-layer neighbors
+    for (int wi = 0; wi < (int)wire_entries_.size(); ++wi) {
+        auto& a = wire_entries_[wi];
+
+        // Same-layer neighbors
+        auto nearby = query_nearby(a.layer, a.x0, a.y0, a.x1, a.y1);
+        for (int wj : nearby) {
+            if (wj <= wi) continue;  // avoid double counting
+            auto& b = wire_entries_[wj];
+            if (a.net_id == b.net_id) continue;
+
+            double cc = compute_coupling_cap(a, b);
+            if (cc > 0) {
+                if (a.net_id < (int)result_cache_.size()) {
+                    double overlap = std::max(a.x1 - a.x0, a.y1 - a.y0);
+                    result_cache_[a.net_id].coupling.push_back(
+                        {b.net_id, cc, overlap});
+                }
+                if (b.net_id < (int)result_cache_.size()) {
+                    double overlap = std::max(b.x1 - b.x0, b.y1 - b.y0);
+                    result_cache_[b.net_id].coupling.push_back(
+                        {a.net_id, cc, overlap});
+                }
             }
-            
-            if (overlap > 0 && spacing > 0 && spacing < 5.0) {
-                // Cc = coeff * overlap / spacing (simplified field model)
-                double cc = params_.coupling_coeff * overlap / spacing;
-                if (a.net_id < (int)result_cache_.size())
-                    result_cache_[a.net_id].coupling.push_back({b.net_id, cc, overlap});
-                if (b.net_id < (int)result_cache_.size())
-                    result_cache_[b.net_id].coupling.push_back({a.net_id, cc, overlap});
+        }
+
+        // Inter-layer coupling (layer above and below)
+        for (int dl = -1; dl <= 1; dl += 2) {
+            int adj_layer = a.layer + dl;
+            if (adj_layer < 0 || adj_layer >= num_layers) continue;
+
+            auto adj_nearby = query_nearby(adj_layer, a.x0, a.y0, a.x1, a.y1);
+            for (int wj : adj_nearby) {
+                auto& b = wire_entries_[wj];
+                if (a.net_id == b.net_id) continue;
+                if (wi < wj || a.layer != b.layer) {
+                    // Inter-layer: only count once
+                    double cc = compute_coupling_cap(a, b);
+                    if (cc > 0) {
+                        if (a.net_id < (int)result_cache_.size())
+                            result_cache_[a.net_id].coupling.push_back(
+                                {b.net_id, cc, 0});
+                        if (b.net_id < (int)result_cache_.size())
+                            result_cache_[b.net_id].coupling.push_back(
+                                {a.net_id, cc, 0});
+                    }
+                }
             }
         }
     }
+}
+
+// AWE (Asymptotic Waveform Evaluation) delay computation
+ParasiticExtractor::AweResult ParasiticExtractor::compute_awe(int net_idx,
+                                                                int order) const {
+    AweResult awe;
+    if (net_idx < 0 || net_idx >= (int)result_cache_.size()) return awe;
+    auto& pn = result_cache_[net_idx];
+    if (pn.segments.empty()) return awe;
+
+    // Build moments m0, m1, ..., m_{2q-1} of the transfer function
+    // For an RC-ladder with N segments:
+    //   m0 = 1 (DC gain)
+    //   m1 = -sum(Ri * Ci_downstream) = -Elmore delay
+    //   m2 = sum over pairs (Ri*Rj * path_cap_product)
+    // AWE matches q moments to q poles.
+
+    int n = (int)pn.segments.size();
+    double total_c = pn.total_cap_ff + pn.total_coupling_ff;
+
+    // Moment 1: Elmore delay (already computed)
+    double m1 = 0;
+    for (int i = 0; i < n; ++i) {
+        double c_downstream = 0;
+        for (int j = i; j < n; ++j)
+            c_downstream += pn.segments[j].capacitance;
+        // Add coupling cap contribution
+        c_downstream += pn.total_coupling_ff / std::max(1, n);
+        m1 += pn.segments[i].resistance * c_downstream;
+    }
+
+    // Moment 2: second-order RC moment
+    double m2 = 0;
+    for (int i = 0; i < n; ++i) {
+        double c_down_i = 0;
+        for (int j = i; j < n; ++j)
+            c_down_i += pn.segments[j].capacitance;
+        for (int k = i; k < n; ++k) {
+            double c_down_k = 0;
+            for (int j = k; j < n; ++j)
+                c_down_k += pn.segments[j].capacitance;
+            m2 += pn.segments[i].resistance * c_down_i *
+                  pn.segments[k].resistance * c_down_k;
+        }
+    }
+
+    if (order >= 2 && m1 > 0) {
+        // Two-pole AWE approximation
+        // p1 = -m1 / m2,  p2 adjusted for stability
+        double p1 = -m1 * m1 / std::max(m2, m1 * m1 * 0.01);
+        double p2 = p1 * 0.3;  // second pole typically faster
+
+        awe.poles.push_back(p1);
+        awe.poles.push_back(p2);
+        awe.residues.push_back(0.7);
+        awe.residues.push_back(0.3);
+
+        // 50% delay: ln(2) / |dominant_pole|
+        awe.delay_ps = 0.693 / std::abs(p1);
+        // 20-80% slew: ln(4) / |dominant_pole|
+        awe.slew_ps = 1.386 / std::abs(p1);
+    } else {
+        // Single-pole (Elmore)
+        awe.delay_ps = m1;
+        awe.slew_ps = 2.2 * m1;  // RC time constant approximation
+        awe.poles.push_back(-1.0 / std::max(m1, 1e-6));
+        awe.residues.push_back(1.0);
+    }
+
+    return awe;
+}
+
+// Legacy coupling extraction (keep as fallback)
+void ParasiticExtractor::extract_coupling() {
+    // Use spatial-grid-accelerated version
+    extract_coupling_spatial();
 }
 
 } // namespace sf

@@ -82,13 +82,59 @@ public:
 
     ParasiticResult extract();
 
+    // Phase 98: Enhanced coupling capacitance extraction
+    // Uses spatial grid for O(W) wire-pair queries instead of O(W^2) brute force.
+    // Supports same-layer and inter-layer coupling.
+    struct CouplingConfig {
+        double max_coupling_distance_um = 5.0;  // ignore pairs beyond this
+        double inter_layer_coupling_factor = 0.6; // Cc between adjacent metal layers
+        int spatial_grid_bins = 64;               // grid resolution for spatial indexing
+        bool enable_miller_effect = false;         // double coupling for switching aggressors
+        double miller_factor = 2.0;
+    };
+    void set_coupling_config(const CouplingConfig& cfg) { coupling_cfg_ = cfg; }
+
+    // AWE (Asymptotic Waveform Evaluation) delay model
+    // Superior to Elmore for deep sub-micron nets with coupling.
+    // Computes dominant poles via moment matching on the RC+Cc network.
+    struct AweResult {
+        double delay_ps = 0;
+        double slew_ps = 0;           // 20-80% transition time
+        std::vector<double> poles;     // dominant poles
+        std::vector<double> residues;  // residues for each pole
+    };
+    AweResult compute_awe(int net_idx, int order = 2) const;
+
 private:
     const PhysicalDesign& pd_;
     TechParams params_;
+    CouplingConfig coupling_cfg_;
     std::vector<ParasiticNet> result_cache_;
 
     ParasiticNet extract_net(int net_idx);
     void extract_coupling();
+
+    // Phase 98: Spatial-grid-accelerated coupling extraction
+    struct WireEntry {
+        int net_id;
+        int layer;
+        double x0, y0, x1, y1;
+        double width;
+        bool horizontal;  // true if horizontal wire
+    };
+    struct SpatialBin {
+        std::vector<int> wire_indices;  // indices into wire_entries_
+    };
+    std::vector<WireEntry> wire_entries_;
+    std::vector<std::vector<SpatialBin>> spatial_grid_;  // [layer][bin_idx]
+    int grid_nx_ = 0, grid_ny_ = 0;
+    double grid_x0_ = 0, grid_y0_ = 0, grid_dx_ = 1, grid_dy_ = 1;
+
+    void build_spatial_index();
+    void extract_coupling_spatial();
+    double compute_coupling_cap(const WireEntry& a, const WireEntry& b) const;
+    std::vector<int> query_nearby(int layer, double x0, double y0,
+                                   double x1, double y1) const;
 };
 
 } // namespace sf

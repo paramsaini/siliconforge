@@ -23,7 +23,7 @@ void TrackOccupancy::clear() {
 void TrackOccupancy::insert(int layer, int track_idx, double lo, double hi, int net_id) {
     double a = std::min(lo, hi);
     double b = std::max(lo, hi);
-    int key = make_key(layer, track_idx);
+    int64_t key = make_key(layer, track_idx);
     auto& vec = tracks_[key];
     // Insert maintaining sort by lo using binary search
     Interval iv{a, b, net_id};
@@ -87,7 +87,7 @@ bool TrackOccupancy::is_free(int layer, int track_idx, double lo, double hi, int
                               double buffer, double adj_buffer, double pitch,
                               double wire_width, double spacing) const {
     // Same track check
-    int key = make_key(layer, track_idx);
+    int64_t key = make_key(layer, track_idx);
     auto it = tracks_.find(key);
     if (it != tracks_.end()) {
         if (has_overlap(it->second, lo, hi, buffer, net_id)) return false;
@@ -96,7 +96,7 @@ bool TrackOccupancy::is_free(int layer, int track_idx, double lo, double hi, int
     double perp_edge = pitch - wire_width;
     if (perp_edge < spacing) {
         for (int delta : {-1, 1}) {
-            int adj_key = make_key(layer, track_idx + delta);
+            int64_t adj_key = make_key(layer, track_idx + delta);
             auto adj_it = tracks_.find(adj_key);
             if (adj_it != tracks_.end()) {
                 if (has_overlap(adj_it->second, lo, hi, adj_buffer, net_id)) return false;

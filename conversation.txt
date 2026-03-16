@@ -4221,3 +4221,91 @@ iterative rip-up/reroute convergence loop.
 97/97 phases pass. ASAN clean."
 
 ================================================================================
+
+PHASE 98: Gap Coverage — 9 Critical/Major Gaps (COMPLETED ✅)
+=============================================================
+
+SESSION: Continuation session (context recovery)
+DATE: 2026-03-16
+
+GAP REPORT SOURCE: docs/GAP_REPORT_2026.md (36 gaps identified)
+
+GAPS IMPLEMENTED (9 total — all P1/P2):
+
+GAP-001: NPN Boolean Matching (synth/npn_match.hpp + .cpp)
+  - 6-input truth table NPN canonical form (exact ≤4, heuristic 5-6)
+  - Cofactor signature sorting, greedy column swap
+  - NPN cell library database: build_library(), lookup(), best_match_area/delay()
+  - Truth table manipulation: negate_input/output, swap_inputs, cofactor
+  - AIG truth table computation (compute_aig_tt6)
+  - Tech mapper integration: map_npn() using CellMatch + build_netlist() pattern
+
+GAP-005: CCS Delay Model (timing/ccs_delay.hpp + .cpp)
+  - Current waveform integration through load capacitance
+  - Pi-model receiver (O'Brien-Savarino C_eff formula)
+  - Effective capacitance iteration (up to 5 iterations)
+  - SMIS (Simultaneous Multi-Input Switching) delay
+  - AWE wire delay integration (CCS driver + RC wire)
+  - NLDM fallback when CCS tables unavailable
+
+GAP-006: Coupling Capacitance Extraction (timing/parasitics.cpp)
+  - Spatial-grid-accelerated coupling O(W·K)
+  - Inter-layer coupling support
+  - Added missing #include <unordered_set>
+
+GAP-009: Hierarchical DRC (verify/drc.cpp)
+  - Check unique cell definitions once, map violations to instances
+  - Scanline inter-cell spacing O(N log N)
+  - Mirror-aware instance checking
+  - Fixed DrcViolation field access (bbox, actual_value, severity enum)
+
+GAP-014: SPICE-driven Characterization (stdcell/characterizer.cpp)
+  - Transient simulation NLDM/CCS table generation
+  - Fixed CCS table fields: index_1/index_2/index_3/values
+  - Multi-corner characterization (voltage x temperature)
+  - Sequential cell support
+
+GAP-024: GNN Infrastructure (ml/gnn.cpp)
+  - GraphSAGE message-passing for congestion/timing prediction
+  - Fixed MLP API: MlpConfig, .layer_sizes, .predict()
+  - Fixed Netlist API: gate().type, gate().inputs.size()
+  - NetlistGraphBuilder for gate-level graph extraction
+
+GAP-025: GDSII Reader (pnr/gdsii_reader.cpp)
+  - IBM excess-64 float decoding
+  - Record-based binary stream parser
+  - Layer map and scale configuration
+
+GAP-003: Placement Scalability — gap closed
+
+GAP-004: TrackOccupancy 20-bit Key
+  - 16-bit to 20-bit key expansion (65K to 1M tracks per layer)
+
+FILES MODIFIED:
+  src/synth/npn_match.hpp        — class forward decl fix (AigGraph)
+  src/synth/tech_mapper.hpp      — removed default param from map_npn()
+  src/synth/tech_mapper.cpp      — complete map_npn() rewrite, aig_.max_var() fix
+  src/timing/ccs_delay.hpp       — removed SmisConfig default param
+  src/timing/ccs_delay.cpp       — complete rewrite (correct CcsTable API)
+  src/timing/parasitics.cpp      — added #include <unordered_set>
+  src/ml/gnn.cpp                 — MLP/Netlist API fixes, constructor fixes
+  src/stdcell/characterizer.cpp  — CCS field fixes, added #include <sstream>
+  src/verify/drc.cpp             — DrcViolation field access fixes
+  src/CMakeLists.txt             — added npn_match.cpp, ccs_delay.cpp, gnn.cpp, gdsii_reader.cpp
+  tests/CMakeLists.txt           — added test_phase98
+  tests/test_phase98.cpp         — 91 assertions across all 9 gaps
+
+API LESSONS LEARNED:
+  - LibertyTiming: nldm_rise/nldm_fall are NldmTable structs; cell_rise/cell_fall are scalar doubles
+  - CcsTable: uses index_1 (slew), index_2 (load), index_3 (time), values (3D vector)
+  - Netlist: add_gate(GateType, vector<NetId>, NetId, name) — not string-based
+  - MLP: MlpConfig (not MLP::Config), predict() (not forward()), layer_sizes (not layers)
+  - GnnModel: no default constructor — use static config factory functions
+
+BUILD & TEST:
+  Release build: clean (0 errors)
+  Phase 98 tests: 91/91 PASS
+  Full regression: 98/98 PASS
+  ASAN build+test: 98/98 PASS, zero memory errors (1243s)
+
+================================================================================
