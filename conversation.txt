@@ -4309,3 +4309,57 @@ BUILD & TEST:
   ASAN build+test: 98/98 PASS, zero memory errors (1243s)
 
 ================================================================================
+
+CHECKPOINT 26: Visualization Overhaul — Production-Grade Layout Viewer
+----------------------------------------------------------------------
+Date: 2026-03-16
+Goal: Close all visualization gaps in placement & routing, surpass Big 3 EDA viewers.
+
+DEEP RESEARCH:
+  - Analyzed all viz files: html_export.cpp (332 lines), dashboard.cpp (199 lines),
+    studio/index.html (1800+ lines with Three.js 3D), rtl_viz, logic_viz, sim_viz
+  - Identified 18 missing features vs Big 3 (Innovus, ICC2, Calibre RVE):
+    no vias, no net tracing, no cell inspector, no per-layer toggles, no search,
+    no ruler, no minimap, no DRC markers, no timing path, basic heatmap, no animation
+
+FILES MODIFIED:
+  src/viz/html_export.hpp — Added VizTimingPath, VizDrcMarker, PlacementSnapshot structs;
+    new methods: set_timing_paths(), set_drc_markers(), set_placement_history()
+  src/viz/html_export.cpp — Complete rewrite (332 → 1250 lines)
+
+24 NEW CAPABILITIES:
+  1.  Per-layer metal visibility toggles (M1-M10, checkbox + keyboard 1-9)
+  2.  Interactive net selection (click wire → highlight entire net, all segments)
+  3.  Cell property inspector panel (name, type, size, position, connected nets)
+  4.  Search bar (/ key) — find cell/net by name, zoom-to-target
+  5.  Minimap with viewport rectangle (click to navigate)
+  6.  Measurement ruler tool (R key) — Manhattan + Euclidean distance
+  7.  Via rendering (diamond markers with layer-colored outlines)
+  8.  IO Pin rendering (directional triangles: cyan=input, red=output)
+  9.  Special nets rendering (power/ground stripes, VDD=red, VSS=blue)
+  10. Blockage rendering (dashed red rectangles)
+  11. Placement row visualization (alternating shaded bands)
+  12. DRC violation markers (X marks + circles, type labels)
+  13. Critical timing path overlay (dashed red path between cells)
+  14. Viridis congestion heatmap with threshold slider
+  15. Thermal-style power density heatmap
+  16. Placement animation playback (timeline, play/pause, iteration+cost)
+  17. Coordinate readout (mouse position in µm + zoom level)
+  18. Viewport culling (only render visible elements)
+  19. Cell type coloring (NAND=red, INV=blue, DFF=orange, etc.)
+  20. Macro vs standard cell visual distinction
+  21. Keyboard shortcuts: F=fit, Esc=deselect, R=ruler, C/W/V=toggles, /=search
+  22. Double-click to zoom on selected cell
+  23. SSE live connection for real-time streaming from studio backend
+  24. Net-aware inspector with connected net listing
+
+JSON DATA EMITTED:
+  cells, wires, vias, io_pins, special_nets, blockages, placement_rows, nets,
+  congestion_map, power_map, timing_paths, drc_markers, placement_snapshots
+
+BUILD & TEST:
+  Release build: clean (0 errors)
+  Full regression: 98/98 PASS (including Phase11 viz tests)
+  ASAN: pending
+
+================================================================================
