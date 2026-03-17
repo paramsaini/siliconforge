@@ -4722,3 +4722,86 @@ VERIFIED:
   - No JS console errors
 
 ================================================================================
+
+================================================================================
+SESSION: Verilog Test Suite + Standard Cell Library Creation
+================================================================================
+
+OBJECTIVE: Create comprehensive Verilog test files (basic→complex) and a full
+  standard cell library to test multi-threaded flow performance across all stages.
+
+NEW VERILOG FILES CREATED (25 new, 42 total in studio/):
+─────────────────────────────────────────────────────────
+
+BASIC (5 new):
+  test_counter_8bit.v     — 8-bit sync counter with enable/reset (~80 gates)
+  test_decoder_encoder.v  — 3:8 decoder + 8:3 priority encoder (~50 gates)
+  test_shift_register.v   — 16-bit barrel shifter + serial shift reg (~350 gates)
+  test_mux_tree.v         — 16:1 MUX tree from 2:1 primitives (~200 gates)
+  test_comparator.v       — 32-bit signed/unsigned comparator (~120 gates)
+  test_gray_code.v        — Gray↔binary converter + gray counter (~90 gates)
+
+INTERMEDIATE (7 new):
+  test_alu_32bit.v        — Full 32-bit ALU with ARM-style flags (~2,500 gates)
+  test_fifo_sync.v        — 16-deep synchronous FIFO (~1,800 gates)
+  test_arbiter_rr.v       — 8-port round-robin arbiter (~600 gates)
+  test_uart_tx.v          — UART TX with baud generator + FSM (~400 gates)
+  test_spi_master.v       — SPI master, CPOL/CPHA configurable (~800 gates)
+  test_i2c_master.v       — I2C master controller (~700 gates)
+  test_multiplier_16x16.v — 16×16 pipelined array multiplier (~5,000 gates)
+  test_pwm_controller.v   — 8-channel PWM with dead-time (~900 gates)
+
+ADVANCED (5 new):
+  test_riscv_core.v       — 5-stage pipelined RV32I core (~15,000 gates)
+                            Forwarding, hazard detection, branch, all R/I/S/B/U/J
+  test_aes_sbox.v         — AES S-Box (full 256-entry) + round function (~8,000 gates)
+                            SubBytes, ShiftRows, MixColumns, AddRoundKey
+  test_cache_controller.v — Direct-mapped write-back cache controller (~6,000 gates)
+  test_fir_filter.v       — 32-tap pipelined FIR with adder tree (~12,000 gates)
+  test_noc_router.v       — 5-port wormhole NoC router with VCs (~20,000 gates)
+
+COMPLEX / STRESS TEST (4 new):
+  test_dma_engine.v       — 4-channel DMA with scatter-gather (~10,000 gates)
+  test_gpu_shader.v       — 4-lane SIMD shader core (~30,000 gates)
+  test_stress_50k.v       — 50K+ gate DSP: 8 MACs + 64-tap FIR + FFT + CRC
+  test_stress_100k.v      — 100K+ gate mesh: 4×4 processing elements
+  test_ethernet_mac.v     — 10/100 Ethernet MAC with CRC (~8,000 gates)
+  test_jpeg_dct.v         — 8×8 2D DCT for JPEG (Loeffler algorithm, ~18,000 gates)
+
+STANDARD CELL LIBRARY:
+─────────────────────────
+
+studio/lib/sf_7nm.lib — Liberty timing library (66 cells):
+  Process: 7nm FinFET, 0.70V, 25°C
+  NLDM 2×2 delay tables (input_transition × output_capacitance)
+  
+  Inverters:    INV_X1/X2/X4/X8/X16
+  Buffers:      BUF_X1/X2/X4/X8, CLKBUF_X1/X4
+  NAND:         NAND2_X1/X2/X4, NAND3_X1/X2, NAND4_X1
+  NOR:          NOR2_X1/X2/X4, NOR3_X1, NOR4_X1
+  AND:          AND2_X1/X2, AND3_X1, AND4_X1
+  OR:           OR2_X1/X2, OR3_X1
+  XOR/XNOR:    XOR2_X1/X2, XNOR2_X1/X2
+  Complex:      AOI21_X1, AOI22_X1, OAI21_X1, OAI22_X1
+  MUX:          MUX2_X1/X2
+  Arithmetic:   HA_X1, FA_X1
+  Sequential:   DFF_X1/X2, DFFR_X1, DFFS_X1, DFFRS_X1, DFFE_X1
+  Latch:        LATCH_X1
+  Scan:         SDFF_X1, SDFFR_X1
+  Tri-state:    TBUF_X1/X2
+  Special:      TIEH, TIEL, DLY1_X1, DLY2_X1
+  Physical:     FILL_X1/X2/X4/X8/X16, WELLTAP_X1, ENDCAP_X1, DECAP_X2/X4, ANTENNA_X1
+
+  Each cell includes: area, leakage, pin capacitance, timing arcs (setup/hold
+  for seq), rise/fall delays and transitions. Sequential cells have ff()/latch()
+  declarations with next_state, clocked_on, clear, preset.
+
+studio/lib/sf_7nm.lef — Physical layout data:
+  9-metal stack (M1-M9) with pitch/width/spacing/resistance/capacitance
+  VIA definitions (VIA12, VIA23)
+  Site: CoreSite 0.054µm × 0.270µm (6 M1 pitches)
+  19 MACRO definitions with pin/port/obstruction geometries
+
+VERIFIED: Files served correctly via app.py on port 8080.
+
+================================================================================
