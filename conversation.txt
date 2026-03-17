@@ -4649,3 +4649,76 @@ SUMMARY:
   Modules with structural limitations documented (AIG, BMC k-induction)
 
 ================================================================================
+
+================================================================================
+SESSION: Cadence Innovus-Style EDA Visualization Overhaul
+================================================================================
+
+OBJECTIVE: Replace sci-fi 3D-first visuals with Cadence Innovus-style realistic
+  EDA visuals — top-down 2D canvas as default, black background, opaque flat
+  metal traces, coordinate rulers, crosshair cursor, status bar.
+
+FILE MODIFIED: studio/index.html (single-page app)
+
+CHANGES:
+
+1. New CSS classes for EDA 2D canvas:
+   - .eda-wrap, .eda-canvas, .eda-ruler-top, .eda-ruler-left, .eda-ruler-corner
+   - .eda-status (monospace coord display), .eda-layer-panel, .eda-tabs/.eda-tab
+
+2. Innovus-standard layer color palette:
+   - EDA_LAYER_HEX: M1=#4444FF M2=#FF4444 M3=#44CC44 M4=#CCAA33 M5=#CC44CC M6=#44CCCC
+   - EDA_CELL_COLORS: muted tones by gate type (NAND=#3a5a8a, DFF=#8a3a6a, etc.)
+   - Updated SEMI_LAYER_COLORS/HEX and CELL_TYPE_COLORS to match
+
+3. CanvasViewer class (reusable pan/zoom/ruler engine):
+   - State: {ox, oy, scale}, fit(dieW, dieH) auto-fits
+   - Wheel zoom toward cursor, shift+left-drag or middle-drag to pan
+   - Crosshair: 1px white 12% opacity at cursor
+   - Rulers: top and left edges with tick marks + micron labels (adaptive spacing)
+   - Status bar: coordinate display, scale, hovered cell info
+   - Coordinate transforms: toScreen(x,y) / toDesign(sx,sy)
+   - requestAnimationFrame loop with dirty flag
+   - Bug fix: moved loop() start after _drawRulers/_drawStatus defined;
+     added null guards in loop; set _dirty=true after _drawCb assignment
+
+4. drawPlacement2D(container, ph):
+   - Black background, die outline, alternating cell row bands
+   - Cells as filled rectangles with type-based color, 0.5px outline
+   - Wires as opaque lines with layer colors
+   - Cell hover: white outline + name in status bar
+   - Layer panel with checkboxes
+   - Viewport culling: skip objects outside view or < 0.5px
+
+5. drawRouting2D(container, ph):
+   - Wires grouped by layer, drawn bottom-to-top for z-order
+   - Manhattan wires as filled rectangles (not lines)
+   - Vias as small #aaa filled squares
+   - Layer panel with wire counts per layer + via toggle
+   - Crosshair, rulers, status bar
+
+6. R.placement updated:
+   - Tab bar: [Layout 2D (default)] [3D View]
+   - 2D container with rulers, canvas, layer panel, status bar
+   - 3D container hidden, lazy-loaded on first tab click
+
+7. R.routing updated:
+   - Same tab bar pattern as R.placement
+   - 2D as default via drawRouting2D, 3D lazy-loaded
+
+8. 3D views toned down:
+   - Removed entrance animations (cells at final position immediately)
+   - Removed wire scale-in animation
+   - Reduced emissiveIntensity: cells 0.05→0.02, wires 0.06-0.08→0.01-0.02
+   - Hover highlight: 0.35→0.15
+   - Made all wires fully opaque (opacity 1.0, transparent:false)
+   - Reduced specular/shininess across all materials
+
+VERIFIED:
+  - Placement 2D: cells, wires, rulers, layer panel, crosshair — all rendering
+  - Routing 2D: layered wires, vias, layer counts, toggles — all rendering
+  - Tab switching: Layout 2D ↔ 3D View works both directions
+  - 3D views: no animations, opaque wires, reduced glow
+  - No JS console errors
+
+================================================================================
